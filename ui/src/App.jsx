@@ -8,7 +8,7 @@ import LoginPage from './pages/LoginPage';
 // Các trang
 import DashboardPage from './pages/HomePage';
 
-// Các trang Quản lý Giá (Price Management)
+// Các trang Quản lý Giá 
 import PriceManagementPage from './pages/PriceManagementPage';
 import CreatePriceListPage from './pages/CreatePriceListPage';
 import PriceListDetailPage from './pages/PriceListDetailPage';

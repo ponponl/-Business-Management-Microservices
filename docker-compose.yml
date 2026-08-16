@@ -1,0 +1,249 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. DATABASE LAYER (PostgreSQL cho từng Service)
+  # ==========================================
+  postgres-auth:
+    image: postgres:15-alpine
+    container_name: postgres-auth
+    environment:
+      POSTGRES_DB: db_auth
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5431:5432"
+    volumes:
+      - pgdata_auth:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
+  postgres-pricing:
+    image: postgres:15-alpine
+    container_name: postgres-pricing
+    environment:
+      POSTGRES_DB: db_pricing
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_pricing:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
+  postgres-contract:
+    image: postgres:15-alpine
+    container_name: postgres-contract
+    environment:
+      POSTGRES_DB: db_contract
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_contract:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
+  postgres-production:
+    image: postgres:15-alpine
+    container_name: postgres-production
+    environment:
+      POSTGRES_DB: db_production
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata_production:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
+  postgres-payment:
+    image: postgres:15-alpine
+    container_name: postgres-payment
+    environment:
+      POSTGRES_DB: db_payment
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata_payment:/var/lib/postgresql/data
+    networks:
+      - microservices-net
+
+  # ==========================================
+  # 2. CACHE & MESSAGE BROKER LAYER (Redis & Kafka)
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "6380:6379"
+    networks:
+      - microservices-net
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - microservices-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - microservices-net
+
+  # Dashboard Web quản lý Kafka trực quan
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8086:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      - kafka
+    networks:
+      - microservices-net
+
+  # ==========================================
+  # 3. BACKEND MICROSERVICES (Python / FastAPI)
+  # ==========================================
+
+  # SV-01: Auth Service
+  auth-service:
+    build:
+      context: ./services/auth_service
+    container_name: auth-service
+    environment:
+      - DATABASE_URL=postgresql://admin:password123@postgres-auth:5432/db_auth
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=super_secret_jwt_key
+    ports:
+      - "8081:8000"
+    depends_on:
+      - postgres-auth
+      - redis
+    networks:
+      - microservices-net
+
+  # SV-02: Pricing Service
+  pricing-service:
+    build:
+      context: ./services/pricing_service
+    container_name: pricing-service
+    environment:
+      - DATABASE_URL=postgresql://admin:password123@postgres-pricing:5432/db_pricing
+      - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    ports:
+      - "8082:8000"
+    depends_on:
+      - postgres-pricing
+      - redis
+      - kafka
+    networks:
+      - microservices-net
+
+  # SV-03: Contract Service
+  contract-service:
+    build:
+      context: ./services/contract_service
+    container_name: contract-service
+    environment:
+      - DATABASE_URL=postgresql://admin:password123@postgres-contract:5432/db_contract
+      - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    ports:
+      - "8083:8000"
+    depends_on:
+      - postgres-contract
+      - redis
+      - kafka
+    networks:
+      - microservices-net
+
+  # SV-04: Production Service
+  production-service:
+    build:
+      context: ./services/production_service
+    container_name: production-service
+    environment:
+      - DATABASE_URL=postgresql://admin:password123@postgres-production:5432/db_production
+      - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    ports:
+      - "8084:8000"
+    depends_on:
+      - postgres-production
+      - redis
+      - kafka
+    networks:
+      - microservices-net
+
+  # SV-05: Payment Service
+  payment-service:
+    build:
+      context: ./services/payment_service
+    container_name: payment-service
+    environment:
+      - DATABASE_URL=postgresql://admin:password123@postgres-payment:5432/db_payment
+      - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    ports:
+      - "8085:8000"
+    depends_on:
+      - postgres-payment
+      - redis
+      - kafka
+    networks:
+      - microservices-net
+
+  # ==========================================
+  # 4. API GATEWAY (Nginx)
+  # ==========================================
+  api-gateway:
+    image: nginx:alpine
+    container_name: api-gateway
+    ports:
+      - "8080:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - auth-service
+      - pricing-service
+      - contract-service
+      - production-service
+      - payment-service
+    networks:
+      - microservices-net
+
+volumes:
+  pgdata_auth:
+  pgdata_pricing:
+  pgdata_contract:
+  pgdata_production:
+  pgdata_payment:
+
+networks:
+  microservices-net:
+    driver: bridge
