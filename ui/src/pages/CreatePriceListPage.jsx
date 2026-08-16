@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-// Danh mục các dịch vụ sẵn có trong hệ thống
 const SERVICE_OPTIONS = [
   { name: 'Bốc xếp container 20ft (Hàng nhập)', code: 'SRV-20ft-IN', unit: 'Container' },
   { name: 'Lưu kho bãi tổng hợp', code: 'SRV-WH-GEN', unit: 'Ngày/Tấn' },
@@ -13,6 +12,15 @@ const SERVICE_OPTIONS = [
 
 export default function CreatePriceListPage() {
   const navigate = useNavigate();
+
+  // State quản lý Modal thông báo
+  const [modalConfig, setModalConfig] = useState({
+    isOpen: false,
+    type: '', 
+    title: '',
+    message: '',
+    btnText: 'Đóng'
+  });
 
   // 1. STATE QUẢN LÝ THÔNG TIN CHUNG
   const [formData, setFormData] = useState({
@@ -26,63 +34,32 @@ export default function CreatePriceListPage() {
 
   // 2. STATE QUẢN LÝ DANH SÁCH DỊCH VỤ CHI TIẾT
   const [services, setServices] = useState([
-    {
-      id: 1,
-      serviceName: 'Bốc xếp container 20ft (Hàng nhập)',
-      serviceCode: 'SRV-20ft-IN',
-      unit: 'Container',
-      price: '350.000'
-    },
-    {
-      id: 2,
-      serviceName: 'Lưu kho bãi tổng hợp',
-      serviceCode: 'SRV-WH-GEN',
-      unit: 'Ngày/Tấn',
-      price: '45.000'
-    },
-    {
-      id: 3,
-      serviceName: 'Khai thác bến bãi hạ tải',
-      serviceCode: 'SRV-PORT-OP',
-      unit: 'Lượt xe',
-      price: '120.000'
-    },
-    {
-      id: 4,
-      serviceName: 'Bốc xếp container 40ft (Hàng xuất)',
-      serviceCode: 'SRV-40ft-OUT',
-      unit: 'Container',
-      price: '550.000'
-    },
-    {
-      id: 5,
-      serviceName: 'Khai báo hải quan trọn gói',
-      serviceCode: 'SRV-CUST-CLR',
-      unit: 'Tờ khai',
-      price: '800.000'
-    }
+    { id: 1, serviceName: 'Bốc xếp container 20ft (Hàng nhập)', serviceCode: 'SRV-20ft-IN', unit: 'Container', price: '350.000' },
+    { id: 2, serviceName: 'Lưu kho bãi tổng hợp', serviceCode: 'SRV-WH-GEN', unit: 'Ngày/Tấn', price: '45.000' },
+    { id: 3, serviceName: 'Khai thác bến bãi hạ tải', serviceCode: 'SRV-PORT-OP', unit: 'Lượt xe', price: '120.000' },
+    { id: 4, serviceName: 'Bốc xếp container 40ft (Hàng xuất)', serviceCode: 'SRV-40ft-OUT', unit: 'Container', price: '550.000' },
+    { id: 5, serviceName: 'Khai báo hải quan trọn gói', serviceCode: 'SRV-CUST-CLR', unit: 'Tờ khai', price: '800.000' }
   ]);
 
-  // Thêm một dòng dịch vụ mới (mặc định lấy dịch vụ đầu tiên)
   const handleAddRow = () => {
     const defaultSrv = SERVICE_OPTIONS[0];
-    const newService = {
-      id: Date.now(),
-      serviceName: defaultSrv.name,
-      serviceCode: defaultSrv.code,
-      unit: defaultSrv.unit,
-      price: '0'
-    };
-    setServices([...services, newService]);
+    setServices([
+      ...services,
+      {
+        id: Date.now(),
+        serviceName: defaultSrv.name,
+        serviceCode: defaultSrv.code,
+        unit: defaultSrv.unit,
+        price: '0'
+      }
+    ]);
   };
 
-  // Xóa dòng dịch vụ
   const handleRemoveRow = (id) => {
-    if (services.length === 1) return; // Giữ lại ít nhất 1 dòng
+    if (services.length === 1) return;
     setServices(services.filter(srv => srv.id !== id));
   };
 
-  // Thay đổi thông tin dòng dịch vụ (Tự động map mã & ĐVT khi chọn tên dịch vụ)
   const handleServiceChange = (id, field, value) => {
     setServices(services.map(srv => {
       if (srv.id === id) {
@@ -101,13 +78,40 @@ export default function CreatePriceListPage() {
     }));
   };
 
+  // Hàm kích hoạt Modal Lưu nháp
+  const handleSaveDraft = () => {
+    setModalConfig({
+      isOpen: true,
+      type: 'draft',
+      title: 'Đã lưu bản ghi nháp!',
+      message: `Dữ liệu bảng giá ${formData.priceCode} đã lưu thành công ở trạng thái nháp (Draft).`,
+      btnText: 'Đóng'
+    });
+  };
+
+  // Hàm kích hoạt Modal Gửi phê duyệt
+  const handleSubmitApproval = () => {
+    setModalConfig({
+      isOpen: true,
+      type: 'submit',
+      title: 'Gửi phê duyệt thành công!',
+      message: `Hệ thống đã gửi dữ liệu bảng giá ${formData.priceCode} đến ban điều hành xem xét duyệt bản ghi.`,
+      btnText: 'Xác nhận'
+    });
+  };
+
+  // Xử lý khi nhấn nút đóng/xác nhận trên Modal
+  const handleConfirmModal = () => {
+    setModalConfig({ ...modalConfig, isOpen: false });
+    navigate('/price-lists');
+  };
+
   return (
-    <div className="space-y-5 text-slate-700 font-sans max-w-7xl mx-auto pb-10">
+    <div className="space-y-5 text-slate-700 font-sans max-w-7xl mx-auto pb-10 relative">
       
       {/* HEADER TẠO BẢNG GIÁ MỚI */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-start space-x-4">
-          {/* NÚT QUAY LẠI */}
           <button 
             onClick={() => navigate('/price-lists')}
             className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 shadow-xs flex items-center space-x-1.5 cursor-pointer mt-0.5"
@@ -292,7 +296,6 @@ export default function CreatePriceListPage() {
 
       {/* BOTTOM BUTTON ACTION BAR */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-end space-x-3">
-        {/* NÚT HỦY BỎ */}
         <button 
           onClick={() => navigate('/price-lists')}
           className="px-4 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
@@ -300,22 +303,60 @@ export default function CreatePriceListPage() {
           Hủy bỏ
         </button>
         <button 
-          onClick={() => alert('Đã lưu nháp bảng giá!')}
-          className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 cursor-pointer"
+          onClick={handleSaveDraft}
+          className="px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 cursor-pointer transition"
         >
           Lưu nháp
         </button>
-        {/* NÚT GỬI PHÊ DUYỆT*/}
         <button 
-          onClick={() => {
-            alert('Đã gửi phê duyệt thành công!');
-            navigate('/price-lists');
-          }}
+          onClick={handleSubmitApproval}
           className="px-5 py-2 rounded-lg bg-[#2b727d] hover:bg-[#235d67] text-xs font-semibold text-white shadow-xs transition cursor-pointer"
         >
           Gửi phê duyệt
         </button>
       </div>
+
+      {/* ================= MODAL THÔNG BÁO TÙY CHỈNH ================= */}
+      {modalConfig.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] p-4 transition-all">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-100 max-w-md w-full p-6 text-center space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            
+            {/* ICON CONTAINER */}
+            <div className="flex justify-center">
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
+                modalConfig.type === 'draft' ? 'bg-sky-100/70 text-sky-500' : 'bg-emerald-100/70 text-emerald-500'
+              }`}>
+                <Check className="w-8 h-8 stroke-[2.5]" />
+              </div>
+            </div>
+
+            {/* HEADER & MESSAGE */}
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-slate-900">
+                {modalConfig.title}
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed px-2">
+                {modalConfig.message}
+              </p>
+            </div>
+
+            {/* ACTION BUTTON */}
+            <div className="pt-2">
+              <button
+                onClick={handleConfirmModal}
+                className={`w-full py-2.5 px-4 rounded-lg text-xs font-semibold text-white shadow-xs transition cursor-pointer ${
+                  modalConfig.type === 'draft' 
+                    ? 'bg-sky-600 hover:bg-sky-700' 
+                    : 'bg-[#4b8882] hover:bg-[#3f756f]'
+                }`}
+              >
+                {modalConfig.btnText}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

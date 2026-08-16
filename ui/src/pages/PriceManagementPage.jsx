@@ -193,7 +193,6 @@ export default function PriceManagementPage() {
             <span>Xuất Excel</span>
           </button>
           
-          {/* NÚT TẠO BẢNG GIÁ MỚI - ĐÃ CẬP NHẬT PATH TIẾNG ANH */}
           <button 
             onClick={() => navigate('/price-lists/create')}
             className="px-4 py-2 rounded-lg bg-[#2b727d] hover:bg-[#235d67] text-xs font-semibold text-white shadow-xs flex items-center space-x-1.5 transition cursor-pointer"
@@ -345,7 +344,12 @@ export default function PriceManagementPage() {
                       <div className="text-[10px] text-slate-400">{item.updatedAt}</div>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <button className="p-1 text-slate-400 hover:text-sky-600 rounded transition cursor-pointer">
+                      {/* BẤM VÀO CON MẮT SẼ SANG TRANG CHI TIẾT BẢNG GIÁ */}
+                      <button 
+                        onClick={() => navigate('/price-lists/detail')}
+                        className="p-1 text-slate-400 hover:text-sky-600 rounded transition cursor-pointer"
+                        title="Xem chi tiết"
+                      >
                         <Eye className="w-4 h-4" />
                       </button>
                     </td>
