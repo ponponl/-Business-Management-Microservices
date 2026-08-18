@@ -1,12 +1,33 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.db.session import engine, Base
-import app.models.pricing  
+import app.models.pricing 
+from app.api.v1.api import api_router
 
-# Tự động tạo toàn bộ các Bảng trong PostgreSQL nếu chưa tồn tại
+# 1. Tự động tạo toàn bộ các Bảng trong PostgreSQL nếu chưa tồn tại
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Pricing Service")
+# 2. Khởi tạo ứng dụng FastAPI
+app = FastAPI(
+    title="Pricing Service API",
+    description="API hệ thống quản lý đơn giá và phê duyệt giá dịch vụ logistics",
+    version="1.0.0"
+)
 
+# 3. Cấu hình Middleware CORS (cho phép Frontend React kết nối không bị chặn)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 4. Tích hợp Router API v1
+app.include_router(api_router, prefix="/api/v1")
+
+
+# 5. Endpoint kiểm tra trạng thái Service (Health Check)
 @app.get("/")
 def read_root():
     return {

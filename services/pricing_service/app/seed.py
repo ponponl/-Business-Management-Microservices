@@ -10,6 +10,7 @@ from app.models.pricing import (
     PriceListUsageLog,
 )
 
+
 def seed_rich_data():
     db = SessionLocal()
     try:
@@ -30,7 +31,7 @@ def seed_rich_data():
             ("SRV-40ft-OUT", "Bốc xếp container 40ft (Hàng xuất)", "Container"),
             ("SRV-CUST-CLR", "Khai báo hải quan trọn gói", "Tờ khai"),
         ]
-        
+
         service_objects = {}
         for code, name, unit in services_data:
             item = ServiceItem(
@@ -74,7 +75,11 @@ def seed_rich_data():
             db.add(pl)
             db.flush()
 
-            ver_num = int(float(ver_str.replace("v", "")))
+            try:
+                ver_num = int(ver_str.replace("v", "").split(".")[0])
+            except Exception:
+                ver_num = 1
+
             ver = PriceListVersion(
                 id=uuid.uuid4(),
                 price_list_id=pl.id,
@@ -127,7 +132,6 @@ def seed_rich_data():
                 )
                 db.add_all([history_1, history_2])
 
-            if code == "PL-2026-001":
                 for _ in range(4):
                     log = PriceListUsageLog(
                         id=uuid.uuid4(),
@@ -146,6 +150,7 @@ def seed_rich_data():
         print(f"Lỗi khi seed dữ liệu: {e}")
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     seed_rich_data()

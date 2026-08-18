@@ -1,164 +1,76 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Download, Plus, Eye, ChevronLeft, ChevronRight, 
-  Search, Layers, Hourglass, CheckCircle2, XCircle 
+  Search, Layers, Hourglass, CheckCircle2, XCircle, Loader2 
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+
+// Địa chỉ backend FastAPI của pricing_service
+const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 
 export default function PriceManagementPage() {
   const navigate = useNavigate();
 
+  // 1. STATE DỮ LIỆU TỪ BACKEND
+  const [stats, setStats] = useState({ total: 0, submitted: 0, effective: 0, rejected: 0 });
+  const [priceLists, setPriceLists] = useState([]);
+  const [availableCustomers, setAvailableCustomers] = useState(['Tất cả']);
+  const [totalItems, setTotalItems] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  // 2. STATE BỘ LỌC VÀ PHÂN TRANG
   const [activeStatusTab, setActiveStatusTab] = useState('Tất cả');
   const [selectedType, setSelectedType] = useState('Tất cả');
   const [selectedCustomer, setSelectedCustomer] = useState('Tất cả');
   const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
-  const priceLists = [
-    {
-      id: 'PL-2026-001',
-      name: 'Cảng Cát Lái',
-      contractId: 'HD-2025-0089',
-      type: 'CUSTOMER',
-      version: 'v3.0',
-      effectiveTime: '01/01/2026 - 31/12/2026',
-      status: 'SUBMITTED',
-      updatedBy: 'Ban Giám đốc',
-      updatedAt: '08/07/2026 14:22'
-    },
-    {
-      id: 'PL-2026-002',
-      name: 'Công ty CP XNK Đại Dương',
-      contractId: 'HD-2025-0076',
-      type: 'CONTRACT',
-      version: 'v1.0',
-      effectiveTime: '01/06/2026 - 30/06/2027',
-      status: 'DRAFT',
-      updatedBy: 'Phòng Pháp chế',
-      updatedAt: '05/07/2026 10:05'
-    },
-    {
-      id: 'PL-2026-003',
-      name: 'Cảng Cái Mép Thị Vải',
-      contractId: 'HD-2024-0132',
-      type: 'GENERAL',
-      version: 'v2.1',
-      effectiveTime: '01/06/2026 - 30/06/2026',
-      status: 'EFFECTIVE',
-      updatedBy: 'Trần Văn B',
-      updatedAt: '05/07/2026 09:40'
-    },
-    {
-      id: 'PL-2026-004',
-      name: 'Cty TNHH Vận tải Phương Nam',
-      contractId: 'HD-2025-0054',
-      type: 'CUSTOMER',
-      version: 'v1.2',
-      effectiveTime: '01/06/2026 - 30/06/2026',
-      status: 'REJECTED',
-      updatedBy: 'Trần Văn B',
-      updatedAt: '04/07/2026 16:51'
-    },
-    {
-      id: 'PL-2026-005',
-      name: 'Cảng Cát Lái',
-      contractId: 'HD-2025-0089',
-      type: 'CUSTOMER',
-      version: 'v2.0',
-      effectiveTime: '01/05/2026 - 31/05/2026',
-      status: 'EFFECTIVE',
-      updatedBy: 'Nguyễn Văn A',
-      updatedAt: '03/07/2026 08:12'
-    },
-    {
-      id: 'PL-2026-006',
-      name: 'Tập đoàn Hòa Phát',
-      contractId: 'HD-2026-0112',
-      type: 'SERVICE_GROUP',
-      version: 'v1.0',
-      effectiveTime: '15/06/2026 - 15/06/2027',
-      status: 'SUBMITTED',
-      updatedBy: 'Trần Văn B',
-      updatedAt: '02/07/2026 17:00'
-    },
-    {
-      id: 'PL-2026-007',
-      name: 'Kho vận Gemadept',
-      contractId: 'HD-2024-0095',
-      type: 'SERVICE_TYPE',
-      version: 'v4.2',
-      effectiveTime: '01/01/2026 - 31/12/2026',
-      status: 'EFFECTIVE',
-      updatedBy: 'Nguyễn Văn A',
-      updatedAt: '01/07/2026 11:30'
-    },
-    {
-      id: 'PL-2026-008',
-      name: 'Logistics TTC',
-      contractId: 'HD-2025-0034',
-      type: 'CUSTOMER',
-      version: 'v1.1',
-      effectiveTime: '01/07/2026 - 31/12/2026',
-      status: 'DRAFT',
-      updatedBy: 'Phòng Kế Hoạch',
-      updatedAt: '30/06/2026 09:15'
-    },
-    {
-      id: 'PL-2026-009',
-      name: 'Cảng Quốc Tế Tân Cảng',
-      contractId: 'HD-2026-0021',
-      type: 'CONTRACT',
-      version: 'v2.0',
-      effectiveTime: '20/06/2026 - 20/06/2027',
-      status: 'SUBMITTED',
-      updatedBy: 'Trần Văn B',
-      updatedAt: '29/06/2026 14:00'
-    },
-    {
-      id: 'PL-2026-010',
-      name: 'Tổng kho Vĩnh Long',
-      contractId: 'HD-2025-0067',
-      type: 'GENERAL',
-      version: 'v1.0',
-      effectiveTime: '01/01/2026 - 31/12/2026',
-      status: 'EFFECTIVE',
-      updatedBy: 'Nguyễn Văn A',
-      updatedAt: '28/06/2026 10:45'
-    },
-    {
-      id: 'PL-2026-011',
-      name: 'Vận Tải Phương Hoàng',
-      contractId: 'HD-2025-0104',
-      type: 'CUSTOMER',
-      version: 'v1.3',
-      effectiveTime: '01/03/2026 - 31/12/2026',
-      status: 'REJECTED',
-      updatedBy: 'Trần Văn B',
-      updatedAt: '25/06/2026 16:20'
-    }
-  ];
-
-  // Danh sách gợi ý Dropdown
   const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
-  const availableCustomers = useMemo(() => {
-    const names = Array.from(new Set(priceLists.map(i => i.name)));
-    return ['Tất cả', ...names];
-  }, [priceLists]);
 
-  // LOGIC LỌC DỮ LIỆU TỰ ĐỘNG
-  const filteredData = useMemo(() => {
-    return priceLists.filter((item) => {
-      const matchStatus = activeStatusTab === 'Tất cả' || item.status === activeStatusTab;
-      const matchType = selectedType === 'Tất cả' || item.type === selectedType;
-      const matchCustomer = selectedCustomer === 'Tất cả' || item.name === selectedCustomer;
-      const term = searchTerm.toLowerCase().trim();
-      const matchSearch = !term || 
-        item.id.toLowerCase().includes(term) || 
-        item.name.toLowerCase().includes(term) ||
-        item.contractId.toLowerCase().includes(term);
+  // Gọi API lấy số liệu 4 Stat Cards (Chạy 1 lần khi load trang)
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/stats`)
+      .then((res) => res.json())
+      .then((data) => setStats(data))
+      .catch((err) => console.error('Lỗi lấy thống kê:', err));
+  }, []);
 
-      return matchStatus && matchType && matchCustomer && matchSearch;
+  // Gọi API lấy danh sách Bảng giá (Chạy khi Bộ lọc hoặc Trang đổi)
+  useEffect(() => {
+    setLoading(true);
+
+    const params = new URLSearchParams({
+      page: page.toString(),
+      page_size: pageSize.toString(),
     });
-  }, [activeStatusTab, selectedType, selectedCustomer, searchTerm, priceLists]);
+
+    if (activeStatusTab !== 'Tất cả') params.append('status', activeStatusTab);
+    if (selectedType !== 'Tất cả') params.append('type', selectedType);
+    if (selectedCustomer !== 'Tất cả') params.append('customer', selectedCustomer);
+    if (searchTerm.trim() !== '') params.append('search', searchTerm.trim());
+
+    fetch(`${API_BASE_URL}?${params.toString()}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setPriceLists(data.items || []);
+        setTotalItems(data.total || 0);
+        if (data.available_customers) {
+          setAvailableCustomers(data.available_customers);
+        }
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Lỗi lấy danh sách bảng giá:', err);
+        setLoading(false);
+      });
+  }, [activeStatusTab, selectedType, selectedCustomer, searchTerm, page]);
+
+  // Reset về trang 1 khi thay đổi bộ lọc
+  const handleFilterChange = (setter, value) => {
+    setter(value);
+    setPage(1);
+  };
 
   // Helper render Badge trạng thái
   const renderStatusBadge = (status) => {
@@ -172,9 +84,11 @@ export default function PriceManagementPage() {
       case 'REJECTED':
         return <span className="px-2.5 py-0.5 rounded bg-rose-100/70 text-rose-700 text-[10px] font-bold tracking-wide">REJECTED</span>;
       default:
-        return null;
+        return <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-bold">{status}</span>;
     }
   };
+
+  const totalPages = Math.ceil(totalItems / pageSize) || 1;
 
   return (
     <div className="space-y-4 text-slate-700 font-sans">
@@ -203,12 +117,12 @@ export default function PriceManagementPage() {
         </div>
       </div>
 
-      {/* 2. 4 THẺ THỐNG KÊ (STAT CARDS) */}
+      {/* 2. 4 THẺ THỐNG KÊ (STAT CARDS REFRESH DỮ LIỆU THẬT) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Tổng số bảng giá</p>
-            <p className="text-xl font-bold text-slate-800 mt-0.5">128</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats.total}</p>
           </div>
           <div className="p-2 rounded-lg bg-slate-50 text-slate-400">
             <Layers className="w-5 h-5" />
@@ -218,7 +132,7 @@ export default function PriceManagementPage() {
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Chờ duyệt (SUBMITTED)</p>
-            <p className="text-xl font-bold text-amber-600 mt-0.5">23</p>
+            <p className="text-xl font-bold text-amber-600 mt-0.5">{stats.submitted}</p>
           </div>
           <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
             <Hourglass className="w-5 h-5" />
@@ -228,7 +142,7 @@ export default function PriceManagementPage() {
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Hiệu lực (EFFECTIVE)</p>
-            <p className="text-xl font-bold text-emerald-600 mt-0.5">86</p>
+            <p className="text-xl font-bold text-emerald-600 mt-0.5">{stats.effective}</p>
           </div>
           <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
             <CheckCircle2 className="w-5 h-5" />
@@ -238,7 +152,7 @@ export default function PriceManagementPage() {
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Bị từ chối (REJECTED)</p>
-            <p className="text-xl font-bold text-rose-600 mt-0.5">19</p>
+            <p className="text-xl font-bold text-rose-600 mt-0.5">{stats.rejected}</p>
           </div>
           <div className="p-2 rounded-lg bg-rose-50 text-rose-600">
             <XCircle className="w-5 h-5" />
@@ -255,7 +169,7 @@ export default function PriceManagementPage() {
               <span className="text-slate-500">Loại áp dụng:</span>
               <select 
                 value={selectedType}
-                onChange={(e) => setSelectedType(e.target.value)}
+                onChange={(e) => handleFilterChange(setSelectedType, e.target.value)}
                 className="bg-transparent font-semibold text-slate-800 outline-none cursor-pointer"
               >
                 {availableTypes.map(t => <option key={t} value={t}>{t}</option>)}
@@ -266,7 +180,7 @@ export default function PriceManagementPage() {
               <span className="text-slate-500">Khách hàng:</span>
               <select 
                 value={selectedCustomer}
-                onChange={(e) => setSelectedCustomer(e.target.value)}
+                onChange={(e) => handleFilterChange(setSelectedCustomer, e.target.value)}
                 className="bg-transparent font-semibold text-slate-800 outline-none cursor-pointer max-w-[150px] truncate"
               >
                 {availableCustomers.map(c => <option key={c} value={c}>{c}</option>)}
@@ -279,7 +193,7 @@ export default function PriceManagementPage() {
               {['Tất cả', 'EFFECTIVE', 'SUBMITTED', 'DRAFT', 'REJECTED'].map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => setActiveStatusTab(tab)}
+                  onClick={() => handleFilterChange(setActiveStatusTab, tab)}
                   className={`px-3 py-1 rounded-md transition cursor-pointer ${
                     activeStatusTab === tab 
                       ? 'bg-white text-slate-800 shadow-xs font-semibold' 
@@ -297,7 +211,7 @@ export default function PriceManagementPage() {
                 type="text"
                 placeholder="Tìm kiếm..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => handleFilterChange(setSearchTerm, e.target.value)}
                 className="pl-8 pr-3 py-1 rounded-lg border border-slate-200 text-xs w-48 focus:outline-none focus:border-sky-500 bg-white placeholder:text-slate-400"
               />
             </div>
@@ -323,8 +237,17 @@ export default function PriceManagementPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-              {filteredData.length > 0 ? (
-                filteredData.map((item) => (
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#2b727d]" />
+                      <span>Đang tải dữ liệu từ server...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : priceLists.length > 0 ? (
+                priceLists.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50/70 transition">
                     <td className="py-3 px-4 font-semibold text-slate-900">{item.id}</td>
                     <td className="py-3 px-4">
@@ -344,9 +267,8 @@ export default function PriceManagementPage() {
                       <div className="text-[10px] text-slate-400">{item.updatedAt}</div>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      {/* BẤM VÀO CON MẮT SẼ SANG TRANG CHI TIẾT BẢNG GIÁ */}
                       <button 
-                        onClick={() => navigate('/price-lists/detail')}
+                        onClick={() => navigate(`/price-lists/detail`)}
                         className="p-1 text-slate-400 hover:text-sky-600 rounded transition cursor-pointer"
                         title="Xem chi tiết"
                       >
@@ -366,19 +288,27 @@ export default function PriceManagementPage() {
           </table>
         </div>
 
-        {/* 5. PHÂN TRANG */}
+        {/* 5. PHÂN TRANG THỰC TẾ */}
         <div className="p-3.5 border-t border-slate-200 bg-white flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div>
-            Hiển thị <strong className="text-slate-800 font-semibold">{filteredData.length}</strong> trong tổng số <strong className="text-slate-800 font-semibold">{priceLists.length}</strong> bảng giá
+            Hiển thị <strong className="text-slate-800 font-semibold">{priceLists.length}</strong> trong tổng số <strong className="text-slate-800 font-semibold">{totalItems}</strong> bảng giá
           </div>
           <div className="flex items-center space-x-1">
-            <button className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-400 disabled:opacity-50 cursor-pointer">
+            <button 
+              disabled={page <= 1}
+              onClick={() => setPage(prev => Math.max(prev - 1, 1))}
+              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
-            <button className="w-7 h-7 rounded-lg bg-slate-900 text-white font-semibold text-[11px] flex items-center justify-center">
-              1
-            </button>
-            <button className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 cursor-pointer">
+            <span className="px-3 py-1 rounded-lg bg-slate-900 text-white font-semibold text-[11px]">
+              {page} / {totalPages}
+            </span>
+            <button 
+              disabled={page >= totalPages}
+              onClick={() => setPage(prev => Math.min(prev + 1, totalPages))}
+              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
