@@ -1,61 +1,123 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Clock } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Clock, Loader2, AlertCircle } from 'lucide-react';
+
+const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 
 export default function PriceListDetailPage() {
+  const { id } = useParams();
   const navigate = useNavigate();
 
-  // Dữ liệu chi tiết bảng giá (mặc định trạng thái DRAFT)
-  const [priceDetail, setPriceDetail] = useState({
-    priceCode: 'PL-2026-012',
-    priceName: 'Bảng giá bốc xếp hạ tải nội địa 2026',
-    targetType: 'Khách hàng (CUSTOMER)',
-    specificTarget: 'KH-LOGISTIC-TÂNPHÁT',
-    effectiveFrom: '2026-07-20',
-    effectiveTo: '2027-07-20',
-    version: '1.0',
-    status: 'DRAFT', // 'DRAFT' | 'SUBMITTED' | 'EFFECTIVE' | 'REJECTED'
-    services: [
-      { id: 1, name: 'Bốc xếp container 20ft (Hàng nhập)', code: 'SRV-20ft-IN', unit: 'Container', price: '350.000' },
-      { id: 2, name: 'Lưu kho bãi tổng hợp', code: 'SRV-WH-GEN', unit: 'Ngày/Tấn', price: '45.000' },
-      { id: 3, name: 'Khai thác bến bãi hạ tải', code: 'SRV-PORT-OP', unit: 'Lượt xe', price: '120.000' },
-      { id: 4, name: 'Bốc xếp container 40ft (Hàng xuất)', code: 'SRV-40ft-OUT', unit: 'Container', price: '550.000' },
-      { id: 5, name: 'Khai báo hải quan trọn gói', code: 'SRV-CUST-CLR', unit: 'Tờ khai', price: '800.000' },
-    ]
-  });
+  const [priceDetail, setPriceDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
 
-  const isDraft = priceDetail.status === 'DRAFT';
+  useEffect(() => {
+    if (!id) return;
+
+    setLoading(true);
+    setError(null);
+
+    fetch(`${API_BASE_URL}/${id}`)
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Không thể lấy thông tin chi tiết (Mã lỗi: ${res.status})`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        setPriceDetail({
+          priceCode: data.priceCode || data.id || id,
+          priceName: data.priceName || '',
+          targetType: data.targetType || data.scopeType || 'Khách hàng (CUSTOMER)',
+          specificTarget: data.specificTarget || data.scopeId || '',
+          effectiveFrom: data.effectiveFrom || data.validFrom || '',
+          effectiveTo: data.effectiveTo || data.validTo || '',
+          version: data.version || '1.0',
+          status: data.status || 'DRAFT',
+          services: data.services || []
+        });
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Lỗi API:', err);
+        setError(err.message);
+        setLoading(false);
+      });
+  }, [id]);
+
+  const handleInputChange = (field, value) => {
+    setPriceDetail((prev) => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const handleSaveUpdate = async () => {
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(priceDetail),
+      });
+
+      if (!response.ok) {
+        throw new Error('Lỗi khi gửi yêu cầu cập nhật lên server!');
+      }
+
+      alert('Cập nhật bảng giá thành công!');
+    } catch (err) {
+      alert(`Cập nhật thất bại: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isDraft = priceDetail?.status === 'DRAFT';
 
   const renderStatusBadge = (status) => {
     switch (status) {
-      case 'DRAFT':
-        return (
-          <span className="px-3 py-1 bg-sky-50 text-sky-600 text-xs font-semibold rounded-md border border-sky-200">
-            Trạng thái: DRAFT
-          </span>
-        );
       case 'SUBMITTED':
-        return (
-          <span className="px-3 py-1 bg-amber-50 text-amber-700 text-xs font-semibold rounded-md border border-amber-200/60">
-            Trạng thái: SUBMITTED
-          </span>
-        );
+        return <span className="px-2.5 py-0.5 rounded bg-sky-100/70 text-sky-700 text-[10px] font-bold tracking-wide">SUBMITTED</span>;
       case 'EFFECTIVE':
-        return (
-          <span className="px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-md border border-emerald-200">
-            Trạng thái: EFFECTIVE
-          </span>
-        );
+        return <span className="px-2.5 py-0.5 rounded bg-emerald-100/70 text-emerald-700 text-[10px] font-bold tracking-wide">EFFECTIVE</span>;
+      case 'DRAFT':
+        return <span className="px-2.5 py-0.5 rounded bg-amber-100/70 text-amber-700 text-[10px] font-bold tracking-wide">DRAFT</span>;
       case 'REJECTED':
-        return (
-          <span className="px-3 py-1 bg-rose-50 text-rose-700 text-xs font-semibold rounded-md border border-rose-200">
-            Trạng thái: REJECTED
-          </span>
-        );
+        return <span className="px-2.5 py-0.5 rounded bg-rose-100/70 text-rose-700 text-[10px] font-bold tracking-wide">REJECTED</span>;
       default:
-        return null;
+        return <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-bold">{status}</span>;
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-[400px] flex flex-col items-center justify-center space-y-3 text-slate-500">
+        <Loader2 className="w-8 h-8 animate-spin text-[#2b727d]" />
+        <span className="text-xs font-medium">Đang tải chi tiết bảng giá từ server...</span>
+      </div>
+    );
+  }
+
+  if (error || !priceDetail) {
+    return (
+      <div className="bg-white p-8 rounded-xl border border-slate-200 text-center space-y-4 max-w-lg mx-auto mt-10 shadow-xs">
+        <AlertCircle className="w-12 h-12 text-rose-500 mx-auto" />
+        <h2 className="text-lg font-bold text-slate-800">Không thể tải thông tin</h2>
+        <p className="text-xs text-slate-500">{error || 'Bảng giá không tồn tại.'}</p>
+        <button
+          onClick={() => navigate(-1)}
+          className="px-4 py-2 bg-[#2b727d] text-white rounded-lg text-xs font-semibold hover:bg-[#235d67] transition cursor-pointer"
+        >
+          Quay lại
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 text-slate-700 font-sans max-w-7xl mx-auto pb-10">
@@ -79,7 +141,7 @@ export default function PriceListDetailPage() {
         </div>
 
         <div className="flex items-center space-x-2">
-          <span className="px-3 py-1 bg-slate-100 text-slate-600 text-xs font-medium rounded-md border border-slate-200">
+          <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
             Phiên bản: {priceDetail.version}
           </span>
           {renderStatusBadge(priceDetail.status)}
@@ -112,6 +174,7 @@ export default function PriceListDetailPage() {
               <input 
                 type="text" 
                 value={priceDetail.priceName}
+                onChange={(e) => handleInputChange('priceName', e.target.value)}
                 readOnly={!isDraft}
                 className={`w-full px-3 py-2 rounded-lg border border-slate-200 font-medium focus:outline-none ${
                   isDraft ? 'bg-white text-slate-800 focus:border-sky-500' : 'bg-slate-50 text-slate-800 cursor-default'
@@ -145,8 +208,9 @@ export default function PriceListDetailPage() {
             <div>
               <label className="block text-slate-600 font-medium mb-1.5">Thời gian hiệu lực từ *</label>
               <input 
-                type="text" 
+                type="date" 
                 value={priceDetail.effectiveFrom}
+                onChange={(e) => handleInputChange('effectiveFrom', e.target.value)}
                 readOnly={!isDraft}
                 className={`w-full px-3 py-2 rounded-lg border border-slate-200 font-medium focus:outline-none ${
                   isDraft ? 'bg-white text-slate-800 focus:border-sky-500' : 'bg-slate-50 text-slate-800 cursor-default'
@@ -157,8 +221,9 @@ export default function PriceListDetailPage() {
             <div>
               <label className="block text-slate-600 font-medium mb-1.5">Thời gian hiệu lực đến *</label>
               <input 
-                type="text" 
+                type="date" 
                 value={priceDetail.effectiveTo}
+                onChange={(e) => handleInputChange('effectiveTo', e.target.value)}
                 readOnly={!isDraft}
                 className={`w-full px-3 py-2 rounded-lg border border-slate-200 font-medium focus:outline-none ${
                   isDraft ? 'bg-white text-slate-800 focus:border-sky-500' : 'bg-slate-50 text-slate-800 cursor-default'
@@ -186,23 +251,33 @@ export default function PriceListDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {priceDetail.services.map((srv) => (
-                  <tr key={srv.id} className="hover:bg-slate-50/50 transition">
-                    <td className="py-3 px-4 text-slate-800 font-medium">
-                      {srv.name}
-                    </td>
-                    <td className="py-3 px-4 text-slate-500 font-mono">
-                      {srv.code}
-                    </td>
-                    <td className="py-3 px-4 text-slate-600">
-                      {srv.unit}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <span className="font-bold text-slate-800 mr-1.5">{srv.price}</span>
-                      <span className="text-[11px] text-slate-400 font-medium">VND</span>
+                {priceDetail.services && priceDetail.services.length > 0 ? (
+                  priceDetail.services.map((srv, index) => (
+                    <tr key={srv.id || srv.code || index} className="hover:bg-slate-50/50 transition">
+                      <td className="py-3 px-4 text-slate-800 font-medium">
+                        {srv.name || srv.serviceName}
+                      </td>
+                      <td className="py-3 px-4 text-slate-500 font-mono">
+                        {srv.code || srv.serviceCode}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">
+                        {srv.unit}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <span className="font-bold text-slate-800 mr-1.5">
+                          {Number(srv.price || srv.unitPrice || 0).toLocaleString('vi-VN')}
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-medium">VND</span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={4} className="py-8 text-center text-slate-400 text-xs">
+                      Không tìm thấy danh sách dịch vụ chi tiết.
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -227,17 +302,17 @@ export default function PriceListDetailPage() {
           <span>Xem phiên bản khác</span>
         </button>
 
-        {/* NÚT CẬP NHẬT: KHI Ở DRAFT SẼ KÍCH HOẠT MÀU XANH #2b727d */}
         <button 
-          disabled={!isDraft}
-          onClick={() => alert('Cập nhật bảng giá thành công!')}
-          className={`px-5 py-2 rounded-lg text-xs font-semibold transition ${
+          disabled={!isDraft || saving}
+          onClick={handleSaveUpdate}
+          className={`px-5 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition ${
             isDraft 
               ? 'bg-[#2b727d] hover:bg-[#235d67] text-white shadow-xs cursor-pointer' 
               : 'bg-slate-200 text-slate-400 cursor-not-allowed select-none'
           }`}
         >
-          Cập nhật
+          {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          <span>Cập nhật</span>
         </button>
       </div>
 

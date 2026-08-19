@@ -268,7 +268,7 @@ export default function PriceManagementPage() {
                     </td>
                     <td className="py-3 px-4 text-center">
                       <button 
-                        onClick={() => navigate(`/price-lists/detail`)}
+                        onClick={() => navigate(`/price-lists/${item.id}`)}
                         className="p-1 text-slate-400 hover:text-sky-600 rounded transition cursor-pointer"
                         title="Xem chi tiết"
                       >

@@ -14,7 +14,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# 3. Cấu hình Middleware CORS (cho phép Frontend React kết nối không bị chặn)
+# 3. Cấu hình Middleware CORS 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -9,9 +9,9 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/HomePage';
 
 // Các trang Quản lý Giá 
-import PriceManagementPage from './pages/PriceManagementPage';
-import CreatePriceListPage from './pages/CreatePriceListPage';
-import PriceListDetailPage from './pages/PriceListDetailPage';
+import PriceManagementPage from './pages/PriceManagementPage.jsx';
+import CreatePriceListPage from './pages/CreatePriceListPage.jsx';
+import PriceListDetailPage from './pages/PriceListDetailPage.jsx';
 
 
 
@@ -71,7 +71,7 @@ export default function App() {
           {/* SERVICE 1: PRICE LISTS (BẢNG GIÁ) */}
           <Route path="price-lists" element={<PriceManagementPage />} />
           <Route path="price-lists/create" element={<CreatePriceListPage />} />
-          <Route path="price-lists/detail" element={<PriceListDetailPage />} />
+          <Route path="price-lists/:id" element={<PriceListDetailPage />} />
 
           {/* SERVICE 2: CONTRACTS (HỢP ĐỒNG) */}
           <Route path="contracts" element={<PagePlaceholder title="Quản lý Hợp đồng" />} />

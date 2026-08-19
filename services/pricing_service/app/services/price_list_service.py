@@ -1,7 +1,9 @@
+import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import Optional, Dict, Any, List
-from app.models.pricing import PriceList, PriceListVersion
+from fastapi import HTTPException, status
+from app.models.pricing import PriceList, PriceListVersion, PriceListDetail, ServiceItem
 
 
 class PriceListService:
@@ -73,7 +75,6 @@ class PriceListService:
 
         items: List[Dict[str, Any]] = []
         for pl, ver in records:
-            # Xử lý format Ngày hiệu lực an toàn
             valid_from = getattr(ver, 'valid_from', None)
             valid_to = getattr(ver, 'valid_to', None)
             
@@ -114,4 +115,67 @@ class PriceListService:
             "page_size": page_size,
             "available_types": type_list,
             "available_customers": customer_list
+        }
+
+    @staticmethod
+    def get_detail_by_code(db: Session, price_code: str) -> Dict[str, Any]:
+        """Lấy thông tin chi tiết Bảng giá an toàn không lo sập lỗi 500"""
+        
+        is_valid_uuid = False
+        try:
+            uuid.UUID(price_code)
+            is_valid_uuid = True
+        except ValueError:
+            is_valid_uuid = False
+
+        conditions = [PriceList.price_list_code == price_code]
+        if is_valid_uuid:
+            conditions.append(PriceList.id == price_code)
+
+        record = db.query(PriceList, PriceListVersion).join(
+            PriceListVersion, PriceList.id == PriceListVersion.price_list_id
+        ).filter(or_(*conditions)).first()
+
+        if not record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Không tìm thấy bảng giá có mã '{price_code}'"
+            )
+
+        pl, ver = record
+
+        valid_from = getattr(ver, 'valid_from', None)
+        valid_to = getattr(ver, 'valid_to', None)
+
+        valid_from_str = valid_from.strftime("%Y-%m-%d") if valid_from else ""
+        valid_to_str = valid_to.strftime("%Y-%m-%d") if valid_to else ""
+
+        ver_num = getattr(ver, 'version_number', 1)
+        version_str = f"{ver_num}.0" if isinstance(ver_num, int) else str(ver_num)
+
+        services_data = []
+        details = db.query(PriceListDetail).filter(
+            PriceListDetail.price_list_version_id == ver.id
+        ).all()
+
+        for item in details:
+            srv = item.service_item
+            services_data.append({
+                "code": srv.service_code if srv else "SRV-DEFAULT",
+                "name": srv.service_name if srv else "Dịch vụ định mức",
+                "unit": srv.unit if srv else "Lượt",
+                "price": float(item.unit_price or 0.0)
+            })
+
+        return {
+            "id": pl.price_list_code or str(pl.id),
+            "priceCode": pl.price_list_code or "N/A",
+            "priceName": pl.price_list_name or "N/A",
+            "scopeType": str(pl.scope_type or "CUSTOMER"),
+            "scopeId": str(pl.scope_id or pl.contract_id or pl.customer_id or "N/A"),
+            "version": version_str,
+            "status": str(ver.status or "DRAFT").upper(),
+            "validFrom": valid_from_str,
+            "validTo": valid_to_str,
+            "services": services_data
         }

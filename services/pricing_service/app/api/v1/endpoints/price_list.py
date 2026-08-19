@@ -34,3 +34,9 @@ def get_price_lists(
         page=page,
         page_size=page_size
     )
+
+
+@router.get("/{price_code}")
+def get_price_list_detail(price_code: str, db: Session = Depends(get_db)):
+    """Lấy thông tin chi tiết của 1 bảng giá"""
+    return PriceListService.get_detail_by_code(db=db, price_code=price_code)

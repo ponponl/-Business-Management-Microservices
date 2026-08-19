@@ -59,6 +59,12 @@ def seed_rich_data():
             ("PL-2026-009", "Cảng Quốc Tế Tân Cảng", "CONTRACT", "v2.0", "SUBMITTED", date(2026, 6, 20), date(2027, 6, 20)),
             ("PL-2026-010", "Tổng kho Vĩnh Long", "GENERAL", "v1.0", "EFFECTIVE", date(2026, 1, 1), date(2026, 12, 31)),
             ("PL-2026-011", "Vận Tải Phương Hoàng", "CUSTOMER", "v1.3", "REJECTED", date(2026, 3, 1), date(2026, 12, 31)),
+            
+            # --- CÁC BẢN GHI DRAFT MỚI BỔ SUNG ---
+            ("PL-2026-012", "Bảng giá bốc xếp hạ tải nội địa 2026", "CUSTOMER", "v1.0", "DRAFT", date(2026, 7, 20), date(2027, 7, 20)),
+            ("PL-2026-013", "Kho lạnh Tân Tạo - Khách mới", "CUSTOMER", "v1.0", "DRAFT", date(2026, 8, 1), date(2026, 12, 31)),
+            ("PL-2026-014", "Dịch vụ Hải quan Tân Cảng Quý 3", "SERVICE_TYPE", "v1.0", "DRAFT", date(2026, 9, 1), date(2026, 12, 31)),
+            ("PL-2026-015", "Hợp đồng nguyên tắc Vinalines", "CONTRACT", "v0.1", "DRAFT", date(2026, 8, 15), date(2027, 8, 15)),
         ]
 
         for code, name, scope_type, ver_str, status, valid_from, valid_to in price_lists_raw:
@@ -94,7 +100,7 @@ def seed_rich_data():
             prices = {
                 "SRV-20ft-IN": 350000.00,
                 "SRV-WH-GEN": 42000.00 if ver_str == "v3.0" else 45000.00,
-                "SRV-PORT-OP": 125000.00 if ver_str == "v3.0" else 12000.00,
+                "SRV-PORT-OP": 125000.00 if ver_str == "v3.0" else 120000.00,
                 "SRV-40ft-OUT": 550000.00,
                 "SRV-CUST-CLR": 800000.00
             }
@@ -143,7 +149,7 @@ def seed_rich_data():
                     db.add(log)
 
         db.commit()
-        print("Tạo thành công dữ liệu mẫu cực kỳ phong phú cho Pricing Service!")
+        print("Tạo thành công dữ liệu mẫu cực kỳ phong phú bao gồm các bản ghi DRAFT!")
 
     except Exception as e:
         db.rollback()
