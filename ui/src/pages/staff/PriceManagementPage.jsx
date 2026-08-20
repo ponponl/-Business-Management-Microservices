@@ -11,14 +11,12 @@ const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 export default function PriceManagementPage() {
   const navigate = useNavigate();
 
-  // 1. STATE DỮ LIỆU TỪ BACKEND
   const [stats, setStats] = useState({ total: 0, submitted: 0, effective: 0, rejected: 0 });
   const [priceLists, setPriceLists] = useState([]);
   const [availableCustomers, setAvailableCustomers] = useState(['Tất cả']);
   const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // 2. STATE BỘ LỌC VÀ PHÂN TRANG
   const [activeStatusTab, setActiveStatusTab] = useState('Tất cả');
   const [selectedType, setSelectedType] = useState('Tất cả');
   const [selectedCustomer, setSelectedCustomer] = useState('Tất cả');
@@ -107,8 +105,9 @@ export default function PriceManagementPage() {
             <span>Xuất Excel</span>
           </button>
           
+          {/* SỬA ĐƯỜNG DẪN TẠO BẢNG GIÁ MỚI */}
           <button 
-            onClick={() => navigate('/price-lists/create')}
+            onClick={() => navigate('/staff/price-lists/create')}
             className="px-4 py-2 rounded-lg bg-[#2b727d] hover:bg-[#235d67] text-xs font-semibold text-white shadow-xs flex items-center space-x-1.5 transition cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -267,8 +266,9 @@ export default function PriceManagementPage() {
                       <div className="text-[10px] text-slate-400">{item.updatedAt}</div>
                     </td>
                     <td className="py-3 px-4 text-center">
+                      {/* SỬA ĐƯỜNG DẪN XEM CHI TIẾT */}
                       <button 
-                        onClick={() => navigate(`/price-lists/${item.id}`)}
+                        onClick={() => navigate(`/staff/price-lists/${item.id}`)}
                         className="p-1 text-slate-400 hover:text-sky-600 rounded transition cursor-pointer"
                         title="Xem chi tiết"
                       >

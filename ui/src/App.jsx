@@ -1,91 +1,120 @@
 import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 
-// Layouts & Authentication
 import MainLayout from './layouts/MainLayout';
 import LoginPage from './pages/LoginPage';
-
-// Các trang
 import DashboardPage from './pages/HomePage';
 
-// Các trang Quản lý Giá 
-import PriceManagementPage from './pages/PriceManagementPage.jsx';
-import CreatePriceListPage from './pages/CreatePriceListPage.jsx';
-import PriceListDetailPage from './pages/PriceListDetailPage.jsx';
+import PriceManagementStaff from './pages/staff/PriceManagementPage.jsx';
+import CreatePriceListStaff from './pages/staff/CreatePriceListPage.jsx';
+import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
 
+const EmptyPage = () => <div className="w-full min-h-[400px] bg-transparent" />;
 
+const IndexRedirect = ({ user }) => {
+  if (!user) return <Navigate to="/login" replace />;
+  return <Navigate to={`/${user.role.toLowerCase()}`} replace />;
+};
 
-// Component cho các trang chưa làm
-const PagePlaceholder = ({ title }) => (
-  <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs">
-    <h2 className="text-base font-bold text-slate-800">{title}</h2>
-    <p className="text-xs text-slate-500 mt-1">Trang này chưa được khởi tạo component.</p>
-  </div>
-);
-
-// Component Bảo vệ Route
-const ProtectedRoute = ({ user, children }) => {
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
+const RoleRoute = ({ user, allowedRoles, children }) => {
+  if (!user) return <Navigate to="/login" replace />;
+  if (!allowedRoles.includes(user.role)) return <Navigate to="/" replace />;
   return children;
 };
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    const savedUser = localStorage.getItem('mock_user');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
 
   const handleLogin = (userData) => {
-    setUser({
-      name: userData.name || 'Nguyễn Văn A',
-      email: userData.email || 'a.nguyen@abc.com',
-    });
+    let role = userData?.role;
+    if (!role) {
+      const email = userData?.email?.toLowerCase() || '';
+      if (email.includes('director') || email.includes('gd')) role = 'DIRECTOR';
+      else if (email.includes('manager') || email.includes('ql')) role = 'MANAGER';
+      else role = 'STAFF';
+    }
+
+    const roleNames = { STAFF: 'Nguyễn Văn A (Nhân viên)', MANAGER: 'Lê Văn C (Quản lý)', DIRECTOR: 'Phạm Văn D (Giám đốc)' };
+    const loggedUser = { name: userData?.name || roleNames[role] || 'Người dùng ABC', email: userData?.email || `${role.toLowerCase()}@abclogistics.vn`, role };
+
+    setUser(loggedUser);
+    localStorage.setItem('mock_user', JSON.stringify(loggedUser));
   };
 
   const handleLogout = () => {
     setUser(null);
+    localStorage.removeItem('mock_user');
   };
 
   return (
     <BrowserRouter>
       <Routes>
-        {/* 1. TRANG ĐĂNG NHẬP */}
-        <Route 
-          path="/login" 
-          element={
-            user ? <Navigate to="/" replace /> : <LoginPage onLoginSuccess={handleLogin} />
-          } 
-        />
+        <Route path="/" element={<IndexRedirect user={user} />} />
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage onLoginSuccess={handleLogin} />} />
 
-        {/* 2. KHU VỰC ĐÃ ĐĂNG NHẬP (NESTED ROUTES IN MAINLAYOUT) */}
-        <Route 
-          path="/" 
-          element={
-            <ProtectedRoute user={user}>
-              <MainLayout user={user} onLogout={handleLogout} />
-            </ProtectedRoute>
-          }
-        >
-          {/* Trang chủ / Dashboard */}
-          <Route index element={<DashboardPage user={user} />} />
+        {/* ========================================================= */}
+        {/* 1. KHU VỰC NHÂN VIÊN (STAFF)                             */}
+        {/* ========================================================= */}
+        <Route element={<RoleRoute user={user} allowedRoles={['STAFF']}><MainLayout user={user} onLogout={handleLogout} /></RoleRoute>}>
+          <Route path="/staff" element={<DashboardPage user={user} />} />
 
-          {/* SERVICE 1: PRICE LISTS (BẢNG GIÁ) */}
-          <Route path="price-lists" element={<PriceManagementPage />} />
-          <Route path="price-lists/create" element={<CreatePriceListPage />} />
-          <Route path="price-lists/:id" element={<PriceListDetailPage />} />
+          {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
+          <Route path="/staff/price-lists" element={<PriceManagementStaff user={user} />} />
+          <Route path="/staff/price-lists/create" element={<CreatePriceListStaff user={user} />} />
+          <Route path="/staff/price-lists/:id" element={<PriceListDetailStaff user={user} />} />
 
-          {/* SERVICE 2: CONTRACTS (HỢP ĐỒNG) */}
-          <Route path="contracts" element={<PagePlaceholder title="Quản lý Hợp đồng" />} />
+          {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
+          <Route path="/staff/contracts" element={<EmptyPage />} />
 
-          {/* SERVICE 3: VOLUMES (SẢN LƯỢNG) */}
-          <Route path="volumes" element={<PagePlaceholder title="Quản lý Sản lượng" />} />
+          {/* SERVICE: QUẢN LÝ SẢN LƯỢNG */}
+          <Route path="/staff/volumes" element={<EmptyPage />} />
 
-          {/* SERVICE 4: PAYMENTS (THANH TOÁN) */}
-          <Route path="payments" element={<PagePlaceholder title="Quản lý Thanh toán" />} />
-
-          {/* Catch-all Route */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-
+          {/* SERVICE: QUẢN LÝ THANH TOÁN */}
+          <Route path="/staff/payments" element={<EmptyPage />} />
         </Route>
+
+        {/* ========================================================= */}
+        {/* 2. KHU VỰC QUẢN LÝ (MANAGER)                            */}
+        {/* ========================================================= */}
+        <Route element={<RoleRoute user={user} allowedRoles={['MANAGER']}><MainLayout user={user} onLogout={handleLogout} /></RoleRoute>}>
+          <Route path="/manager" element={<DashboardPage user={user} />} />
+
+          {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
+          <Route path="/manager/price-lists" element={<EmptyPage />} />
+
+          {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
+          <Route path="/manager/contracts" element={<EmptyPage />} />
+
+          {/* SERVICE: QUẢN LÝ SẢN LƯỢNG */}
+          <Route path="/manager/volumes" element={<EmptyPage />} />
+
+          {/* SERVICE: QUẢN LÝ THANH TOÁN */}
+          <Route path="/manager/payments" element={<EmptyPage />} />
+        </Route>
+
+        {/* ========================================================= */}
+        {/* 3. KHU VỰC GIÁM ĐỐC (DIRECTOR)                           */}
+        {/* ========================================================= */}
+        <Route element={<RoleRoute user={user} allowedRoles={['DIRECTOR']}><MainLayout user={user} onLogout={handleLogout} /></RoleRoute>}>
+          <Route path="/director" element={<DashboardPage user={user} />} />
+
+          {/* SERVICE: QUẢN LÝ BẢNG GIÁ (ĐÃ ĐỂ TRỐNG) */}
+          <Route path="/director/price-lists" element={<EmptyPage />} />
+
+          {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
+          <Route path="/director/contracts" element={<EmptyPage />} />
+
+          {/* SERVICE: QUẢN LÝ SẢN LƯỢNG */}
+          <Route path="/director/volumes" element={<EmptyPage />} />
+
+          {/* SERVICE: QUẢN LÝ THANH TOÁN */}
+          <Route path="/director/payments" element={<EmptyPage />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

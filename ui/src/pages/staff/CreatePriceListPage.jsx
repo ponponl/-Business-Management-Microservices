@@ -203,7 +203,7 @@ export default function CreatePriceListPage() {
 
   const handleConfirmModal = () => {
     setModalConfig({ ...modalConfig, isOpen: false });
-    navigate('/price-lists');
+    navigate('/staff/price-lists');
   };
 
   return (
@@ -213,7 +213,7 @@ export default function CreatePriceListPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-start space-x-4">
           <button 
-            onClick={() => navigate('/price-lists')}
+            onClick={() => navigate('/staff/price-lists')}
             className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 shadow-xs flex items-center space-x-1.5 cursor-pointer mt-0.5"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
@@ -440,7 +440,7 @@ export default function CreatePriceListPage() {
       {/* BOTTOM BUTTON ACTION BAR */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-end space-x-3">
         <button 
-          onClick={() => navigate('/price-lists')}
+          onClick={() => navigate('/staff/price-lists')}
           disabled={isSubmitting}
           className="px-4 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
         >

@@ -109,11 +109,13 @@ export default function PriceListDetailPage() {
         <AlertCircle className="w-12 h-12 text-rose-500 mx-auto" />
         <h2 className="text-lg font-bold text-slate-800">Không thể tải thông tin</h2>
         <p className="text-xs text-slate-500">{error || 'Bảng giá không tồn tại.'}</p>
+        
+        {/* SỬA ĐƯỜNG DẪN QUAY LẠI TRANG DANH SÁCH */}
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/staff/price-lists')}
           className="px-4 py-2 bg-[#2b727d] text-white rounded-lg text-xs font-semibold hover:bg-[#235d67] transition cursor-pointer"
         >
-          Quay lại
+          Quay lại danh sách
         </button>
       </div>
     );
@@ -125,8 +127,10 @@ export default function PriceListDetailPage() {
       {/* HEADER CHI TIẾT BẢNG GIÁ */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-start space-x-4">
+          
+          {/* SỬA ĐƯỜNG DẪN NÚT QUAY LẠI HEADER */}
           <button 
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/staff/price-lists')}
             className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 shadow-xs flex items-center space-x-1.5 cursor-pointer mt-0.5"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
@@ -287,8 +291,10 @@ export default function PriceListDetailPage() {
 
       {/* BOTTOM BUTTON ACTION BAR */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-end space-x-3">
+        
+        {/* SỬA ĐƯỜNG DẪN NÚT ĐÓNG */}
         <button 
-          onClick={() => navigate(-1)}
+          onClick={() => navigate('/staff/price-lists')}
           className="px-5 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
         >
           Đóng

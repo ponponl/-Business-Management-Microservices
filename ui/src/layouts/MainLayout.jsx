@@ -6,28 +6,27 @@ import Header from '../components/Header';
 export default function MainLayout({ user, onLogout }) {
   const location = useLocation();
 
-  // Tự động đổi tiêu đề Header dựa trên đường dẫn URL (Path)
+  // Tự động đổi tiêu đề Header dựa trên đường dẫn URL
   const getHeaderTitle = () => {
-    switch (location.pathname) {
-      case '/': return 'Tổng quan Dashboard';
-      case '/hop-dong': return 'Quản lý hợp đồng';
-      case '/bang-gia': return 'Quản lý bảng giá';
-      case '/san-luong': return 'Quản lý sản lượng';
-      case '/thanh-toan': return 'Quản lý thanh toán';
-      default: return 'Trang chủ';
-    }
+    const path = location.pathname;
+    if (path === '/') return 'Tổng quan Dashboard';
+    if (path.startsWith('/contracts')) return 'Quản lý hợp đồng';
+    if (path.startsWith('/price-lists')) return 'Quản lý bảng giá';
+    if (path.startsWith('/volumes')) return 'Quản lý sản lượng';
+    if (path.startsWith('/payments')) return 'Quản lý thanh toán';
+    if (path.startsWith('/users')) return 'Quản lý người dùng';
+    return 'Trang chủ';
   };
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-700">
-      {/* Sidebar bên trái */}
+      {/* Sidebar bên trái (Truyền prop user để đổi theme) */}
       <Sidebar user={user} onLogout={onLogout} />
 
-      {/* Khu vực bên phải */}
+      {/* Khu vực nội dung bên phải */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-        <Header title={getHeaderTitle()} />
+        <Header title={getHeaderTitle()} user={user} />
 
-        {/* <Outlet /> là nơi các trang con (Dashboard, Bảng giá,...) hiển thị */}
         <main className="p-6 flex-1">
           <Outlet />
         </main>
