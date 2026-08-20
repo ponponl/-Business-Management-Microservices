@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query,  HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.db.session import get_db
-from app.schemas.price_list import PriceListStatsResponse, PriceListPaginatedResponse
+from app.schemas.price_list import PriceListStatsResponse, PriceListPaginatedResponse, PriceListCreate
 from app.services.price_list_service import PriceListService
 
 router = APIRouter()
@@ -40,3 +40,23 @@ def get_price_lists(
 def get_price_list_detail(price_code: str, db: Session = Depends(get_db)):
     """Lấy thông tin chi tiết của 1 bảng giá"""
     return PriceListService.get_detail_by_code(db=db, price_code=price_code)
+
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+def create_new_price_list(
+    payload: PriceListCreate, 
+    db: Session = Depends(get_db)
+):
+    try:
+        new_price_list = PriceListService.create_price_list(db, payload)
+        return {
+            "message": "Tạo bảng giá thành công",
+            "data": new_price_list
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Không thể tạo bảng giá: {str(e)}"
+        )
