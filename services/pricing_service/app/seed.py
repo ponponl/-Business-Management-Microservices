@@ -1,6 +1,9 @@
 import uuid
 from datetime import date, datetime
-from app.db.session import SessionLocal
+
+from app.db.session import SessionLocal, engine, Base
+
+import app.models.pricing 
 from app.models.pricing import (
     ServiceItem,
     PriceList,
@@ -12,18 +15,13 @@ from app.models.pricing import (
 
 
 def seed_rich_data():
+    print("1. Đang Drop và Re-create lại toàn bộ Bảng trong Database...")
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
     db = SessionLocal()
     try:
-        print("Đang dọn dẹp dữ liệu cũ...")
-        db.query(PriceListUsageLog).delete()
-        db.query(PriceChangeHistory).delete()
-        db.query(PriceListDetail).delete()
-        db.query(PriceListVersion).delete()
-        db.query(PriceList).delete()
-        db.query(ServiceItem).delete()
-        db.commit()
-
-        print("Đang khởi tạo danh mục Dịch vụ (SERVICE_ITEM)...")
+        print("2. Đang khởi tạo danh mục Dịch vụ (SERVICE_ITEM)...")
         services_data = [
             ("SRV-20ft-IN", "Bốc xếp container 20ft (Hàng nhập)", "Container"),
             ("SRV-WH-GEN", "Lưu kho bãi tổng hợp", "Ngày/Tấn"),
@@ -45,22 +43,21 @@ def seed_rich_data():
             service_objects[code] = item
         db.flush()
 
-        print("Đang khởi tạo danh sách Bảng giá và các Phiên bản...")
+        print("3. Đang khởi tạo Bảng giá và các Phiên bản...")
+        dummy_user_id = uuid.uuid4()
 
         price_lists_raw = [
             ("PL-2026-001", "Cảng Cát Lái", "CUSTOMER", "v3.0", "SUBMITTED", date(2026, 1, 1), date(2026, 12, 31)),
             ("PL-2026-002", "Công ty CP XNK Đại Dương", "CONTRACT", "v1.0", "DRAFT", date(2026, 6, 1), date(2027, 6, 30)),
-            ("PL-2026-003", "Cảng Cái Mép Thượng", "GENERAL", "v2.1", "EFFECTIVE", date(2026, 6, 1), date(2026, 6, 30)),
-            ("PL-2026-004", "Cty TNHH Vận tải Phương Nam", "CUSTOMER", "v1.2", "REJECTED", date(2026, 6, 1), date(2026, 6, 30)),
-            ("PL-2026-005", "Cảng Cát Lái", "CUSTOMER", "v2.0", "EFFECTIVE", date(2026, 5, 1), date(2026, 5, 31)),
+            ("PL-2026-003", "Cảng Cái Mép Thượng", "GENERAL", "v2.1", "EFFECTIVE", date(2026, 6, 1), date(2026, 12, 31)),
+            ("PL-2026-004", "Cty TNHH Vận tải Phương Nam", "CUSTOMER", "v1.2", "REJECTED", date(2026, 6, 1), date(2026, 12, 31)),
+            ("PL-2026-005", "Cảng Cát Lái", "CUSTOMER", "v2.0", "EFFECTIVE", date(2026, 5, 1), date(2026, 11, 30)),
             ("PL-2026-006", "Tập đoàn Hòa Phát", "SERVICE_GROUP", "v1.0", "SUBMITTED", date(2026, 6, 15), date(2027, 6, 15)),
             ("PL-2026-007", "Kho vận Gemadept", "SERVICE_TYPE", "v4.2", "EFFECTIVE", date(2026, 1, 1), date(2026, 12, 31)),
             ("PL-2026-008", "Logistics TTC", "CUSTOMER", "v1.1", "DRAFT", date(2026, 7, 1), date(2026, 12, 31)),
             ("PL-2026-009", "Cảng Quốc Tế Tân Cảng", "CONTRACT", "v2.0", "SUBMITTED", date(2026, 6, 20), date(2027, 6, 20)),
             ("PL-2026-010", "Tổng kho Vĩnh Long", "GENERAL", "v1.0", "EFFECTIVE", date(2026, 1, 1), date(2026, 12, 31)),
             ("PL-2026-011", "Vận Tải Phương Hoàng", "CUSTOMER", "v1.3", "REJECTED", date(2026, 3, 1), date(2026, 12, 31)),
-            
-            # --- CÁC BẢN GHI DRAFT MỚI BỔ SUNG ---
             ("PL-2026-012", "Bảng giá bốc xếp hạ tải nội địa 2026", "CUSTOMER", "v1.0", "DRAFT", date(2026, 7, 20), date(2027, 7, 20)),
             ("PL-2026-013", "Kho lạnh Tân Tạo - Khách mới", "CUSTOMER", "v1.0", "DRAFT", date(2026, 8, 1), date(2026, 12, 31)),
             ("PL-2026-014", "Dịch vụ Hải quan Tân Cảng Quý 3", "SERVICE_TYPE", "v1.0", "DRAFT", date(2026, 9, 1), date(2026, 12, 31)),
@@ -76,7 +73,9 @@ def seed_rich_data():
                 contract_id=uuid.uuid4(),
                 scope_type=scope_type,
                 scope_id="SCOPE-" + code,
-                description=f"Cấu hình bảng giá cho {name}"
+                description=f"Cấu hình bảng giá cho {name}",
+                created_by=dummy_user_id,
+                is_deleted=False
             )
             db.add(pl)
             db.flush()
@@ -92,7 +91,9 @@ def seed_rich_data():
                 version_number=ver_num,
                 valid_from=valid_from,
                 valid_to=valid_to,
-                status=status
+                status=status,
+                created_by=dummy_user_id,
+                approval_stage="COMPLETED" if status == "EFFECTIVE" else "MANAGER_PENDING"
             )
             db.add(ver)
             db.flush()
@@ -123,7 +124,7 @@ def seed_rich_data():
                     old_value="Bảng giá bốc xếp 2026",
                     new_value="Bảng giá bốc hạ tải nội địa 2027",
                     change_reason="Cập nhật tên gọi chuẩn danh mục năm mới",
-                    changed_by=uuid.uuid4(),
+                    changed_by=dummy_user_id,
                     changed_at=datetime(2026, 7, 20, 9, 12)
                 )
                 history_2 = PriceChangeHistory(
@@ -133,7 +134,7 @@ def seed_rich_data():
                     old_value="350.000 VND",
                     new_value="360.000 VND",
                     change_reason="Trượt giá nhiên liệu nâng hạ bến cảng",
-                    changed_by=uuid.uuid4(),
+                    changed_by=dummy_user_id,
                     changed_at=datetime(2026, 7, 20, 9, 15)
                 )
                 db.add_all([history_1, history_2])

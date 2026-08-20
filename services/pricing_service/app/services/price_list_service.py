@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import or_, desc, func
 from sqlalchemy.orm import Session
 
 from app.models.pricing import (
@@ -18,18 +18,39 @@ class PriceListService:
 
     @staticmethod
     def get_stats(db: Session) -> Dict[str, int]:
-        """Tính toán số liệu cho 4 Stat Cards từ PriceListVersion"""
-        versions = db.query(PriceListVersion).all()
+        """Tính toán số liệu cho chuẩn 5 Stat Cards hiển thị ở UI"""
+        
+        subquery = (
+            db.query(
+                PriceListVersion.price_list_id,
+                func.max(PriceListVersion.version_number).label("max_ver")
+            )
+            .group_by(PriceListVersion.price_list_id)
+            .subquery()
+        )
+
+        latest_versions = (
+            db.query(PriceListVersion)
+            .join(
+                subquery,
+                (PriceListVersion.price_list_id == subquery.c.price_list_id) &
+                (PriceListVersion.version_number == subquery.c.max_ver)
+            )
+            .all()
+        )
 
         total = db.query(PriceList).count()
         submitted = 0
+        approved = 0
         effective = 0
         rejected = 0
 
-        for ver in versions:
-            st = str(ver.status or "").upper()
+        for ver in latest_versions:
+            st = str(ver.status or "").strip().upper()
             if st == "SUBMITTED":
                 submitted += 1
+            elif st == "APPROVED":
+                approved += 1
             elif st == "EFFECTIVE":
                 effective += 1
             elif st == "REJECTED":
@@ -38,6 +59,7 @@ class PriceListService:
         return {
             "total": total,
             "submitted": submitted,
+            "approved": approved,
             "effective": effective,
             "rejected": rejected,
         }
@@ -52,22 +74,22 @@ class PriceListService:
         page: int = 1,
         page_size: int = 10,
     ) -> Dict[str, Any]:
-        """Xử lý lọc, tìm kiếm và phân trang danh sách bảng giá"""
+        """Xử lý lọc, tìm kiếm và phân trang danh sách bảng giá từ JOIN PriceList & PriceListVersion"""
 
         query = db.query(PriceList, PriceListVersion).join(
             PriceListVersion, PriceList.id == PriceListVersion.price_list_id
         )
 
         if status and status != "Tất cả":
-            query = query.filter(PriceListVersion.status == status)
+            query = query.filter(PriceListVersion.status.ilike(status.strip()))
 
         if apply_type and apply_type != "Tất cả":
-            query = query.filter(PriceList.scope_type == apply_type)
+            query = query.filter(PriceList.scope_type.ilike(apply_type.strip()))
 
         if customer and customer != "Tất cả":
-            query = query.filter(PriceList.price_list_name == customer)
+            query = query.filter(PriceList.price_list_name.ilike(f"%{customer.strip()}%"))
 
-        if search:
+        if search and search.strip():
             search_term = f"%{search.strip()}%"
             query = query.filter(
                 or_(
@@ -79,7 +101,10 @@ class PriceListService:
         total_count = query.count()
 
         offset = (page - 1) * page_size
-        records = query.offset(offset).limit(page_size).all()
+        records = query.order_by(
+            desc(PriceListVersion.version_number), 
+            desc(PriceList.created_at)
+        ).offset(offset).limit(page_size).all()
 
         items: List[Dict[str, Any]] = []
         for pl, ver in records:
@@ -101,9 +126,12 @@ class PriceListService:
                 f"v{ver_num}.0" if isinstance(ver_num, int) else str(ver_num)
             )
 
+            created_at_val = getattr(pl, "created_at", None)
+            created_at_str = created_at_val.strftime("%d/%m/%Y %H:%M") if created_at_val else "N/A"
+
             items.append(
                 {
-                    "id": pl.price_list_code or "N/A",
+                    "id": pl.price_list_code or str(pl.id),
                     "name": pl.price_list_name or "N/A",
                     "contractId": str(
                         getattr(pl, "contract_id", None) or "N/A"
@@ -112,8 +140,8 @@ class PriceListService:
                     "version": version_str,
                     "effectiveTime": effective_time,
                     "status": str(ver.status or "DRAFT").upper(),
-                    "updatedBy": "Hệ thống",
-                    "updatedAt": start_str or "01/01/2026 00:00",
+                    "updatedBy": str(getattr(pl, "created_by", None) or "Hệ thống"),
+                    "updatedAt": created_at_str,
                 }
             )
 
@@ -213,7 +241,7 @@ class PriceListService:
             "priceName": pl.price_list_name or "N/A",
             "scopeType": str(pl.scope_type or "CUSTOMER"),
             "scopeId": str(
-                pl.scope_id or pl.contract_id or pl.customer_id or "N/A"
+                getattr(pl, "scope_id", None) or getattr(pl, "contract_id", None) or getattr(pl, "customer_id", None) or "N/A"
             ),
             "version": version_str,
             "status": str(ver.status or "DRAFT").upper(),
@@ -226,15 +254,23 @@ class PriceListService:
     def create_price_list(
         db: Session, payload: PriceListCreate
     ) -> Dict[str, Any]:
-        """Tạo mới bảng giá, phiên bản và chi tiết các dịch vụ từ Pydantic Schema"""
+        """Tạo mới bảng giá, sinh mã tăng tiến liên tục theo thứ tự số (PL-2026-016 -> PL-2026-017...)"""
         try:
             price_code = payload.price_code
             if not price_code:
                 year = datetime.now().year
-                count = db.query(PriceList).count() + 1
-                price_code = f"PL-{year}-{count:03d}"
+                prefix = f"PL-{year}-"
+                
+                next_number = db.query(PriceList).count() + 1
 
-            # 2. Tạo record PriceList (Bảng chính)
+                while True:
+                    candidate_code = f"{prefix}{next_number:03d}"
+                    exists = db.query(PriceList).filter(PriceList.price_list_code == candidate_code).first()
+                    if not exists:
+                        price_code = candidate_code
+                        break
+                    next_number += 1
+
             new_price_list = PriceList(
                 price_list_code=price_code,
                 price_list_name=payload.price_name,
@@ -244,7 +280,6 @@ class PriceListService:
             db.add(new_price_list)
             db.flush()
 
-            # 3. Tạo record PriceListVersion
             new_version = PriceListVersion(
                 price_list_id=new_price_list.id,
                 version_number=1,

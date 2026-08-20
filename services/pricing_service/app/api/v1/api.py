@@ -1,10 +1,19 @@
+# app/api/v1/api.py
 from fastapi import APIRouter
-from app.api.v1.endpoints import price_list
+from app.api.v1.endpoints import price_list, approval
 
 api_router = APIRouter()
 
+# 1. Router Quản lý Bảng giá
 api_router.include_router(
     price_list.router, 
     prefix="/price-lists", 
     tags=["Price Lists"]
+)
+
+# 2. Router Phê duyệt 
+api_router.include_router(
+    approval.router, 
+    prefix="/approvals", 
+    tags=["Approvals"]
 )

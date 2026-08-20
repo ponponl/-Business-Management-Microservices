@@ -5,9 +5,13 @@ import MainLayout from './layouts/MainLayout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/HomePage';
 
+// Quản lý bảng giá
 import PriceManagementStaff from './pages/staff/PriceManagementPage.jsx';
 import CreatePriceListStaff from './pages/staff/CreatePriceListPage.jsx';
 import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
+
+import PriceListApprovalPage from './pages/manager/PriceListApprovalPage.jsx';
+
 
 const EmptyPage = () => <div className="w-full min-h-[400px] bg-transparent" />;
 
@@ -83,7 +87,7 @@ export default function App() {
           <Route path="/manager" element={<DashboardPage user={user} />} />
 
           {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
-          <Route path="/manager/price-lists" element={<EmptyPage />} />
+          <Route path="/manager/price-lists" element={<PriceListApprovalPage user={user} />} />
 
           {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
           <Route path="/manager/contracts" element={<EmptyPage />} />

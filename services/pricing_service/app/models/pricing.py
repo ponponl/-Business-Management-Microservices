@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Date, Numeric
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Date, Numeric, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.session import Base
@@ -9,11 +9,11 @@ from app.db.session import Base
 class ServiceItem(Base):
     __tablename__ = "service_item"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Khóa chính của dịch vụ
-    service_code = Column(String(50), unique=True, nullable=False)        # Mã dịch vụ duy nhất
-    service_name = Column(String(255), nullable=False)                   # Tên dịch vụ
-    unit = Column(String(50), nullable=True)                              # Đơn vị tính của dịch vụ
-    status = Column(String(20), default="ACTIVE")                         # Trạng thái hoạt động của dịch vụ
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    service_code = Column(String(50), unique=True, nullable=False)
+    service_name = Column(String(255), nullable=False)
+    unit = Column(String(50), nullable=True)
+    status = Column(String(20), default="ACTIVE")
 
     # Quan hệ
     details = relationship("PriceListDetail", back_populates="service_item")
@@ -24,14 +24,19 @@ class ServiceItem(Base):
 class PriceList(Base):
     __tablename__ = "price_list"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # Khóa chính của bảng giá
-    price_list_code = Column(String(50), unique=True, nullable=False)        # Mã định danh của bảng giá
-    price_list_name = Column(String(255), nullable=False)                   # Tên bảng giá
-    customer_id = Column(UUID(as_uuid=True), nullable=True)                 # Tham chiếu đến khách hàng áp dụng
-    contract_id = Column(UUID(as_uuid=True), nullable=True)                 # Tham chiếu đến hợp đồng áp dụng
-    scope_type = Column(String(50), nullable=False)                         # CUSTOMER, CONTRACT, SERVICE_GROUP, SERVICE_TYPE, GENERAL
-    scope_id = Column(String(50), nullable=True)                            # Định danh của đối tượng áp dụng tương ứng với scope_type
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    price_list_code = Column(String(50), unique=True, nullable=False)
+    price_list_name = Column(String(255), nullable=False)
+    customer_id = Column(UUID(as_uuid=True), nullable=True)
+    contract_id = Column(UUID(as_uuid=True), nullable=True)
+    scope_type = Column(String(50), nullable=False)
+    scope_id = Column(String(50), nullable=True)
     description = Column(Text, nullable=True)
+    
+    # Audit Trail
+    created_by = Column(UUID(as_uuid=True), nullable=True)
+    is_deleted = Column(Boolean, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -44,14 +49,22 @@ class PriceList(Base):
 class PriceListVersion(Base):
     __tablename__ = "price_list_version"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)                       # Khóa chính của phiên bản
-    price_list_id = Column(UUID(as_uuid=True), ForeignKey("price_list.id"), nullable=False)      # Khóa ngoại tham chiếu PRICE_LIST
-    version_number = Column(Integer, nullable=False)                                           # Số phiên bản
-    valid_from = Column(Date, nullable=False)                                                  # Ngày bắt đầu hiệu lực
-    valid_to = Column(Date, nullable=False)                                                    # Ngày kết thúc hiệu lực
-    status = Column(String(20), default="DRAFT")                                               # DRAFT, SUBMITTED, APPROVED, EFFECTIVE, SUPERSEDED, EXPIRED, REJECTED
-    parent_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=True) # Tham chiếu phiên bản trước
-    workflow_instance_id = Column(UUID(as_uuid=True), nullable=True)                           # Tham chiếu quy trình phê duyệt
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    price_list_id = Column(UUID(as_uuid=True), ForeignKey("price_list.id"), nullable=False)
+    version_number = Column(Integer, nullable=False)
+    valid_from = Column(Date, nullable=False)
+    valid_to = Column(Date, nullable=False)
+    status = Column(String(20), default="DRAFT")
+    parent_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=True)
+    workflow_instance_id = Column(UUID(as_uuid=True), nullable=True)
+
+    # Luồng Phê duyệt 3 Role & Audit
+    created_by = Column(UUID(as_uuid=True), nullable=True)
+    approved_by = Column(UUID(as_uuid=True), nullable=True)
+    rejected_reason = Column(Text, nullable=True)
+    approval_stage = Column(String(50), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     # Quan hệ
     price_list = relationship("PriceList", back_populates="versions")
@@ -64,11 +77,11 @@ class PriceListVersion(Base):
 class PriceListDetail(Base):
     __tablename__ = "price_list_detail"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)                               # Khóa chính chi tiết bảng giá
-    price_list_id = Column(UUID(as_uuid=True), ForeignKey("price_list.id"), nullable=False)              # Khóa ngoại tham chiếu PRICE_LIST
-    price_list_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=False) # Khóa ngoại tham chiếu PRICE_LIST_VERSION
-    service_item_id = Column(UUID(as_uuid=True), ForeignKey("service_item.id"), nullable=False)          # Khóa ngoại tham chiếu SERVICE_ITEM
-    unit_price = Column(Numeric(15, 2), nullable=False)                                                 # Đơn giá dịch vụ
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    price_list_id = Column(UUID(as_uuid=True), ForeignKey("price_list.id"), nullable=False)
+    price_list_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=False)
+    service_item_id = Column(UUID(as_uuid=True), ForeignKey("service_item.id"), nullable=False)
+    unit_price = Column(Numeric(15, 2), nullable=False)
 
     # Quan hệ
     price_list = relationship("PriceList", back_populates="details")
@@ -80,14 +93,14 @@ class PriceListDetail(Base):
 class PriceChangeHistory(Base):
     __tablename__ = "price_change_history"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)                               # Khóa chính bản ghi
-    price_list_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=False) # Khóa ngoại tham chiếu PRICE_LIST_VERSION
-    field_name = Column(String(100), nullable=False)                                                    # Tên trường dữ liệu thay đổi
-    old_value = Column(Text, nullable=True)                                                             # Giá trị trước khi thay đổi
-    new_value = Column(Text, nullable=True)                                                             # Giá trị sau khi thay đổi
-    change_reason = Column(Text, nullable=True)                                                         # Lý do thực hiện thay đổi
-    changed_by = Column(UUID(as_uuid=True), nullable=True)                                              # Người thực hiện thay đổi
-    changed_at = Column(DateTime, default=datetime.utcnow)                                              # Thời điểm thực hiện thay đổi
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    price_list_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=False)
+    field_name = Column(String(100), nullable=False)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
+    change_reason = Column(Text, nullable=True)
+    changed_by = Column(UUID(as_uuid=True), nullable=True)
+    changed_at = Column(DateTime, default=datetime.utcnow)
 
     # Quan hệ
     price_list_version = relationship("PriceListVersion", back_populates="change_histories")
@@ -97,11 +110,11 @@ class PriceChangeHistory(Base):
 class PriceListUsageLog(Base):
     __tablename__ = "price_list_usage_log"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)                               # Khóa chính bản ghi sử dụng
-    price_list_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=False) # Khóa ngoại tham chiếu PRICE_LIST_VERSION
-    billing_statement_id = Column(UUID(as_uuid=True), nullable=False)                                  # Tham chiếu đến Billing Service
-    service_item_id = Column(UUID(as_uuid=True), ForeignKey("service_item.id"), nullable=False)          # Khóa ngoại tham chiếu SERVICE_ITEM
-    applied_at = Column(DateTime, default=datetime.utcnow)                                              # Thời điểm sử dụng
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    price_list_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=False)
+    billing_statement_id = Column(UUID(as_uuid=True), nullable=False)
+    service_item_id = Column(UUID(as_uuid=True), ForeignKey("service_item.id"), nullable=False)
+    applied_at = Column(DateTime, default=datetime.utcnow)
 
     # Quan hệ
     price_list_version = relationship("PriceListVersion", back_populates="usage_logs")

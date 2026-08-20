@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.get("/stats", response_model=PriceListStatsResponse)
 def get_price_list_stats(db: Session = Depends(get_db)):
-    """Lấy số lượng thống kê cho 4 thẻ Stat Cards"""
+    """Lấy số lượng thống kê cho 5 thẻ Stat Cards"""
     return PriceListService.get_stats(db)
 
 

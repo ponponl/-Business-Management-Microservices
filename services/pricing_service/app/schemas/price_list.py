@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 class PriceListStatsResponse(BaseModel):
     total: int
     submitted: int
+    approved: int
     effective: int
     rejected: int
 
