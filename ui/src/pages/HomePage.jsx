@@ -8,13 +8,32 @@ import {
 export default function HomePage({ user }) {
   const navigate = useNavigate();
 
+  // 1. Xác định role của user (mặc định là 'staff' nếu chưa có)
+  const role = (user?.role || 'staff').toLowerCase();
+
+  // 2. Hàm điều hướng động theo role
+  const handleNavigatePriceList = () => {
+    switch (role) {
+      case 'director':
+        navigate('/director/price-lists');
+        break;
+      case 'manager':
+        navigate('/manager/price-lists');
+        break;
+      case 'staff':
+      default:
+        navigate('/staff/price-lists');
+        break;
+    }
+  };
+
   return (
     <div className="space-y-6 text-slate-700 font-sans">
       
       {/* 1. Banner Chào Mừng */}
       <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl p-6 text-white shadow-md flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold">Xin chào, {user?.email || 'Quản trị viên'} 👋</h2>
+          <h2 className="text-xl font-bold">Xin chào, {user?.email || user?.fullName || 'Quản trị viên'} 👋</h2>
           <p className="text-xs text-slate-300 mt-1">
             Chào mừng bạn quay trở lại với Hệ thống Quản trị Kinh doanh ABC Logistics.
           </p>
@@ -26,14 +45,14 @@ export default function HomePage({ user }) {
         </div>
       </div>
 
-      {/* 2. Lối Tắt Nghiệp Vụ (Đã cập nhật tiền tố /staff/) */}
+      {/* 2. Lối Tắt Nghiệp Vụ */}
       <div>
         <h3 className="text-sm font-bold text-slate-800 mb-3">Truy cập nhanh nghiệp vụ</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           
           {/* Quản lý Hợp đồng */}
           <div 
-            onClick={() => navigate('/staff/contracts')}
+            onClick={() => navigate(`/${role}/contracts`)}
             className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:border-sky-500 hover:shadow-md transition cursor-pointer group"
           >
             <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center mb-3 group-hover:scale-110 transition">
@@ -46,9 +65,9 @@ export default function HomePage({ user }) {
             <p className="text-xs text-slate-500 mt-1">Tra cứu, tạo mới và quản lý phụ lục hợp đồng khách hàng.</p>
           </div>
 
-          {/* Quản lý Bảng giá */}
+          {/* Quản lý Bảng giá (Đã xử lý điều hướng theo Role) */}
           <div 
-            onClick={() => navigate('/staff/price-lists')}
+            onClick={handleNavigatePriceList}
             className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:border-sky-500 hover:shadow-md transition cursor-pointer group"
           >
             <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3 group-hover:scale-110 transition">
@@ -63,7 +82,7 @@ export default function HomePage({ user }) {
 
           {/* Quản lý Sản lượng */}
           <div 
-            onClick={() => navigate('/staff/volumes')}
+            onClick={() => navigate(`/${role}/volumes`)}
             className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:border-sky-500 hover:shadow-md transition cursor-pointer group"
           >
             <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mb-3 group-hover:scale-110 transition">
@@ -78,7 +97,7 @@ export default function HomePage({ user }) {
 
           {/* Quản lý Thanh toán */}
           <div 
-            onClick={() => navigate('/staff/payments')}
+            onClick={() => navigate(`/${role}/payments`)}
             className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:border-sky-500 hover:shadow-md transition cursor-pointer group"
           >
             <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center mb-3 group-hover:scale-110 transition">

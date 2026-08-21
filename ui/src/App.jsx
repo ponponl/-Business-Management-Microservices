@@ -12,6 +12,11 @@ import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
 
 import PriceListApprovalPage from './pages/manager/PriceListApprovalPage.jsx';
 
+import DirectorPriceListApprovalPage from './pages/director/DirectorPriceListApprovalPage.jsx';
+
+
+
+
 
 const EmptyPage = () => <div className="w-full min-h-[400px] bg-transparent" />;
 
@@ -106,7 +111,7 @@ export default function App() {
           <Route path="/director" element={<DashboardPage user={user} />} />
 
           {/* SERVICE: QUẢN LÝ BẢNG GIÁ (ĐÃ ĐỂ TRỐNG) */}
-          <Route path="/director/price-lists" element={<EmptyPage />} />
+          <Route path="/director/price-lists" element={<DirectorPriceListApprovalPage user={user} />} />
 
           {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
           <Route path="/director/contracts" element={<EmptyPage />} />

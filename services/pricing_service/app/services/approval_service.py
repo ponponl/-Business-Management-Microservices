@@ -13,7 +13,6 @@ class ApprovalService:
 
     @staticmethod
     def _get_latest_version(price_list: PriceList) -> Optional[PriceListVersion]:
-        """Hàm phụ trợ lấy Version mới nhất theo version_number"""
         if not price_list or not price_list.versions:
             return None
         return max(
@@ -23,7 +22,6 @@ class ApprovalService:
 
     @staticmethod
     def get_approval_stats(db: Session) -> Dict[str, int]:
-        """Thống kê 5 chỉ số chính cho Stat Cards dựa trên Version mới nhất"""
         price_lists = (
             db.query(PriceList)
             .options(joinedload(PriceList.versions))
@@ -58,8 +56,39 @@ class ApprovalService:
         }
 
     @staticmethod
+    def get_director_approval_stats(db: Session) -> Dict[str, int]:
+        price_lists = (
+            db.query(PriceList)
+            .options(joinedload(PriceList.versions))
+            .filter(or_(PriceList.is_deleted == False, PriceList.is_deleted == None))
+            .all()
+        )
+
+        approved = effective = rejected = 0
+
+        for pl in price_lists:
+            latest_v = ApprovalService._get_latest_version(pl)
+            st_raw = getattr(latest_v, "status", "DRAFT") if latest_v else "DRAFT"
+            st = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
+
+            if st == "APPROVED":
+                approved += 1
+            elif st == "EFFECTIVE":
+                effective += 1
+            elif st == "REJECTED":
+                rejected += 1
+
+        total = approved + effective + rejected
+
+        return {
+            "total": total,
+            "approved": approved,
+            "effective": effective,
+            "rejected": rejected
+        }
+
+    @staticmethod
     def _extract_services_from_pricelist(db: Session, price_list: PriceList) -> List[dict]:
-        """Trích xuất danh sách dịch vụ an toàn (Bổ sung đa dạng key-naming cho Frontend)"""
         latest_version = ApprovalService._get_latest_version(price_list)
 
         query = db.query(PriceListDetail).options(joinedload(PriceListDetail.service_item))
@@ -74,7 +103,6 @@ class ApprovalService:
         for d in details:
             srv = d.service_item
             
-            # 1. Lấy service_code: Ưu tiên srv -> d.service_code -> d.service_id
             code = (
                 getattr(srv, "service_code", None) or 
                 getattr(srv, "code", None) or 
@@ -83,7 +111,6 @@ class ApprovalService:
                 "-"
             )
             
-            # 2. Lấy service_name: Ưu tiên srv -> d.service_name -> d.description
             name = (
                 getattr(srv, "service_name", None) or 
                 getattr(srv, "name", None) or 
@@ -92,30 +119,22 @@ class ApprovalService:
                 "Dịch vụ chuẩn"
             )
             
-            # 3. Lấy unit: Ưu tiên d.unit -> srv.unit
             unit = (
                 getattr(d, "unit", None) or 
                 getattr(srv, "unit", None) or 
                 "Lượt"
             )
             
-            # 4. Lấy price
             price = float(d.unit_price) if getattr(d, "unit_price", None) is not None else 0.0
 
-            # Bổ sung đầy đủ biến thể key naming cho Frontend React/Vue/AntD
             services_data.append({
-                # Mã dịch vụ
                 "service_code": str(code),
                 "serviceCode": str(code),
                 "code": str(code),
-
-                # Tên dịch vụ
                 "service_name": str(name),
                 "serviceName": str(name),
                 "name": str(name),
                 "title": str(name),
-
-                # Đơn vị & Đơn giá
                 "unit": str(unit),
                 "price": price,
                 "unit_price": price,
@@ -126,7 +145,6 @@ class ApprovalService:
 
     @staticmethod
     def _build_approval_response(db: Session, price_list: PriceList, message: str) -> ApprovalResponse:
-        """Mapping dữ liệu PriceList sang DTO Chuẩn cho FE"""
         price_code = price_list.price_list_code or str(price_list.id)
         latest_version = ApprovalService._get_latest_version(price_list)
 
@@ -141,13 +159,6 @@ class ApprovalService:
 
         stg_raw = getattr(latest_version, "approval_stage", "DRAFT") if latest_version else "DRAFT"
         stage_val = str(stg_raw.value if hasattr(stg_raw, "value") else stg_raw).strip().upper()
-
-        # TỰ ĐỘNG CHUYỂN TRẠNG THÁI EXPIRED NẾU QUÁ HẠN VALID_TO
-        today = date.today()
-        if latest_version and latest_version.valid_to and latest_version.valid_to < today:
-            if status_val not in ["SUPERSEDED", "DRAFT", "REJECTED"]:
-                status_val = "EXPIRED"
-                stage_val = "EXPIRED"
 
         ver_num = latest_version.version_number if latest_version else 1
         version_str = f"v{ver_num}.0"
@@ -186,7 +197,6 @@ class ApprovalService:
 
     @staticmethod
     def get_approval_list(db: Session, status: Optional[str] = None) -> List[ApprovalResponse]:
-        """Lấy danh sách bảng giá có lọc theo các trạng thái"""
         price_lists = (
             db.query(PriceList)
             .options(joinedload(PriceList.versions))
@@ -210,8 +220,35 @@ class ApprovalService:
         return results
 
     @staticmethod
+    def get_director_approval_list(db: Session, status: Optional[str] = None) -> List[ApprovalResponse]:
+        price_lists = (
+            db.query(PriceList)
+            .options(joinedload(PriceList.versions))
+            .filter(or_(PriceList.is_deleted == False, PriceList.is_deleted == None))
+            .order_by(PriceList.created_at.desc())
+            .all()
+        )
+
+        results = []
+        clean_status = status.strip().upper() if status and status.strip() else None
+
+        # Chỉ giữ đúng 3 trạng thái dành cho Giám đốc
+        ALLOWED_STATUSES = ["APPROVED", "EFFECTIVE", "REJECTED"]
+
+        for pl in price_lists:
+            res = ApprovalService._build_approval_response(db=db, price_list=pl, message="Lấy thông tin thành công")
+            
+            if res.status in ALLOWED_STATUSES:
+                if clean_status and clean_status not in ["TẤT CẢ", "ALL"]:
+                    if res.status.upper() == clean_status:
+                        results.append(res)
+                else:
+                    results.append(res)
+
+        return results
+
+    @staticmethod
     def _find_price_list(db: Session, price_code: str) -> Optional[PriceList]:
-        """Tìm PriceList theo Code hoặc ID an toàn kèm eager load versions"""
         is_valid_uuid = False
         try:
             uuid.UUID(price_code)
@@ -268,6 +305,54 @@ class ApprovalService:
         if manager_id:
             try:
                 approved_by_uuid = uuid.UUID(manager_id)
+            except ValueError:
+                approved_by_uuid = None
+
+        if pl.versions:
+            if act == "APPROVE":
+                latest_v = ApprovalService._get_latest_version(pl)
+                for v in pl.versions:
+                    if latest_v and v.id != latest_v.id:
+                        v.status = "SUPERSEDED"
+                        v.approval_stage = "SUPERSEDED"
+                    else:
+                        v.status = target_status
+                        v.approval_stage = target_stage
+                        v.approved_by = approved_by_uuid
+                        v.rejected_reason = None
+            else:
+                for v in pl.versions:
+                    v.status = target_status
+                    v.approval_stage = target_stage
+                    v.rejected_reason = reason_text
+
+        db.commit()
+        db.refresh(pl)
+
+        msg = "Phê duyệt thành công." if act == "APPROVE" else f"Từ chối thành công. Lý do: {reason_text}"
+        return ApprovalService._build_approval_response(db=db, price_list=pl, message=msg)
+
+    @staticmethod
+    def director_approve(
+        db: Session, price_code: str, payload: ApprovalActionRequest, director_id: Optional[str] = None
+    ) -> ApprovalResponse:
+        act = payload.action.upper()
+        if act not in ["APPROVE", "REJECT"]:
+            raise HTTPException(status_code=400, detail="Hành động không hợp lệ.")
+
+        pl = ApprovalService._find_price_list(db, price_code)
+
+        if not pl:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
+
+        target_status = "EFFECTIVE" if act == "APPROVE" else "REJECTED"
+        target_stage = "EFFECTIVE" if act == "APPROVE" else "REJECTED"
+        reason_text = payload.rejected_reason or payload.comment or ""
+
+        approved_by_uuid = None
+        if director_id:
+            try:
+                approved_by_uuid = uuid.UUID(director_id)
             except ValueError:
                 approved_by_uuid = None
 
