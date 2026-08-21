@@ -60,3 +60,14 @@ def create_new_price_list(
             status_code=400, 
             detail=f"Không thể tạo bảng giá: {str(e)}"
         )
+
+
+# API Cập nhật bảng giá
+@router.put("/{price_code}")
+def update_price_list(
+    price_code: str,
+    payload: PriceListCreate,
+    db: Session = Depends(get_db)
+):
+    """API Cập nhật Bảng giá (Chỉ DRAFT và REJECTED mới được sửa)"""
+    return PriceListService.update_price_list(db=db, price_code=price_code, payload=payload)

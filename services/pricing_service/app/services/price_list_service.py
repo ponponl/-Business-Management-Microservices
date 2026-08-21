@@ -129,6 +129,14 @@ class PriceListService:
             created_at_val = getattr(pl, "created_at", None)
             created_at_str = created_at_val.strftime("%d/%m/%Y %H:%M") if created_at_val else "N/A"
 
+            reason = (
+                getattr(ver, "rejected_reason", None)
+                or getattr(ver, "rejection_reason", None)
+                or getattr(ver, "reject_reason", None)
+                or getattr(ver, "rejection_note", None)
+                or ""
+            )
+
             items.append(
                 {
                     "id": pl.price_list_code or str(pl.id),
@@ -140,6 +148,8 @@ class PriceListService:
                     "version": version_str,
                     "effectiveTime": effective_time,
                     "status": str(ver.status or "DRAFT").upper(),
+                    "rejectReason": reason,
+                    "rejectionReason": reason,
                     "updatedBy": str(getattr(pl, "created_by", None) or "Hệ thống"),
                     "updatedAt": created_at_str,
                 }
@@ -173,7 +183,7 @@ class PriceListService:
 
     @staticmethod
     def get_detail_by_code(db: Session, price_code: str) -> Dict[str, Any]:
-        """Lấy thông tin chi tiết Bảng giá"""
+        """Lấy thông tin chi tiết Bảng giá bao gồm lý do từ chối (nếu có)"""
 
         is_valid_uuid = False
         try:
@@ -193,6 +203,11 @@ class PriceListService:
                 PriceList.id == PriceListVersion.price_list_id,
             )
             .filter(or_(*conditions))
+            .order_by(
+                desc(PriceListVersion.status == 'REJECTED'),
+                desc(PriceListVersion.version_number),
+                desc(PriceListVersion.id)
+            )
             .first()
         )
 
@@ -235,6 +250,16 @@ class PriceListService:
                 }
             )
 
+        reason = (
+            getattr(ver, "rejected_reason", None)
+            or getattr(ver, "rejection_reason", None)
+            or getattr(ver, "reject_reason", None)
+            or getattr(ver, "rejection_note", None)
+            or getattr(pl, "rejected_reason", None)
+            or getattr(pl, "rejection_reason", None)
+            or ""
+        )
+
         return {
             "id": pl.price_list_code or str(pl.id),
             "priceCode": pl.price_list_code or "N/A",
@@ -245,6 +270,8 @@ class PriceListService:
             ),
             "version": version_str,
             "status": str(ver.status or "DRAFT").upper(),
+            "rejectReason": reason,
+            "rejectionReason": reason,
             "validFrom": valid_from_str,
             "validTo": valid_to_str,
             "services": services_data,
@@ -327,4 +354,104 @@ class PriceListService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Lỗi tạo bảng giá: {str(e)}",
+            )
+
+    @staticmethod
+    def update_price_list(
+        db: Session, price_code: str, payload: PriceListCreate
+    ) -> Dict[str, Any]:
+        """Cập nhật thông tin Bảng giá (Chỉ cho phép khi trạng thái là DRAFT hoặc REJECTED)"""
+        
+        filter_conditions = [PriceList.price_list_code == price_code]
+        try:
+            uuid_obj = uuid.UUID(price_code)
+            filter_conditions.append(PriceList.id == uuid_obj)
+        except ValueError:
+            pass  
+
+        record = (
+            db.query(PriceList, PriceListVersion)
+            .join(PriceListVersion, PriceList.id == PriceListVersion.price_list_id)
+            .filter(or_(*filter_conditions))
+            .order_by(desc(PriceListVersion.version_number))
+            .first()
+        )
+
+        if not record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Không tìm thấy bảng giá '{price_code}'"
+            )
+
+        pl, ver = record
+        current_status = str(ver.status or "").upper()
+
+        if current_status not in ["DRAFT", "REJECTED"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Không thể chỉnh sửa bảng giá ở trạng thái '{current_status}'. Chỉ cho phép sửa khi DRAFT hoặc REJECTED."
+            )
+
+        try:
+            pl.price_list_name = payload.price_name
+            pl.scope_type = payload.target_type
+            pl.scope_id = payload.specific_target
+
+            ver.valid_from = payload.effective_from
+            ver.valid_to = payload.effective_to
+            
+            if payload.status:
+                ver.status = payload.status.upper()
+
+            # Xóa/Reset lý do từ chối cũ khi chỉnh sửa lại
+            for field in ["rejected_reason", "rejection_reason", "reject_reason", "rejection_note"]:
+                if hasattr(ver, field):
+                    setattr(ver, field, None)
+
+            db.query(PriceListDetail).filter(
+                PriceListDetail.price_list_version_id == ver.id
+            ).delete(synchronize_session=False)
+
+            for item in payload.services:
+                if not item.service_code:
+                    continue  
+
+                service_item = (
+                    db.query(ServiceItem)
+                    .filter(ServiceItem.service_code == item.service_code)
+                    .first()
+                )
+
+                if service_item:
+                    service_item.service_name = item.service_name
+                    service_item.unit = item.unit
+                else:
+                    service_item = ServiceItem(
+                        service_code=item.service_code,
+                        service_name=item.service_name,
+                        unit=item.unit,
+                        status="ACTIVE"
+                    )
+                    db.add(service_item)
+                    db.flush()  
+
+                detail = PriceListDetail(
+                    price_list_id=pl.id,
+                    price_list_version_id=ver.id,
+                    service_item_id=service_item.id,
+                    unit_price=item.price,
+                )
+                db.add(detail)
+
+            db.commit()
+            return {
+                "id": pl.price_list_code,
+                "message": "Cập nhật bảng giá thành công"
+            }
+
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lỗi khi cập nhật bảng giá: {str(e)}"
             )
