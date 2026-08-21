@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -17,8 +18,92 @@ from app.schemas.price_list import PriceListCreate
 class PriceListService:
 
     @staticmethod
+    def _validate_overlapping_time(
+        db: Session,
+        scope_type: str,
+        scope_id: Optional[str],
+        effective_from: Optional[datetime],
+        effective_to: Optional[datetime],
+        exclude_price_list_id: Optional[Any] = None,
+    ):
+        """
+        Kiểm tra va chạm thời gian hiệu lực giữa các bảng giá cùng scope_type và scope_id.
+        Xử lý chuẩn xác cả trường hợp scope_id là None/Rỗng.
+        """
+        if not effective_from:
+            return
+
+        target_scope_id = scope_id.strip() if scope_id and str(scope_id).strip() != "" else None
+
+        query = (
+            db.query(PriceListVersion)
+            .join(PriceList, PriceList.id == PriceListVersion.price_list_id)
+            .filter(
+                PriceList.scope_type == scope_type,
+                PriceListVersion.status.in_(["SUBMITTED", "APPROVED", "EFFECTIVE"]),
+            )
+        )
+
+        if target_scope_id is None:
+            query = query.filter(or_(PriceList.scope_id.is_(None), PriceList.scope_id == ""))
+        else:
+            query = query.filter(PriceList.scope_id == target_scope_id)
+
+        if exclude_price_list_id:
+            query = query.filter(PriceList.id != exclude_price_list_id)
+
+        existing_versions = query.all()
+
+        for ver in existing_versions:
+            v_from = ver.valid_from
+            v_to = ver.valid_to
+
+            start_overlap = (v_to is None) or (effective_from <= v_to)
+            end_overlap = (effective_to is None) or (v_from is None) or (effective_to >= v_from)
+
+            if start_overlap and end_overlap:
+                from_str = v_from.strftime("%d/%m/%Y") if v_from else "Không giới hạn"
+                to_str = v_to.strftime("%d/%m/%Y") if v_to else "Không giới hạn"
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Thời gian hiệu lực bị chồng lấp với bảng giá khác cùng đối tượng! "
+                        f"Bảng giá hiện tại đang có hiệu lực từ {from_str} đến {to_str}."
+                    ),
+                )
+
+    @staticmethod
+    def _generate_next_price_code(db: Session) -> str:
+        """
+        Tìm mã bảng giá có 3 số cuối lớn nhất trong năm hiện tại và cộng thêm 1.
+        Ví dụ: Lớn nhất là PL-2026-215 -> Tạo mã mới là PL-2026-216.
+        """
+        year = datetime.now().year
+        prefix = f"PL-{year}-"
+
+        codes = (
+            db.query(PriceList.price_list_code)
+            .filter(PriceList.price_list_code.like(f"{prefix}%"))
+            .all()
+        )
+
+        max_number = 0
+        pattern = re.compile(rf"^{prefix}(\d+)$")
+
+        for (code_val,) in codes:
+            if code_val:
+                match = pattern.match(code_val.strip())
+                if match:
+                    num = int(match.group(1))
+                    if num > max_number:
+                        max_number = num
+
+        next_number = max_number + 1
+        return f"{prefix}{next_number:03d}"
+
+    @staticmethod
     def get_stats(db: Session) -> Dict[str, int]:
-        """Tính toán số liệu cho chuẩn 5 Stat Cards hiển thị ở UI"""
+        """Tính toán số liệu giữ nguyên 5 Stat Cards ở UI"""
         
         subquery = (
             db.query(
@@ -74,12 +159,13 @@ class PriceListService:
         page: int = 1,
         page_size: int = 10,
     ) -> Dict[str, Any]:
-        """Xử lý lọc, tìm kiếm và phân trang danh sách bảng giá từ JOIN PriceList & PriceListVersion"""
+        """Xử lý lọc, tìm kiếm và phân trang danh sách bảng giá (Bổ sung lọc SUPERSEDED, EXPIRED)"""
 
         query = db.query(PriceList, PriceListVersion).join(
             PriceListVersion, PriceList.id == PriceListVersion.price_list_id
         )
 
+        # Lọc trạng thái (Chấp nhận cả SUPERSEDED và EXPIRED từ UI)
         if status and status != "Tất cả":
             query = query.filter(PriceListVersion.status.ilike(status.strip()))
 
@@ -142,7 +228,7 @@ class PriceListService:
                     "id": pl.price_list_code or str(pl.id),
                     "name": pl.price_list_name or "N/A",
                     "contractId": str(
-                        getattr(pl, "contract_id", None) or "N/A"
+                        getattr(pl, "contract_id", None) or getattr(pl, "scope_id", None) or "N/A"
                     ),
                     "type": str(pl.scope_type or "GENERAL").upper(),
                     "version": version_str,
@@ -183,7 +269,7 @@ class PriceListService:
 
     @staticmethod
     def get_detail_by_code(db: Session, price_code: str) -> Dict[str, Any]:
-        """Lấy thông tin chi tiết Bảng giá bao gồm lý do từ chối (nếu có)"""
+        """Lấy thông tin chi tiết Bảng giá"""
 
         is_valid_uuid = False
         try:
@@ -281,22 +367,19 @@ class PriceListService:
     def create_price_list(
         db: Session, payload: PriceListCreate
     ) -> Dict[str, Any]:
-        """Tạo mới bảng giá, sinh mã tăng tiến liên tục theo thứ tự số (PL-2026-016 -> PL-2026-017...)"""
+        """Tạo mới bảng giá"""
         try:
+            PriceListService._validate_overlapping_time(
+                db=db,
+                scope_type=payload.target_type,
+                scope_id=payload.specific_target,
+                effective_from=payload.effective_from,
+                effective_to=payload.effective_to,
+            )
+
             price_code = payload.price_code
             if not price_code:
-                year = datetime.now().year
-                prefix = f"PL-{year}-"
-                
-                next_number = db.query(PriceList).count() + 1
-
-                while True:
-                    candidate_code = f"{prefix}{next_number:03d}"
-                    exists = db.query(PriceList).filter(PriceList.price_list_code == candidate_code).first()
-                    if not exists:
-                        price_code = candidate_code
-                        break
-                    next_number += 1
+                price_code = PriceListService._generate_next_price_code(db)
 
             new_price_list = PriceList(
                 price_list_code=price_code,
@@ -349,6 +432,9 @@ class PriceListService:
                 "message": "Tạo mới bảng giá thành công",
             }
 
+        except HTTPException:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             raise HTTPException(
@@ -360,7 +446,7 @@ class PriceListService:
     def update_price_list(
         db: Session, price_code: str, payload: PriceListCreate
     ) -> Dict[str, Any]:
-        """Cập nhật thông tin Bảng giá (Chỉ cho phép khi trạng thái là DRAFT hoặc REJECTED)"""
+        """Cập nhật thông tin Bảng giá"""
         
         filter_conditions = [PriceList.price_list_code == price_code]
         try:
@@ -392,6 +478,15 @@ class PriceListService:
                 detail=f"Không thể chỉnh sửa bảng giá ở trạng thái '{current_status}'. Chỉ cho phép sửa khi DRAFT hoặc REJECTED."
             )
 
+        PriceListService._validate_overlapping_time(
+            db=db,
+            scope_type=payload.target_type,
+            scope_id=payload.specific_target,
+            effective_from=payload.effective_from,
+            effective_to=payload.effective_to,
+            exclude_price_list_id=pl.id,
+        )
+
         try:
             pl.price_list_name = payload.price_name
             pl.scope_type = payload.target_type
@@ -403,7 +498,6 @@ class PriceListService:
             if payload.status:
                 ver.status = payload.status.upper()
 
-            # Xóa/Reset lý do từ chối cũ khi chỉnh sửa lại
             for field in ["rejected_reason", "rejection_reason", "reject_reason", "rejection_note"]:
                 if hasattr(ver, field):
                     setattr(ver, field, None)
@@ -449,6 +543,9 @@ class PriceListService:
                 "message": "Cập nhật bảng giá thành công"
             }
 
+        except HTTPException:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             raise HTTPException(

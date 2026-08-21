@@ -16,6 +16,9 @@ class ServiceDetailSchema(BaseModel):
     unit: Optional[str] = None
     price: Optional[float] = 0.0
 
+    class Config:
+        from_attributes = True
+
 
 class ApprovalResponse(BaseModel):
     price_list_id: str
@@ -26,10 +29,10 @@ class ApprovalResponse(BaseModel):
     effective_from: Optional[str] = None
     effective_to: Optional[str] = None
     status: str
-    approval_stage: str
+    approval_stage: Optional[str] = "MANAGER"
     updated_by: Optional[str] = None
     updated_at: Optional[str] = None
-    message: str
+    message: Optional[str] = "Success"
     services: List[ServiceDetailSchema] = []
 
     class Config:

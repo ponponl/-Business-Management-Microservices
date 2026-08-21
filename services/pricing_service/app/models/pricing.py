@@ -5,6 +5,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.session import Base
 
+
 # 1. Bảng SERVICE_ITEM (Dịch vụ)
 class ServiceItem(Base):
     __tablename__ = "service_item"
@@ -27,12 +28,13 @@ class PriceList(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     price_list_code = Column(String(50), unique=True, nullable=False)
     price_list_name = Column(String(255), nullable=False)
-    customer_id = Column(UUID(as_uuid=True), nullable=True)
-    contract_id = Column(UUID(as_uuid=True), nullable=True)
+
+    # PRC-01: Phạm vi & Đối tượng áp dụng (CUSTOMER, CONTRACT, GENERAL, SERVICE_GROUP,...)
     scope_type = Column(String(50), nullable=False)
     scope_id = Column(String(50), nullable=True)
+
     description = Column(Text, nullable=True)
-    
+
     # Audit Trail
     created_by = Column(UUID(as_uuid=True), nullable=True)
     is_deleted = Column(Boolean, default=False)
@@ -52,9 +54,14 @@ class PriceListVersion(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     price_list_id = Column(UUID(as_uuid=True), ForeignKey("price_list.id"), nullable=False)
     version_number = Column(Integer, nullable=False)
+
+    # PRC-02: Thời gian hiệu lực (valid_to = Null đại diện cho áp dụng vô thời hạn)
     valid_from = Column(Date, nullable=False)
-    valid_to = Column(Date, nullable=False)
-    status = Column(String(20), default="DRAFT")
+    valid_to = Column(Date, nullable=True)
+
+    # Đầy đủ 7 trạng thái: DRAFT, SUBMITTED, APPROVED, EFFECTIVE, REJECTED, SUPERSEDED, EXPIRED
+    status = Column(String(30), default="DRAFT", nullable=False)
+
     parent_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=True)
     workflow_instance_id = Column(UUID(as_uuid=True), nullable=True)
 

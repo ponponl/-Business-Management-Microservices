@@ -2,12 +2,15 @@ from typing import List, Optional
 from datetime import date
 from pydantic import BaseModel, Field
 
+
 class PriceListStatsResponse(BaseModel):
     total: int
     submitted: int
     approved: int
     effective: int
     rejected: int
+    superseded: int = 0  # Bổ sung trạng thái Bị thay thế
+    expired: int = 0     # Bổ sung trạng thái Hết hiệu lực
 
 
 class PriceListItemResponse(BaseModel):
@@ -47,7 +50,7 @@ class PriceListCreate(BaseModel):
     target_type: str = Field(..., alias="targetType")
     specific_target: Optional[str] = Field(None, alias="specificTarget")
     effective_from: date = Field(..., alias="effectiveFrom")
-    effective_to: date = Field(..., alias="effectiveTo")
+    effective_to: Optional[date] = Field(None, alias="effectiveTo")  # Sửa: Cho phép None/Null
     status: str = Field("DRAFT")
     version: str = "1.0"
     services: List[PriceListItemCreate]

@@ -1,8 +1,9 @@
-from sqlalchemy.orm import Session
+import uuid
+from datetime import datetime, date
+from typing import Optional, List, Dict, Any
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from fastapi import HTTPException, status
-from typing import Optional, List, Dict, Any
-import uuid
 
 from app.models.pricing import PriceList, PriceListVersion, PriceListDetail, ServiceItem
 from app.schemas.approval import ApprovalActionRequest, ApprovalResponse
@@ -11,29 +12,33 @@ from app.schemas.approval import ApprovalActionRequest, ApprovalResponse
 class ApprovalService:
 
     @staticmethod
+    def _get_latest_version(price_list: PriceList) -> Optional[PriceListVersion]:
+        """Hàm phụ trợ lấy Version mới nhất theo version_number"""
+        if not price_list or not price_list.versions:
+            return None
+        return max(
+            price_list.versions,
+            key=lambda v: getattr(v, "version_number", 0) or 0
+        )
+
+    @staticmethod
     def get_approval_stats(db: Session) -> Dict[str, int]:
-        """Thống kê chính xác số lượng cho 5 Stat Cards"""
-        price_lists = db.query(PriceList).filter(PriceList.is_deleted == False).all()
+        """Thống kê 5 chỉ số chính cho Stat Cards dựa trên Version mới nhất"""
+        price_lists = (
+            db.query(PriceList)
+            .options(joinedload(PriceList.versions))
+            .filter(or_(PriceList.is_deleted == False, PriceList.is_deleted == None))
+            .all()
+        )
 
         total = len(price_lists)
-        submitted = 0
-        approved = 0
-        effective = 0
-        rejected = 0
+        submitted = approved = effective = rejected = 0
 
         for pl in price_lists:
-            status_val = getattr(pl, "status", None)
-
-            if not status_val and hasattr(pl, "versions") and pl.versions:
-                sorted_versions = sorted(
-                    pl.versions,
-                    key=lambda v: getattr(v, "version_number", 0) or 0,
-                    reverse=True
-                )
-                if sorted_versions:
-                    status_val = getattr(sorted_versions[0], "status", None)
-
-            st = str(status_val or "").strip().upper()
+            latest_v = ApprovalService._get_latest_version(pl)
+            
+            st_raw = getattr(latest_v, "status", "DRAFT") if latest_v else "DRAFT"
+            st = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
 
             if st == "SUBMITTED":
                 submitted += 1
@@ -54,17 +59,10 @@ class ApprovalService:
 
     @staticmethod
     def _extract_services_from_pricelist(db: Session, price_list: PriceList) -> List[dict]:
-        """Trích xuất danh sách dịch vụ an toàn"""
-        latest_version = None
-        if hasattr(price_list, "versions") and price_list.versions:
-            sorted_versions = sorted(
-                price_list.versions, 
-                key=lambda v: getattr(v, "version_number", 0) or 0, 
-                reverse=True
-            )
-            latest_version = sorted_versions[0] if sorted_versions else None
+        """Trích xuất danh sách dịch vụ an toàn (Bổ sung đa dạng key-naming cho Frontend)"""
+        latest_version = ApprovalService._get_latest_version(price_list)
 
-        query = db.query(PriceListDetail)
+        query = db.query(PriceListDetail).options(joinedload(PriceListDetail.service_item))
         if latest_version:
             query = query.filter(PriceListDetail.price_list_version_id == latest_version.id)
         else:
@@ -74,18 +72,54 @@ class ApprovalService:
 
         services_data = []
         for d in details:
-            srv = getattr(d, "service_item", None)
+            srv = d.service_item
             
-            code = getattr(srv, "service_code", None) or getattr(d, "service_code", "SRV-DEFAULT")
-            name = getattr(srv, "service_name", None) or getattr(d, "service_name", "Dịch vụ chuẩn")
-            unit = getattr(srv, "unit", None) or getattr(d, "unit", "Lượt")
+            # 1. Lấy service_code: Ưu tiên srv -> d.service_code -> d.service_id
+            code = (
+                getattr(srv, "service_code", None) or 
+                getattr(srv, "code", None) or 
+                getattr(d, "service_code", None) or 
+                (str(d.service_id) if getattr(d, "service_id", None) else None) or 
+                "-"
+            )
+            
+            # 2. Lấy service_name: Ưu tiên srv -> d.service_name -> d.description
+            name = (
+                getattr(srv, "service_name", None) or 
+                getattr(srv, "name", None) or 
+                getattr(d, "service_name", None) or 
+                getattr(d, "description", None) or 
+                "Dịch vụ chuẩn"
+            )
+            
+            # 3. Lấy unit: Ưu tiên d.unit -> srv.unit
+            unit = (
+                getattr(d, "unit", None) or 
+                getattr(srv, "unit", None) or 
+                "Lượt"
+            )
+            
+            # 4. Lấy price
             price = float(d.unit_price) if getattr(d, "unit_price", None) is not None else 0.0
 
+            # Bổ sung đầy đủ biến thể key naming cho Frontend React/Vue/AntD
             services_data.append({
-                "service_code": code,
-                "service_name": name,
-                "unit": unit,
-                "price": price
+                # Mã dịch vụ
+                "service_code": str(code),
+                "serviceCode": str(code),
+                "code": str(code),
+
+                # Tên dịch vụ
+                "service_name": str(name),
+                "serviceName": str(name),
+                "name": str(name),
+                "title": str(name),
+
+                # Đơn vị & Đơn giá
+                "unit": str(unit),
+                "price": price,
+                "unit_price": price,
+                "unitPrice": price
             })
 
         return services_data
@@ -94,50 +128,57 @@ class ApprovalService:
     def _build_approval_response(db: Session, price_list: PriceList, message: str) -> ApprovalResponse:
         """Mapping dữ liệu PriceList sang DTO Chuẩn cho FE"""
         price_code = price_list.price_list_code or str(price_list.id)
+        latest_version = ApprovalService._get_latest_version(price_list)
 
-        latest_version = None
-        if hasattr(price_list, "versions") and price_list.versions:
-            sorted_versions = sorted(
-                price_list.versions, 
-                key=lambda v: getattr(v, "version_number", 0) or 0, 
-                reverse=True
-            )
-            latest_version = sorted_versions[0] if sorted_versions else None
+        valid_from_str = latest_version.valid_from.strftime("%Y-%m-%d") if (latest_version and latest_version.valid_from) else None
+        valid_to_str = latest_version.valid_to.strftime("%Y-%m-%d") if (latest_version and latest_version.valid_to) else None
 
-        valid_from = getattr(price_list, "valid_from", None) or (getattr(latest_version, "valid_from", None) if latest_version else None)
-        valid_to = getattr(price_list, "valid_to", None) or (getattr(latest_version, "valid_to", None) if latest_version else None)
-
-        valid_from_str = valid_from.strftime("%Y-%m-%d") if valid_from else None
-        valid_to_str = valid_to.strftime("%Y-%m-%d") if valid_to else None
-
-        updated_at_val = getattr(price_list, "updated_at", None) or getattr(price_list, "created_at", None)
+        updated_at_val = price_list.updated_at or price_list.created_at
         updated_at_str = updated_at_val.strftime("%Y-%m-%d %H:%M") if updated_at_val else None
 
-        status_val = (
-            getattr(price_list, "status", None) 
-            or (getattr(latest_version, "status", None) if latest_version else "DRAFT")
-        )
-        stage_val = (
-            getattr(price_list, "approval_stage", None) 
-            or (getattr(latest_version, "approval_stage", None) if latest_version else "DRAFT")
-        )
+        st_raw = getattr(latest_version, "status", "DRAFT") if latest_version else "DRAFT"
+        status_val = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
 
-        ver_num = getattr(latest_version, "version_number", 1) if latest_version else 1
-        version_str = f"v{ver_num}.0" if isinstance(ver_num, int) else str(ver_num)
+        stg_raw = getattr(latest_version, "approval_stage", "DRAFT") if latest_version else "DRAFT"
+        stage_val = str(stg_raw.value if hasattr(stg_raw, "value") else stg_raw).strip().upper()
+
+        # TỰ ĐỘNG CHUYỂN TRẠNG THÁI EXPIRED NẾU QUÁ HẠN VALID_TO
+        today = date.today()
+        if latest_version and latest_version.valid_to and latest_version.valid_to < today:
+            if status_val not in ["SUPERSEDED", "DRAFT", "REJECTED"]:
+                status_val = "EXPIRED"
+                stage_val = "EXPIRED"
+
+        ver_num = latest_version.version_number if latest_version else 1
+        version_str = f"v{ver_num}.0"
+
+        scope_raw = getattr(price_list, "scope_type", "GENERAL")
+        target_type = str(scope_raw.value if hasattr(scope_raw, "value") else scope_raw).strip().upper() if scope_raw else "GENERAL"
+
+        specific_target = None
+        if target_type in ["CUSTOMER", "CUSTOMER_SPECIFIC"] and getattr(price_list, "customer_id", None):
+            specific_target = str(price_list.customer_id)
+        elif target_type in ["CONTRACT", "CONTRACT_SPECIFIC"] and getattr(price_list, "contract_id", None):
+            specific_target = str(price_list.contract_id)
+        else:
+            specific_target = str(price_list.scope_id) if getattr(price_list, "scope_id", None) else None
 
         services = ApprovalService._extract_services_from_pricelist(db, price_list)
+
+        raw_created_by = str(price_list.created_by) if getattr(price_list, "created_by", None) else "Staff"
+        updated_by_str = "Staff" if len(raw_created_by) > 20 else raw_created_by
 
         return ApprovalResponse(
             price_list_id=price_code,
             price_name=price_list.price_list_name,
-            target_type=getattr(price_list, "scope_type", "GENERAL"),
-            specific_target=str(getattr(price_list, "scope_id", "")) if getattr(price_list, "scope_id", None) else None,
+            target_type=target_type,
+            specific_target=specific_target,
             version=version_str,
             effective_from=valid_from_str,
             effective_to=valid_to_str,
-            status=str(status_val).strip().upper(),
-            approval_stage=str(stage_val).strip().upper(),
-            updated_by=str(getattr(price_list, "created_by", "Admin")),
+            status=status_val,
+            approval_stage=stage_val,
+            updated_by=updated_by_str,
             updated_at=updated_at_str,
             message=message,
             services=services
@@ -145,20 +186,23 @@ class ApprovalService:
 
     @staticmethod
     def get_approval_list(db: Session, status: Optional[str] = None) -> List[ApprovalResponse]:
-        """Lấy danh sách bảng giá đơn giản"""
+        """Lấy danh sách bảng giá có lọc theo các trạng thái"""
         price_lists = (
             db.query(PriceList)
-            .filter(PriceList.is_deleted == False)
+            .options(joinedload(PriceList.versions))
+            .filter(or_(PriceList.is_deleted == False, PriceList.is_deleted == None))
             .order_by(PriceList.created_at.desc())
             .all()
         )
 
         results = []
+        clean_status = status.strip().upper() if status and status.strip() else None
+
         for pl in price_lists:
             res = ApprovalService._build_approval_response(db=db, price_list=pl, message="Lấy thông tin thành công")
             
-            if status and status.strip() and status != "Tất cả":
-                if res.status.upper() == status.strip().upper():
+            if clean_status and clean_status not in ["TẤT CẢ", "ALL"]:
+                if res.status.upper() == clean_status:
                     results.append(res)
             else:
                 results.append(res)
@@ -167,7 +211,7 @@ class ApprovalService:
 
     @staticmethod
     def _find_price_list(db: Session, price_code: str) -> Optional[PriceList]:
-        """Hàm dùng chung để tìm PriceList theo Code hoặc ID an toàn 100%"""
+        """Tìm PriceList theo Code hoặc ID an toàn kèm eager load versions"""
         is_valid_uuid = False
         try:
             uuid.UUID(price_code)
@@ -179,8 +223,10 @@ class ApprovalService:
         if is_valid_uuid:
             conditions.append(PriceList.id == price_code)
 
-        return db.query(PriceList).filter(
-            PriceList.is_deleted == False,
+        return db.query(PriceList).options(
+            joinedload(PriceList.versions)
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None),
             or_(*conditions)
         ).first()
 
@@ -191,16 +237,10 @@ class ApprovalService:
         if not pl:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
 
-        if hasattr(pl, "status"):
-            pl.status = "SUBMITTED"
-        if hasattr(pl, "approval_stage"):
-            pl.approval_stage = "MANAGER_PENDING"
-
-        if hasattr(pl, "versions") and pl.versions:
+        if pl.versions:
             for v in pl.versions:
                 v.status = "SUBMITTED"
-                if hasattr(v, "approval_stage"):
-                    v.approval_stage = "MANAGER_PENDING"
+                v.approval_stage = "MANAGER_PENDING"
 
         db.commit()
         db.refresh(pl)
@@ -231,25 +271,23 @@ class ApprovalService:
             except ValueError:
                 approved_by_uuid = None
 
-        if hasattr(pl, "status"):
-            pl.status = target_status
-        if hasattr(pl, "approval_stage"):
-            pl.approval_stage = target_stage
-
-        if hasattr(pl, "versions") and pl.versions:
-            for v in pl.versions:
-                v.status = target_status
-                if hasattr(v, "approval_stage"):
-                    v.approval_stage = target_stage
-                
-                if act == "APPROVE":
-                    if hasattr(v, "approved_by"):
+        if pl.versions:
+            if act == "APPROVE":
+                latest_v = ApprovalService._get_latest_version(pl)
+                for v in pl.versions:
+                    if latest_v and v.id != latest_v.id:
+                        v.status = "SUPERSEDED"
+                        v.approval_stage = "SUPERSEDED"
+                    else:
+                        v.status = target_status
+                        v.approval_stage = target_stage
                         v.approved_by = approved_by_uuid
-                    if hasattr(v, "rejected_reason"):
                         v.rejected_reason = None
-                else:
-                    if hasattr(v, "rejected_reason"):
-                        v.rejected_reason = reason_text
+            else:
+                for v in pl.versions:
+                    v.status = target_status
+                    v.approval_stage = target_stage
+                    v.rejected_reason = reason_text
 
         db.commit()
         db.refresh(pl)

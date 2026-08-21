@@ -5,7 +5,6 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-// Địa chỉ backend FastAPI của pricing_service
 const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 
 export default function PriceManagementPage() {
@@ -26,7 +25,7 @@ export default function PriceManagementPage() {
 
   const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
 
-  // Gọi API lấy số liệu Stat Cards
+  // Lấy số liệu Stat Cards (giữ nguyên 5 chỉ số chính)
   useEffect(() => {
     fetch(`${API_BASE_URL}/stats`)
       .then((res) => res.json())
@@ -70,7 +69,7 @@ export default function PriceManagementPage() {
     setPage(1);
   };
 
-  // Helper render Badge trạng thái
+  // Helper render Badge trạng thái (Đã cập nhật SUPERSEDED và EXPIRED)
   const renderStatusBadge = (status) => {
     const s = (status || '').toUpperCase();
     switch (s) {
@@ -84,6 +83,10 @@ export default function PriceManagementPage() {
         return <span className="px-2.5 py-0.5 rounded bg-amber-100/70 text-amber-700 text-[10px] font-bold tracking-wide">DRAFT</span>;
       case 'REJECTED':
         return <span className="px-2.5 py-0.5 rounded bg-rose-100/70 text-rose-700 text-[10px] font-bold tracking-wide">REJECTED</span>;
+      case 'SUPERSEDED':
+        return <span className="px-2.5 py-0.5 rounded bg-purple-100/70 text-purple-700 text-[10px] font-bold tracking-wide">SUPERSEDED</span>;
+      case 'EXPIRED':
+        return <span className="px-2.5 py-0.5 rounded bg-gray-200 text-gray-700 text-[10px] font-bold tracking-wide">EXPIRED</span>;
       default:
         return <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-bold">{s}</span>;
     }
@@ -118,7 +121,7 @@ export default function PriceManagementPage() {
         </div>
       </div>
 
-      {/* 2. 5 THẺ THỐNG KÊ */}
+      {/* 2. 5 THẺ THỐNG KÊ (GIỮ NGUYÊN) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
@@ -171,11 +174,11 @@ export default function PriceManagementPage() {
         </div>
       </div>
 
-      {/* 3. BỘ LỌC CÙNG 1 HÀNG NGANG (ĐÃ THU NHỎ 2 Ô ĐẦU TỐI ƯU) */}
+      {/* 3. BỘ LỌC HÀNG NGANG (BỔ SUNG THÊM TAB SUPERSEDED VÀ EXPIRED) */}
       <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
         <div className="flex items-center justify-between gap-2 flex-nowrap overflow-x-auto">
           
-          {/* Nhóm dropdown bên trái - Thu nhỏ tối đa */}
+          {/* Nhóm dropdown bên trái */}
           <div className="flex items-center space-x-2 shrink-0">
             <div className="flex items-center space-x-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 text-[11px]">
               <span className="text-slate-500 whitespace-nowrap">Loại:</span>
@@ -203,7 +206,7 @@ export default function PriceManagementPage() {
           {/* Nhóm Tabs & Tìm kiếm bên phải */}
           <div className="flex items-center space-x-2 shrink-0">
             <div className="bg-slate-100/80 p-0.5 rounded-lg flex items-center text-[11px] font-medium text-slate-500">
-              {['Tất cả', 'SUBMITTED', 'APPROVED', 'EFFECTIVE', 'DRAFT', 'REJECTED'].map((tab) => (
+              {['Tất cả', 'SUBMITTED', 'APPROVED', 'EFFECTIVE', 'DRAFT', 'REJECTED', 'SUPERSEDED', 'EXPIRED'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => handleFilterChange(setActiveStatusTab, tab)}

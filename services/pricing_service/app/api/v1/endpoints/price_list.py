@@ -62,7 +62,6 @@ def create_new_price_list(
         )
 
 
-# API Cập nhật bảng giá
 @router.put("/{price_code}")
 def update_price_list(
     price_code: str,
