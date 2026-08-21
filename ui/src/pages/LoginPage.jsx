@@ -6,13 +6,14 @@ export default function LoginPage({ onLoginSuccess }) {
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
-    email: 'admin@abclogistics.vn',
-    password: 'password123',
+    username: 'manager01', // Sửa email -> username
+    password: 'Password@123',
     rememberMe: true,
   });
 
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState(''); // Thêm state hiển thị lỗi
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -22,24 +23,50 @@ export default function LoginPage({ onLoginSuccess }) {
     }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsLoading(true);
+    setErrorMessage('');
 
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      // Gọi trực tiếp API Login của Auth Service
+      const response = await fetch('http://localhost:8081/api/v1/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: formData.username,
+          password: formData.password,
+        }),
+      });
 
-      // 1. Lưu thông tin User vào State chung của App
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Đăng nhập thất bại!');
+      }
+
+      // 1. Lưu JWT Token vào LocalStorage
+      localStorage.setItem('token', data.access_token);
+      localStorage.setItem('user_role', data.role);
+
+      // 2. Cập nhật State cho App
       if (onLoginSuccess) {
         onLoginSuccess({
-          name: 'Nguyễn Văn A',
-          email: formData.email,
+          username: formData.username,
+          role: data.role,
+          token: data.access_token,
         });
       }
 
-      // 2. Chuyển hướng ngay về Trang chủ Dashboard
+      // 3. Chuyển hướng sang trang Dashboard
       navigate('/');
-    }, 500);
+    } catch (err) {
+      setErrorMessage(err.message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -66,13 +93,20 @@ export default function LoginPage({ onLoginSuccess }) {
             <p className="text-xs text-slate-500 mt-1">Dành cho cán bộ công nhân viên ABC Logistics</p>
           </div>
 
+          {/* Alert hiển thị lỗi khi sai TK/MK */}
+          {errorMessage && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-xs rounded-xl text-center">
+              {errorMessage}
+            </div>
+          )}
+
           {/* Form Nhập Liệu */}
           <form onSubmit={handleSubmit} className="space-y-4">
             
-            {/* Input Email / Mã NV */}
+            {/* Input Username */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Tài khoản Email / Mã NV
+                Tên tài khoản / Mã NV
               </label>
               <div className="relative">
                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
@@ -80,11 +114,11 @@ export default function LoginPage({ onLoginSuccess }) {
                 </span>
                 <input
                   type="text"
-                  name="email"
-                  value={formData.email}
+                  name="username"
+                  value={formData.username}
                   onChange={handleChange}
                   required
-                  placeholder="Nhập email hoặc mã NV..."
+                  placeholder="Nhập tên tài khoản..."
                   className="w-full bg-slate-50 border border-slate-200 text-xs text-slate-800 rounded-xl pl-9 pr-3 py-2.5 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-500/15 outline-none transition"
                 />
               </div>
@@ -109,7 +143,6 @@ export default function LoginPage({ onLoginSuccess }) {
                   className="w-full bg-slate-50 border border-slate-200 text-xs text-slate-800 rounded-xl pl-9 pr-8 py-2.5 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-500/15 outline-none transition"
                 />
                 
-                {/* Nút Ẩn/Hiện Mật Khẩu */}
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
@@ -146,7 +179,7 @@ export default function LoginPage({ onLoginSuccess }) {
               {isLoading ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Đang xử lý...</span>
+                  <span>Đang kết nối Backend...</span>
                 </>
               ) : (
                 <>

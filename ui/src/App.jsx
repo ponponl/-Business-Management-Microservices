@@ -11,12 +11,7 @@ import CreatePriceListStaff from './pages/staff/CreatePriceListPage.jsx';
 import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
 
 import PriceListApprovalPage from './pages/manager/PriceListApprovalPage.jsx';
-
 import DirectorPriceListApprovalPage from './pages/director/DirectorPriceListApprovalPage.jsx';
-
-
-
-
 
 const EmptyPage = () => <div className="w-full min-h-[400px] bg-transparent" />;
 
@@ -33,39 +28,40 @@ const RoleRoute = ({ user, allowedRoles, children }) => {
 
 export default function App() {
   const [user, setUser] = useState(() => {
-    const savedUser = localStorage.getItem('mock_user');
+    const savedUser = localStorage.getItem('user_info');
     return savedUser ? JSON.parse(savedUser) : null;
   });
 
   const handleLogin = (userData) => {
-    let role = userData?.role;
-    if (!role) {
-      const email = userData?.email?.toLowerCase() || '';
-      if (email.includes('director') || email.includes('gd')) role = 'DIRECTOR';
-      else if (email.includes('manager') || email.includes('ql')) role = 'MANAGER';
-      else role = 'STAFF';
-    }
-
-    const roleNames = { STAFF: 'Nguyễn Văn A (Nhân viên)', MANAGER: 'Lê Văn C (Quản lý)', DIRECTOR: 'Phạm Văn D (Giám đốc)' };
-    const loggedUser = { name: userData?.name || roleNames[role] || 'Người dùng ABC', email: userData?.email || `${role.toLowerCase()}@abclogistics.vn`, role };
+    const loggedUser = {
+      name: userData.username,
+      username: userData.username,
+      role: userData.role, // "STAFF", "MANAGER", hoặc "DIRECTOR" 
+      token: userData.token,
+    };
 
     setUser(loggedUser);
-    localStorage.setItem('mock_user', JSON.stringify(loggedUser));
+    localStorage.setItem('user_info', JSON.stringify(loggedUser));
   };
 
   const handleLogout = () => {
     setUser(null);
-    localStorage.removeItem('mock_user');
+    localStorage.removeItem('user_info');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_role');
   };
 
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<IndexRedirect user={user} />} />
-        <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage onLoginSuccess={handleLogin} />} />
+        <Route 
+          path="/login" 
+          element={user ? <Navigate to="/" replace /> : <LoginPage onLoginSuccess={handleLogin} />} 
+        />
 
         {/* ========================================================= */}
-        {/* 1. KHU VỰC NHÂN VIÊN (STAFF)                             */}
+        {/* 1. KHU VỰC NHÂN VIÊN (STAFF)                              */}
         {/* ========================================================= */}
         <Route element={<RoleRoute user={user} allowedRoles={['STAFF']}><MainLayout user={user} onLogout={handleLogout} /></RoleRoute>}>
           <Route path="/staff" element={<DashboardPage user={user} />} />
@@ -75,18 +71,14 @@ export default function App() {
           <Route path="/staff/price-lists/create" element={<CreatePriceListStaff user={user} />} />
           <Route path="/staff/price-lists/:id" element={<PriceListDetailStaff user={user} />} />
 
-          {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
+          {/* SERVICE KHÁC */}
           <Route path="/staff/contracts" element={<EmptyPage />} />
-
-          {/* SERVICE: QUẢN LÝ SẢN LƯỢNG */}
           <Route path="/staff/volumes" element={<EmptyPage />} />
-
-          {/* SERVICE: QUẢN LÝ THANH TOÁN */}
           <Route path="/staff/payments" element={<EmptyPage />} />
         </Route>
 
         {/* ========================================================= */}
-        {/* 2. KHU VỰC QUẢN LÝ (MANAGER)                            */}
+        {/* 2. KHU VỰC QUẢN LÝ (MANAGER)                             */}
         {/* ========================================================= */}
         <Route element={<RoleRoute user={user} allowedRoles={['MANAGER']}><MainLayout user={user} onLogout={handleLogout} /></RoleRoute>}>
           <Route path="/manager" element={<DashboardPage user={user} />} />
@@ -94,32 +86,24 @@ export default function App() {
           {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
           <Route path="/manager/price-lists" element={<PriceListApprovalPage user={user} />} />
 
-          {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
+          {/* SERVICE KHÁC */}
           <Route path="/manager/contracts" element={<EmptyPage />} />
-
-          {/* SERVICE: QUẢN LÝ SẢN LƯỢNG */}
           <Route path="/manager/volumes" element={<EmptyPage />} />
-
-          {/* SERVICE: QUẢN LÝ THANH TOÁN */}
           <Route path="/manager/payments" element={<EmptyPage />} />
         </Route>
 
         {/* ========================================================= */}
-        {/* 3. KHU VỰC GIÁM ĐỐC (DIRECTOR)                           */}
+        {/* 3. KHU VỰC GIÁM ĐỐC (DIRECTOR)                            */}
         {/* ========================================================= */}
         <Route element={<RoleRoute user={user} allowedRoles={['DIRECTOR']}><MainLayout user={user} onLogout={handleLogout} /></RoleRoute>}>
           <Route path="/director" element={<DashboardPage user={user} />} />
 
-          {/* SERVICE: QUẢN LÝ BẢNG GIÁ (ĐÃ ĐỂ TRỐNG) */}
+          {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
           <Route path="/director/price-lists" element={<DirectorPriceListApprovalPage user={user} />} />
 
-          {/* SERVICE: QUẢN LÝ HỢP ĐỒNG */}
+          {/* SERVICE KHÁC */}
           <Route path="/director/contracts" element={<EmptyPage />} />
-
-          {/* SERVICE: QUẢN LÝ SẢN LƯỢNG */}
           <Route path="/director/volumes" element={<EmptyPage />} />
-
-          {/* SERVICE: QUẢN LÝ THANH TOÁN */}
           <Route path="/director/payments" element={<EmptyPage />} />
         </Route>
 
