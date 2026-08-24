@@ -104,6 +104,7 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # 29092 dành cho giao tiếp NỘI BỘ Docker, 9092 dành cho máy HOST (chạy script bên ngoài)
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -111,7 +112,7 @@ services:
     networks:
       - microservices-net
 
-  # Dashboard Web quản lý Kafka trực quan
+  # Dashboard Web quản lý Kafka trực quan (Truy cập: http://localhost:8086)
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
@@ -129,7 +130,7 @@ services:
   # 3. BACKEND MICROSERVICES (Python / FastAPI)
   # ==========================================
 
-  # SV-01: Auth Service
+  # SV-01: Auth Service (Đã thêm Kafka Producer Config)
   auth-service:
     build:
       context: ./services/auth_service
@@ -137,16 +138,18 @@ services:
     environment:
       - DATABASE_URL=postgresql://admin:password123@postgres-auth:5432/db_auth
       - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092  # Cổng nội bộ cho auth-service bắn Event
       - JWT_SECRET=super_secret_jwt_key
     ports:
       - "8081:8000"
     depends_on:
       - postgres-auth
       - redis
+      - kafka
     networks:
       - microservices-net
 
-  # SV-02: Pricing Service
+  # SV-02: Pricing Service (Consumer lắng nghe Event)
   pricing-service:
     build:
       context: ./services/pricing_service
@@ -154,7 +157,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://admin:password123@postgres-pricing:5432/db_pricing
       - REDIS_URL=redis://redis:6379/0
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092  # Cổng nội bộ cho pricing-service đọc Event
+      - JWT_SECRET=super_secret_jwt_key
     ports:
       - "8082:8000"
     depends_on:

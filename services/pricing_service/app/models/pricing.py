@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Date, Numeric, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Date, Numeric, Boolean, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.session import Base
@@ -126,3 +126,12 @@ class PriceListUsageLog(Base):
     # Quan hệ
     price_list_version = relationship("PriceListVersion", back_populates="usage_logs")
     service_item = relationship("ServiceItem", back_populates="usage_logs")
+
+
+class UserCache(Base):
+    __tablename__ = "user_cache"
+
+    user_id = Column(String(50), primary_key=True, index=True)
+    username = Column(String(100), nullable=False)
+    full_name = Column(String(150), nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())

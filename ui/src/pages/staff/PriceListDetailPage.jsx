@@ -9,6 +9,9 @@ export default function PriceListDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
 
+  // Lấy Token xác thực từ localStorage
+  const token = localStorage.getItem('token');
+
   const [priceDetail, setPriceDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -31,13 +34,19 @@ export default function PriceListDetailPage() {
     return rawNumber ? Number(rawNumber) : 0;
   };
 
+  // 1. Lấy thông tin chi tiết bảng giá
   useEffect(() => {
     if (!id) return;
 
     setLoading(true);
     setError(null);
 
-    fetch(`${API_BASE_URL}/${id}`)
+    fetch(`${API_BASE_URL}/${id}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    })
       .then((res) => {
         if (!res.ok) {
           throw new Error(`Không thể lấy thông tin chi tiết (Mã lỗi: ${res.status})`);
@@ -69,7 +78,7 @@ export default function PriceListDetailPage() {
         setError(err.message);
         setLoading(false);
       });
-  }, [id]);
+  }, [id, token]);
 
   const canEdit = priceDetail?.status === 'DRAFT' || priceDetail?.status === 'REJECTED';
 
@@ -108,6 +117,7 @@ export default function PriceListDetailPage() {
     }));
   };
 
+  // 2. Cập nhật bảng giá
   const handleSaveUpdate = async () => {
     setSaving(true);
     try {
@@ -130,7 +140,10 @@ export default function PriceListDetailPage() {
 
       const response = await fetch(`${API_BASE_URL}/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(payload),
       });
 
@@ -156,12 +169,16 @@ export default function PriceListDetailPage() {
     }
   };
 
+  // 3. Gửi phê duyệt
   const handleSubmitApproval = async () => {
     setSubmitting(true);
     try {
       const response = await fetch(`${APPROVAL_BASE_URL}/${priceDetail.priceCode}/submit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
       });
 
       if (!response.ok) {

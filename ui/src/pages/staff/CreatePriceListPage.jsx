@@ -6,6 +6,10 @@ const BACKEND_BASE_URL = 'http://localhost:8082';
 
 export default function CreatePriceListPage() {
   const navigate = useNavigate();
+
+  // Lấy Token xác thực từ localStorage
+  const token = localStorage.getItem('token');
+
   const [serviceOptions, setServiceOptions] = useState([]);
   const [isLoadingServices, setIsLoadingServices] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -50,7 +54,12 @@ export default function CreatePriceListPage() {
 
     const fetchServices = async () => {
       try {
-        const response = await fetch(`${BACKEND_BASE_URL}/api/v1/services`);
+        const response = await fetch(`${BACKEND_BASE_URL}/api/v1/services`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
 
         if (!response.ok) {
           initDefaultRow();
@@ -81,7 +90,7 @@ export default function CreatePriceListPage() {
     };
 
     fetchServices();
-  }, []);
+  }, [token]);
 
   const handleAddRow = () => {
     const defaultSrv = serviceOptions[0];
@@ -185,7 +194,10 @@ export default function CreatePriceListPage() {
     try {
       const response = await fetch(`${BACKEND_BASE_URL}/api/v1/price-lists`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify(preparePayload(statusType))
       });
 

@@ -3,12 +3,13 @@ from fastapi import HTTPException, status
 from app.models.user import User
 from app.schemas.auth import UserRegisterRequest, LoginRequest, TokenResponse, UserResponse
 from app.core.security import verify_password, get_password_hash, create_access_token
-from app.core.events import publish_user_login_event
+from app.core.events import publish_user_login_event, publish_user_sync_event
+
 
 class AuthService:
 
     @staticmethod
-    def register_user(db: Session, user_in: UserRegisterRequest) -> UserResponse:
+    async def register_user(db: Session, user_in: UserRegisterRequest) -> UserResponse:
         db_user = db.query(User).filter(
             (User.username == user_in.username) | (User.email == user_in.email)
         ).first()
@@ -29,11 +30,18 @@ class AuthService:
         db.commit()
         db.refresh(new_user)
 
+        # Bắn Kafka event đồng bộ user mới tạo sang Pricing Service
+        await publish_user_sync_event(
+            user_id=str(new_user.id),
+            username=new_user.username,
+            email=new_user.email
+        )
+
         return UserResponse(
             id=str(new_user.id),
             username=new_user.username,
             email=new_user.email,
-            role=new_user.role.value,
+            role=new_user.role.value if hasattr(new_user.role, 'value') else str(new_user.role),
             is_active=new_user.is_active
         )
 
@@ -52,13 +60,20 @@ class AuthService:
                 detail="Tài khoản đã bị vô hiệu hóa."
             )
 
+        role_value = user.role.value if hasattr(user.role, 'value') else str(user.role)
+
         access_token = create_access_token(
-            data={"sub": str(user.id), "role": user.role.value, "username": user.username}
+            data={"sub": str(user.id), "role": role_value, "username": user.username}
         )
 
-        await publish_user_login_event(user_id=str(user.id), role=user.role.value)
+        # Đã cập nhật: Truyền đủ user_id, username và role
+        await publish_user_login_event(
+            user_id=str(user.id),
+            username=user.username,
+            role=role_value
+        )
 
         return TokenResponse(
             access_token=access_token,
-            role=user.role.value
+            role=role_value
         )

@@ -5,10 +5,13 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
+// 1. Sửa URL trỏ đúng về API Gateway cổng 8080
+const API_BASE_URL = 'http://localhost:8080/api/v1/price-lists';
 
 export default function PriceManagementPage() {
   const navigate = useNavigate();
+
+  const token = localStorage.getItem('token');
 
   const [stats, setStats] = useState({ total: 0, submitted: 0, approved: 0, effective: 0, rejected: 0 });
   const [priceLists, setPriceLists] = useState([]);
@@ -19,22 +22,46 @@ export default function PriceManagementPage() {
   const [activeStatusTab, setActiveStatusTab] = useState('Tất cả');
   const [selectedType, setSelectedType] = useState('Tất cả');
   const [selectedCustomer, setSelectedCustomer] = useState('Tất cả');
-  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Tách biệt giữa giá trị ô input và từ khóa thực tế dùng để query (Tránh spam API)
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
   const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
 
-  // Lấy số liệu Stat Cards (giữ nguyên 5 chỉ số chính)
+  // Debounce tìm kiếm: Chỉ trigger API sau khi ngừng gõ 500ms
   useEffect(() => {
-    fetch(`${API_BASE_URL}/stats`)
-      .then((res) => res.json())
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput);
+      setPage(1);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // 1. Lấy số liệu Stat Cards
+  useEffect(() => {
+    if (!token) return;
+
+    fetch(`${API_BASE_URL}/stats`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return res.json();
+      })
       .then((data) => setStats(data))
       .catch((err) => console.error('Lỗi lấy thống kê:', err));
-  }, []);
+  }, [token]);
 
-  // Gọi API lấy danh sách Bảng giá
+  // 2. Gọi API lấy danh sách Bảng giá
   useEffect(() => {
+    if (!token) return;
     setLoading(true);
 
     const params = new URLSearchParams({
@@ -45,10 +72,18 @@ export default function PriceManagementPage() {
     if (activeStatusTab !== 'Tất cả') params.append('status', activeStatusTab);
     if (selectedType !== 'Tất cả') params.append('type', selectedType);
     if (selectedCustomer !== 'Tất cả') params.append('customer', selectedCustomer);
-    if (searchTerm.trim() !== '') params.append('search', searchTerm.trim());
+    if (debouncedSearch.trim() !== '') params.append('search', debouncedSearch.trim());
 
-    fetch(`${API_BASE_URL}?${params.toString()}`)
-      .then((res) => res.json())
+    fetch(`${API_BASE_URL}?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         setPriceLists(data.items || []);
         setTotalItems(data.total || 0);
@@ -61,15 +96,13 @@ export default function PriceManagementPage() {
         console.error('Lỗi lấy danh sách bảng giá:', err);
         setLoading(false);
       });
-  }, [activeStatusTab, selectedType, selectedCustomer, searchTerm, page]);
+  }, [activeStatusTab, selectedType, selectedCustomer, debouncedSearch, page, token]);
 
-  // Reset về trang 1 khi thay đổi bộ lọc
   const handleFilterChange = (setter, value) => {
     setter(value);
     setPage(1);
   };
 
-  // Helper render Badge trạng thái (Đã cập nhật SUPERSEDED và EXPIRED)
   const renderStatusBadge = (status) => {
     const s = (status || '').toUpperCase();
     switch (s) {
@@ -95,7 +128,7 @@ export default function PriceManagementPage() {
   const totalPages = Math.ceil(totalItems / pageSize) || 1;
 
   return (
-    <div className="space-y-4 text-slate-700 font-sans">
+    <div className="space-y-4 text-slate-700 font-sans p-4">
       
       {/* 1. HEADER TRANG & BUTTONS */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -121,7 +154,7 @@ export default function PriceManagementPage() {
         </div>
       </div>
 
-      {/* 2. 5 THẺ THỐNG KÊ (GIỮ NGUYÊN) */}
+      {/* 2. THỐNG KÊ */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
@@ -174,12 +207,11 @@ export default function PriceManagementPage() {
         </div>
       </div>
 
-      {/* 3. BỘ LỌC HÀNG NGANG (BỔ SUNG THÊM TAB SUPERSEDED VÀ EXPIRED) */}
+      {/* 3. BỘ LỌC */}
       <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
-        <div className="flex items-center justify-between gap-2 flex-nowrap overflow-x-auto">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           
-          {/* Nhóm dropdown bên trái */}
-          <div className="flex items-center space-x-2 shrink-0">
+          <div className="flex items-center space-x-2">
             <div className="flex items-center space-x-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 text-[11px]">
               <span className="text-slate-500 whitespace-nowrap">Loại:</span>
               <select 
@@ -203,9 +235,8 @@ export default function PriceManagementPage() {
             </div>
           </div>
 
-          {/* Nhóm Tabs & Tìm kiếm bên phải */}
-          <div className="flex items-center space-x-2 shrink-0">
-            <div className="bg-slate-100/80 p-0.5 rounded-lg flex items-center text-[11px] font-medium text-slate-500">
+          <div className="flex items-center space-x-2 overflow-x-auto max-w-full">
+            <div className="bg-slate-100/80 p-0.5 rounded-lg flex items-center text-[11px] font-medium text-slate-500 overflow-x-auto shrink-0">
               {['Tất cả', 'SUBMITTED', 'APPROVED', 'EFFECTIVE', 'DRAFT', 'REJECTED', 'SUPERSEDED', 'EXPIRED'].map((tab) => (
                 <button
                   key={tab}
@@ -221,13 +252,13 @@ export default function PriceManagementPage() {
               ))}
             </div>
 
-            <div className="relative">
+            <div className="relative shrink-0">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 placeholder="Tìm kiếm..."
-                value={searchTerm}
-                onChange={(e) => handleFilterChange(setSearchTerm, e.target.value)}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
                 className="pl-7 pr-2.5 py-1 rounded-lg border border-slate-200 text-[11px] w-36 focus:outline-none focus:border-sky-500 bg-white placeholder:text-slate-400"
               />
             </div>
@@ -280,10 +311,10 @@ export default function PriceManagementPage() {
                     <td className="py-3 px-4">{renderStatusBadge(item.status)}</td>
                     <td className="py-3 px-4">
                       <div className="text-slate-800 font-medium">
-                        {item.createdBy || 'Admin'}
+                        {item.updatedBy || 'Admin'}
                       </div>
                       <div className="text-[10px] text-slate-400">
-                        {item.createdAt || item.updatedAt}
+                        {item.updatedAt}
                       </div>
                     </td>
                     <td className="py-3 px-4 text-center">
