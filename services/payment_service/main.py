@@ -8,7 +8,7 @@ import uuid
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Numeric, String, Text, create_engine, func, select
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Numeric, String, Text, create_engine, func, inspect, select, text
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 
 
@@ -22,20 +22,21 @@ class PaymentBoard(Base):
     __tablename__ = "payment_boards"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    statement_code = Column(String(50), unique=True, nullable=False)
-    customer_name = Column(String(255), nullable=False)
-    contract_code = Column(String(100), nullable=False)
-    price_list_code = Column(String(100), nullable=False)
-    period_from = Column(Date, nullable=False)
-    period_to = Column(Date, nullable=False)
+    code = Column(String(50), unique=True, nullable=False)
+    customer_id = Column(String(36), nullable=False)
+    contract_id = Column(String(36), nullable=False)
+    price_table_id = Column(String(36), nullable=False)
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    sub_total = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
+    tax_percent = Column(Numeric(5, 2), default=Decimal("10.00"), nullable=False)
+    tax_amount = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
+    total_amount = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
     status = Column(String(30), default="DRAFT", nullable=False)
-    tax_rate = Column(Numeric(5, 2), default=Decimal("10.00"), nullable=False)
-    note = Column(Text, nullable=True)
-    created_by = Column(String(100), nullable=False)
+    reference_id = Column(String(36), nullable=True)
+    created_by = Column(String(36), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    sign_status = Column(String(30), default="NOT_STARTED", nullable=False)
-    sign_session_id = Column(String(100), nullable=True)
     items = relationship("PaymentDetail", back_populates="statement", cascade="all, delete-orphan")
 
 
@@ -43,13 +44,13 @@ class PaymentDetail(Base):
     __tablename__ = "payment_details"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    statement_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False)
+    payment_board_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False)
     service_code = Column(String(50), nullable=False)
     service_name = Column(String(255), nullable=False)
     unit = Column(String(50), nullable=False)
     quantity = Column(Numeric(15, 2), nullable=False)
     unit_price = Column(Numeric(15, 2), nullable=False)
-    amount = Column(Numeric(15, 2), nullable=False)
+    total_price = Column(Numeric(15, 2), nullable=False)
     statement = relationship("PaymentBoard", back_populates="items")
 
 
@@ -57,12 +58,10 @@ class PaymentAuditLog(Base):
     __tablename__ = "payment_status_histories"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    statement_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False)
-    actor = Column(String(100), nullable=False)
-    action = Column(String(50), nullable=False)
-    from_status = Column(String(30), nullable=True)
-    to_status = Column(String(30), nullable=True)
-    comment = Column(Text, nullable=True)
+    payment_board_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False)
+    status = Column(String(30), nullable=False)
+    actor_id = Column(String(36), nullable=False)
+    note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -88,6 +87,14 @@ class PaymentIdempotencyKey(Base):
 def initialize_database():
     for attempt in range(30):
         try:
+            inspector = inspect(engine)
+            columns = {column["name"] for column in inspector.get_columns("payment_boards")} if inspector.has_table("payment_boards") else set()
+            if columns and "code" not in columns:
+                with engine.begin() as connection:
+                    has_rows = connection.execute(text("SELECT EXISTS (SELECT 1 FROM payment_boards)")) .scalar()
+                    if has_rows:
+                        raise RuntimeError("Không thể đổi schema payment khi database đã có dữ liệu")
+                    connection.execute(text("DROP TABLE IF EXISTS payment_idempotency_key, payment_outbox_event, payment_status_histories, payment_details, payment_boards CASCADE"))
             Base.metadata.create_all(bind=engine)
             return
         except Exception:
@@ -97,5 +104,3 @@ def initialize_database():
 
 
 initialize_database()
-
-
