@@ -4,6 +4,7 @@ import { ArrowLeft, Clock, Loader2, AlertCircle, Plus, Trash2, Send, Check, Aler
 
 const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 const APPROVAL_BASE_URL = 'http://localhost:8082/api/v1/approvals';
+const SERVICES_API_URL = 'http://localhost:8082/api/v1/price-lists/services';
 
 export default function PriceListDetailPage() {
   const { id } = useParams();
@@ -13,6 +14,7 @@ export default function PriceListDetailPage() {
   const token = localStorage.getItem('token');
 
   const [priceDetail, setPriceDetail] = useState(null);
+  const [availableServices, setAvailableServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -34,7 +36,25 @@ export default function PriceListDetailPage() {
     return rawNumber ? Number(rawNumber) : 0;
   };
 
-  // 1. Lấy thông tin chi tiết bảng giá
+  // 1. Lấy danh sách Dịch vụ dùng để chọn trong dropdown
+  useEffect(() => {
+    fetch(SERVICES_API_URL, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Không thể lấy danh sách dịch vụ');
+        return res.json();
+      })
+      .then((data) => {
+        setAvailableServices(Array.isArray(data) ? data : data.content || []);
+      })
+      .catch((err) => console.error('Lỗi lấy danh sách dịch vụ:', err));
+  }, [token]);
+
+  // 2. Lấy thông tin chi tiết bảng giá
   useEffect(() => {
     if (!id) return;
 
@@ -89,6 +109,31 @@ export default function PriceListDetailPage() {
     }));
   };
 
+  // Thay đổi thông tin khi chọn dịch vụ từ dropdown
+  const handleSelectServiceChange = (index, selectedCode) => {
+    const selectedObj = availableServices.find(
+      (s) => (s.serviceCode || s.code) === selectedCode
+    );
+
+    setPriceDetail((prev) => {
+      const newServices = [...prev.services];
+      if (selectedObj) {
+        newServices[index] = {
+          ...newServices[index],
+          serviceCode: selectedObj.serviceCode || selectedObj.code || '',
+          serviceName: selectedObj.serviceName || selectedObj.name || '',
+          unit: selectedObj.unit || newServices[index].unit || '',
+        };
+      } else {
+        newServices[index] = {
+          ...newServices[index],
+          serviceCode: selectedCode,
+        };
+      }
+      return { ...prev, services: newServices };
+    });
+  };
+
   const handleServiceChange = (index, field, value) => {
     setPriceDetail((prev) => {
       const newServices = [...prev.services];
@@ -117,7 +162,7 @@ export default function PriceListDetailPage() {
     }));
   };
 
-  // 2. Cập nhật bảng giá
+  // 3. Cập nhật bảng giá
   const handleSaveUpdate = async () => {
     setSaving(true);
     try {
@@ -169,7 +214,7 @@ export default function PriceListDetailPage() {
     }
   };
 
-  // 3. Gửi phê duyệt
+  // 4. Gửi phê duyệt
   const handleSubmitApproval = async () => {
     setSubmitting(true);
     try {
@@ -434,13 +479,22 @@ export default function PriceListDetailPage() {
                     <tr key={index} className="hover:bg-slate-50/50 transition">
                       <td className="py-2.5 px-4">
                         {canEdit ? (
-                          <input
-                            type="text"
-                            value={srv.serviceName}
-                            placeholder="Tên dịch vụ..."
-                            onChange={(e) => handleServiceChange(index, 'serviceName', e.target.value)}
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d]"
-                          />
+                          <select
+                            value={srv.serviceCode}
+                            onChange={(e) => handleSelectServiceChange(index, e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d] bg-white text-slate-800"
+                          >
+                            <option value="">-- Chọn dịch vụ --</option>
+                            {availableServices.map((s, idx) => {
+                              const code = s.serviceCode || s.code;
+                              const name = s.serviceName || s.name;
+                              return (
+                                <option key={idx} value={code}>
+                                  {name} ({code})
+                                </option>
+                              );
+                            })}
+                          </select>
                         ) : (
                           <span className="text-slate-800 font-medium">{srv.serviceName}</span>
                         )}
@@ -450,9 +504,9 @@ export default function PriceListDetailPage() {
                           <input
                             type="text"
                             value={srv.serviceCode}
+                            readOnly
                             placeholder="Mã..."
-                            onChange={(e) => handleServiceChange(index, 'serviceCode', e.target.value)}
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 font-mono focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d]"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 font-mono bg-slate-50 text-slate-500 cursor-default"
                           />
                         ) : (
                           <span className="text-slate-500 font-mono">{srv.serviceCode}</span>
@@ -463,8 +517,8 @@ export default function PriceListDetailPage() {
                           <input
                             type="text"
                             value={srv.unit}
-                            placeholder="ĐVT..."
                             onChange={(e) => handleServiceChange(index, 'unit', e.target.value)}
+                            placeholder="ĐVT..."
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d]"
                           />
                         ) : (
