@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  Hourglass, CheckCircle2, XCircle, Eye, Search, 
+  CheckCircle2, XCircle, Eye, Search, 
   Download, Check, X, AlertCircle, Loader2,
-  ChevronLeft, ChevronRight, Calendar, ShieldCheck, Crown
+  ChevronLeft, ChevronRight, Calendar, ShieldCheck, Crown, RefreshCw
 } from 'lucide-react';
 
 const PRICE_LIST_API = 'http://localhost:8082/api/v1/price-lists';
@@ -16,8 +16,9 @@ export default function DirectorPriceListApprovalPage({ user }) {
   const [priceLists, setPriceLists] = useState([]);
   const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
 
-  // Filters State - Chỉ giữ 3 trạng thái chính
+  // Filters State
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -37,6 +38,16 @@ export default function DirectorPriceListApprovalPage({ user }) {
     message: ''
   });
 
+  // Helper lấy Header kèm Authentication Token
+  const getAuthHeaders = useCallback(() => {
+    const token = localStorage.getItem('token') || user?.token || '';
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': token ? `Bearer ${token}` : '',
+      'X-User-Id': user?.id || ''
+    };
+  }, [user]);
+
   const getItemCode = (item) => {
     return item?.price_list_id || item?.price_code || item?.price_list_code || item?.id || '';
   };
@@ -50,9 +61,27 @@ export default function DirectorPriceListApprovalPage({ user }) {
     }
   };
 
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (rejectModal.isOpen) setRejectModal({ isOpen: false, item: null, reason: '' });
+        else if (selectedItem) setSelectedItem(null);
+        else if (modalConfig.isOpen) setModalConfig(prev => ({ ...prev, isOpen: false }));
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [rejectModal.isOpen, selectedItem, modalConfig.isOpen]);
+
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch(`${APPROVAL_API}/director-approval/stats`);
+      const res = await fetch(`${APPROVAL_API}/director-approval/stats`, {
+        headers: getAuthHeaders()
+      });
+      if (res.status === 401) {
+        console.warn('Lỗi 401: Chưa đăng nhập hoặc Token hết hạn (fetchStats)');
+        return;
+      }
       if (!res.ok) throw new Error('Không thể tải thống kê');
       const data = await res.json();
       setStats({
@@ -63,7 +92,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
     } catch (err) {
       console.error('Lỗi lấy thống kê:', err);
     }
-  }, []);
+  }, [getAuthHeaders]);
 
   const fetchPriceLists = useCallback(async () => {
     setLoading(true);
@@ -74,13 +103,22 @@ export default function DirectorPriceListApprovalPage({ user }) {
     }
 
     try {
-      const res = await fetch(`${APPROVAL_API}/director-list?${params.toString()}`);
+      const res = await fetch(`${APPROVAL_API}/director-list?${params.toString()}`, {
+        headers: getAuthHeaders()
+      });
+
+      if (res.status === 401) {
+        console.warn('Lỗi 401: Chưa đăng nhập hoặc Token hết hạn (fetchPriceLists)');
+        setPriceLists([]);
+        setTotalItems(0);
+        return;
+      }
+      
       if (!res.ok) throw new Error(`Lỗi kết nối API (${res.status})`);
       
       const data = await res.json();
       let rawList = Array.isArray(data) ? data : (data.items || data.data || []);
 
-      // Lọc bắt buộc chỉ lấy 3 trạng thái: APPROVED, EFFECTIVE, REJECTED
       const allowedStatuses = ['APPROVED', 'EFFECTIVE', 'REJECTED'];
       rawList = rawList.filter(item => allowedStatuses.includes((item.status || '').toUpperCase()));
 
@@ -108,27 +146,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, typeFilter, searchTerm]);
-
-  const handleOpenDetail = async (item) => {
-    const code = getItemCode(item);
-    if (!code) return;
-
-    setModalLoading(true);
-    setSelectedItem(item);
-
-    try {
-      const res = await fetch(`${PRICE_LIST_API}/${code}`);
-      if (res.ok) {
-        const fullData = await res.json();
-        setSelectedItem(prev => ({ ...prev, ...fullData }));
-      }
-    } catch (err) {
-      console.warn('Dùng dữ liệu danh sách hiện tại:', err);
-    } finally {
-      setModalLoading(false);
-    }
-  };
+  }, [page, pageSize, statusFilter, typeFilter, searchTerm, getAuthHeaders]);
 
   useEffect(() => {
     fetchStats();
@@ -143,6 +161,28 @@ export default function DirectorPriceListApprovalPage({ user }) {
     setPage(1);
   };
 
+  const handleOpenDetail = async (item) => {
+    const code = getItemCode(item);
+    if (!code) return;
+
+    setModalLoading(true);
+    setSelectedItem(item);
+
+    try {
+      const res = await fetch(`${PRICE_LIST_API}/${code}`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const fullData = await res.json();
+        setSelectedItem(prev => ({ ...prev, ...fullData }));
+      }
+    } catch (err) {
+      console.warn('Dùng dữ liệu danh sách hiện tại:', err);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
   const totalPages = Math.ceil(totalItems / pageSize) || 1;
 
   const handleDirectorApprove = async (item) => {
@@ -152,15 +192,13 @@ export default function DirectorPriceListApprovalPage({ user }) {
       return;
     }
 
+    setActionLoadingId(priceCode);
     const directorName = user?.fullName || user?.name || 'Director';
 
     try {
       const res = await fetch(`${APPROVAL_API}/${priceCode}/director-approve`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-User-Id': user?.id || '' 
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ 
           action: 'APPROVE',
           approved_by: directorName 
@@ -183,6 +221,8 @@ export default function DirectorPriceListApprovalPage({ user }) {
       });
     } catch (err) {
       alert(`Phê duyệt thất bại: ${err.message}`);
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
@@ -199,15 +239,13 @@ export default function DirectorPriceListApprovalPage({ user }) {
       return;
     }
 
+    setActionLoadingId(priceCode);
     const directorName = user?.fullName || user?.name || 'Director';
 
     try {
       const res = await fetch(`${APPROVAL_API}/${priceCode}/director-approve`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-User-Id': user?.id || ''
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ 
           action: 'REJECT', 
           comment: trimmedReason,
@@ -233,6 +271,8 @@ export default function DirectorPriceListApprovalPage({ user }) {
       });
     } catch (err) {
       alert(`Từ chối thất bại: ${err.message}`);
+    } finally {
+      setActionLoadingId(null);
     }
   };
 
@@ -260,18 +300,27 @@ export default function DirectorPriceListApprovalPage({ user }) {
           </div>
           <div>
             <h1 className="text-base font-bold text-slate-800">Phê duyệt Bảng giá - Ban Giám Đốc</h1>
-            <span className="text-[11px] text-slate-400">Cấp phê duyệt cuối (APPROVED -&gt; EFFECTIVE)</span>
+            <span className="text-[11px] text-slate-400">Cấp phê duyệt cuối (APPROVED &rarr; EFFECTIVE)</span>
           </div>
         </div>
-        <button className="px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-xs cursor-pointer">
-          <Download className="w-3.5 h-3.5 text-slate-500" />
-          <span>Xuất Báo Cáo</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <button 
+            onClick={() => { fetchPriceLists(); fetchStats(); }}
+            className="p-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-xs cursor-pointer"
+            title="Làm mới dữ liệu"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button className="px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-xs cursor-pointer">
+            <Download className="w-3.5 h-3.5 text-slate-500" />
+            <span>Xuất Báo Cáo</span>
+          </button>
+        </div>
       </div>
 
-      {/* Stats Cards - Rút gọn còn 3 ô */}
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
+        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between shadow-2xs">
           <div>
             <p className="text-[10px] font-medium text-slate-500">Chờ Giám Đốc duyệt (APPROVED)</p>
             <p className="text-base font-bold text-blue-600 leading-tight">{stats.approved || 0}</p>
@@ -279,7 +328,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
           <ShieldCheck className="w-4 h-4 text-blue-500" />
         </div>
 
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
+        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between shadow-2xs">
           <div>
             <p className="text-[10px] font-medium text-slate-500">Đã có hiệu lực (EFFECTIVE)</p>
             <p className="text-base font-bold text-emerald-600 leading-tight">{stats.effective || 0}</p>
@@ -287,7 +336,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
         </div>
 
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
+        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between shadow-2xs">
           <div>
             <p className="text-[10px] font-medium text-slate-500">Đã từ chối (REJECTED)</p>
             <p className="text-base font-bold text-rose-600 leading-tight">{stats.rejected || 0}</p>
@@ -297,7 +346,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
       </div>
 
       {/* Filter Toolbar */}
-      <div className="bg-white p-2 rounded-lg border border-slate-200 flex flex-wrap items-center justify-between gap-2">
+      <div className="bg-white p-2 rounded-lg border border-slate-200 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
         <div className="flex items-center space-x-1.5 bg-slate-50 px-2 py-1 rounded border border-slate-200 text-xs">
           <span className="text-slate-400 text-[11px]">Loại:</span>
           <select 
@@ -314,7 +363,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
           </select>
         </div>
 
-        {/* Tab lọc 3 Trạng thái chính */}
+        {/* Tab lọc Trạng thái */}
         <div className="bg-slate-100 p-0.5 rounded-md flex items-center space-x-0.5 text-[11px] font-medium text-slate-500 overflow-x-auto">
           {[
             { key: 'ALL', label: 'TẤT CẢ' },
@@ -345,7 +394,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
       </div>
 
       {/* Table Data */}
-      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse whitespace-nowrap">
             <thead>
@@ -362,14 +411,18 @@ export default function DirectorPriceListApprovalPage({ user }) {
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
               {loading ? (
-                <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-400">
-                    <div className="flex items-center justify-center space-x-2">
-                      <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
-                      <span>Đang tải dữ liệu...</span>
-                    </div>
-                  </td>
-                </tr>
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <tr key={idx} className="animate-pulse">
+                    <td className="py-3 px-3"><div className="h-3 bg-slate-200 rounded w-16"></div></td>
+                    <td className="py-3 px-3"><div className="h-3 bg-slate-200 rounded w-32 mb-1"></div><div className="h-2 bg-slate-100 rounded w-20"></div></td>
+                    <td className="py-3 px-3"><div className="h-3 bg-slate-200 rounded w-16"></div></td>
+                    <td className="py-3 px-3"><div className="h-3 bg-slate-200 rounded w-10"></div></td>
+                    <td className="py-3 px-3"><div className="h-3 bg-slate-200 rounded w-24"></div></td>
+                    <td className="py-3 px-3"><div className="h-4 bg-slate-200 rounded-full w-20"></div></td>
+                    <td className="py-3 px-3"><div className="h-3 bg-slate-200 rounded w-20"></div></td>
+                    <td className="py-3 px-3 text-center"><div className="h-4 bg-slate-200 rounded w-12 mx-auto"></div></td>
+                  </tr>
+                ))
               ) : priceLists.length > 0 ? (
                 priceLists.map((item) => {
                   const code = getItemCode(item);
@@ -384,6 +437,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
                   const approvedAt = item.approved_at || item.updated_at || '-';
                   const status = (item.status || '').toUpperCase();
                   const versionStr = item.version || 'v1.0';
+                  const isActioning = actionLoadingId === code;
 
                   return (
                     <tr key={code} className="hover:bg-slate-50/80 transition border-b border-slate-100">
@@ -407,42 +461,49 @@ export default function DirectorPriceListApprovalPage({ user }) {
                         <div className="text-[10px] text-slate-400 font-mono leading-none mt-0.5">{approvedAt}</div>
                       </td>
                       <td className="py-2.5 px-3 text-center">
-                        <div className="flex items-center justify-center space-x-1">
-                          <button 
-                            onClick={() => handleOpenDetail(item)} 
-                            className="p-1 text-slate-400 hover:text-amber-600 rounded transition cursor-pointer" 
-                            title="Xem chi tiết"
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
+                        {isActioning ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-amber-600 mx-auto" />
+                        ) : (
+                          <div className="flex items-center justify-center space-x-1">
+                            <button 
+                              onClick={() => handleOpenDetail(item)} 
+                              className="p-1 text-slate-400 hover:text-amber-600 rounded transition cursor-pointer" 
+                              title="Xem chi tiết"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
 
-                          {status === 'APPROVED' && (
-                            <>
-                              <button 
-                                onClick={() => handleDirectorApprove(item)} 
-                                className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition cursor-pointer" 
-                                title="Phê duyệt"
-                              >
-                                <Check className="w-4 h-4 stroke-[3]" />
-                              </button>
-                              <button 
-                                onClick={() => setRejectModal({ isOpen: true, item, reason: '' })} 
-                                className="p-1 text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer" 
-                                title="Từ chối"
-                              >
-                                <X className="w-4 h-4 stroke-[3]" />
-                              </button>
-                            </>
-                          )}
-                        </div>
+                            {status === 'APPROVED' && (
+                              <>
+                                <button 
+                                  onClick={() => handleDirectorApprove(item)} 
+                                  className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition cursor-pointer" 
+                                  title="Phê duyệt"
+                                >
+                                  <Check className="w-4 h-4 stroke-[3]" />
+                                </button>
+                                <button 
+                                  onClick={() => setRejectModal({ isOpen: true, item, reason: '' })} 
+                                  className="p-1 text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer" 
+                                  title="Từ chối"
+                                >
+                                  <X className="w-4 h-4 stroke-[3]" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-slate-400 text-xs">
-                    Không có bảng giá nào cần xử lý.
+                  <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                    <div className="flex flex-col items-center justify-center space-y-1">
+                      <AlertCircle className="w-5 h-5 text-slate-300" />
+                      <span>Không có dữ liệu bảng giá phù hợp.</span>
+                    </div>
                   </td>
                 </tr>
               )}
@@ -480,7 +541,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
       {/* Detail Modal */}
       {selectedItem && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-2xl p-4 shadow-2xl space-y-3 max-h-[85vh] flex flex-col border border-slate-100">
+          <div className="bg-white rounded-xl w-full max-w-2xl p-4 shadow-2xl space-y-3 max-h-[85vh] flex flex-col border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
               <div className="flex items-center space-x-2">
                 <span className="text-[11px] font-mono text-amber-600 font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
@@ -593,16 +654,19 @@ export default function DirectorPriceListApprovalPage({ user }) {
               {selectedItem?.status === 'APPROVED' && (
                 <>
                   <button 
+                    disabled={actionLoadingId === getItemCode(selectedItem)}
                     onClick={() => setRejectModal({ isOpen: true, item: selectedItem, reason: '' })} 
-                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold cursor-pointer disabled:opacity-50"
                   >
                     Từ chối
                   </button>
                   <button 
+                    disabled={actionLoadingId === getItemCode(selectedItem)}
                     onClick={() => handleDirectorApprove(selectedItem)} 
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold cursor-pointer disabled:opacity-50 flex items-center space-x-1"
                   >
-                    Phê duyệt
+                    {actionLoadingId === getItemCode(selectedItem) && <Loader2 className="w-3 h-3 animate-spin" />}
+                    <span>Phê duyệt</span>
                   </button>
                 </>
               )}
@@ -614,13 +678,13 @@ export default function DirectorPriceListApprovalPage({ user }) {
       {/* Reject Modal */}
       {rejectModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-sm p-4 shadow-2xl space-y-3 border border-slate-100">
+          <div className="bg-white rounded-xl w-full max-w-sm p-4 shadow-2xl space-y-3 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex justify-between items-center border-b border-slate-100 pb-2">
               <h3 className="text-xs font-bold text-rose-600 flex items-center space-x-1">
                 <AlertCircle className="w-3.5 h-3.5" />
                 <span>Lý do từ chối</span>
               </h3>
-              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -630,13 +694,22 @@ export default function DirectorPriceListApprovalPage({ user }) {
               onChange={(e) => setRejectModal({ ...rejectModal, reason: e.target.value })}
               placeholder="Nhập ghi chú / lý do từ chối..."
               className="w-full text-xs p-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500 bg-slate-50/50"
+              autoFocus
             />
             <div className="flex justify-end space-x-2">
-              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-md text-xs font-semibold">
+              <button 
+                onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} 
+                className="px-3 py-1 bg-slate-100 text-slate-600 rounded-md text-xs font-semibold cursor-pointer"
+              >
                 Hủy
               </button>
-              <button onClick={handleDirectorRejectSubmit} className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-xs font-semibold">
-                Xác nhận từ chối
+              <button 
+                disabled={actionLoadingId === getItemCode(rejectModal.item)}
+                onClick={handleDirectorRejectSubmit} 
+                className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-xs font-semibold cursor-pointer disabled:opacity-50 flex items-center space-x-1"
+              >
+                {actionLoadingId === getItemCode(rejectModal.item) && <Loader2 className="w-3 h-3 animate-spin" />}
+                <span>Xác nhận từ chối</span>
               </button>
             </div>
           </div>
@@ -646,7 +719,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
       {/* Notification Modal */}
       {modalConfig.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xs w-full p-4 text-center space-y-3">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xs w-full p-4 text-center space-y-3 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex justify-center">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${modalConfig.type === 'approve' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
                 {modalConfig.type === 'approve' ? <Check className="w-5 h-5 stroke-[3]" /> : <X className="w-5 h-5 stroke-[3]" />}

@@ -6,14 +6,14 @@ export default function LoginPage({ onLoginSuccess }) {
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
-    username: 'manager01', // Sửa email -> username
+    username: 'manager01', 
     password: 'Password@123',
     rememberMe: true,
   });
 
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState(''); // Thêm state hiển thị lỗi
+  const [errorMessage, setErrorMessage] = useState(''); 
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -29,7 +29,6 @@ export default function LoginPage({ onLoginSuccess }) {
     setErrorMessage('');
 
     try {
-      // Gọi trực tiếp API Login của Auth Service
       const response = await fetch('http://localhost:8081/api/v1/auth/login', {
         method: 'POST',
         headers: {

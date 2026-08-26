@@ -5,8 +5,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-// 1. Sửa URL trỏ đúng về API Gateway cổng 8080
-const API_BASE_URL = 'http://localhost:8080/api/v1/price-lists';
+const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 
 export default function PriceManagementPage() {
   const navigate = useNavigate();
@@ -23,7 +22,6 @@ export default function PriceManagementPage() {
   const [selectedType, setSelectedType] = useState('Tất cả');
   const [selectedCustomer, setSelectedCustomer] = useState('Tất cả');
   
-  // Tách biệt giữa giá trị ô input và từ khóa thực tế dùng để query (Tránh spam API)
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   
@@ -32,7 +30,6 @@ export default function PriceManagementPage() {
 
   const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
 
-  // Debounce tìm kiếm: Chỉ trigger API sau khi ngừng gõ 500ms
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchInput);
