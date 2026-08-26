@@ -1,12 +1,19 @@
 import uuid
-from datetime import datetime, date
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from fastapi import HTTPException, status
 
-from app.models.pricing import PriceList, PriceListVersion, PriceListDetail, ServiceItem
+from app.models.pricing import PriceList, PriceListVersion, PriceListDetail, UserCache
 from app.schemas.approval import ApprovalActionRequest, ApprovalResponse
+
+VN_TZ = timezone(timedelta(hours=7))
+
+
+def get_current_vn_time() -> datetime:
+    """Lấy thời gian hiện tại theo giờ Việt Nam (Naive datetime để tương thích SQL)."""
+    return datetime.now(VN_TZ).replace(tzinfo=None)
 
 
 class ApprovalService:
@@ -19,6 +26,31 @@ class ApprovalService:
             price_list.versions,
             key=lambda v: getattr(v, "version_number", 0) or 0
         )
+
+    @staticmethod
+    def _resolve_user_name(db: Session, user_id_val: Optional[Any]) -> str:
+        """
+        Tra cứu tên hiển thị từ UserCache dựa vào user_id (UUID hoặc String).
+        Nếu không tìm thấy hoặc null thì mới trả về mặc định "Staff".
+        """
+        if not user_id_val:
+            return "Staff"
+        
+        u_str = str(user_id_val).strip().lower()
+
+        if not u_str or u_str == "none":
+            return "Staff"
+
+        user_cache = (
+            db.query(UserCache)
+            .filter(func.lower(UserCache.user_id) == u_str)
+            .first()
+        )
+
+        if user_cache:
+            return user_cache.full_name or user_cache.username or u_str
+
+        return u_str if len(u_str) < 20 else "Staff"
 
     @staticmethod
     def get_approval_stats(db: Session) -> Dict[str, int]:
@@ -34,7 +66,6 @@ class ApprovalService:
 
         for pl in price_lists:
             latest_v = ApprovalService._get_latest_version(pl)
-            
             st_raw = getattr(latest_v, "status", "DRAFT") if latest_v else "DRAFT"
             st = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
 
@@ -78,10 +109,8 @@ class ApprovalService:
             elif st == "REJECTED":
                 rejected += 1
 
-        total = approved + effective + rejected
-
         return {
-            "total": total,
+            "total": approved + effective + rejected,
             "approved": approved,
             "effective": effective,
             "rejected": rejected
@@ -102,29 +131,19 @@ class ApprovalService:
         services_data = []
         for d in details:
             srv = d.service_item
-            
             code = (
                 getattr(srv, "service_code", None) or 
                 getattr(srv, "code", None) or 
                 getattr(d, "service_code", None) or 
-                (str(d.service_id) if getattr(d, "service_id", None) else None) or 
-                "-"
+                (str(d.service_id) if getattr(d, "service_id", None) else None) or "-"
             )
-            
             name = (
                 getattr(srv, "service_name", None) or 
                 getattr(srv, "name", None) or 
                 getattr(d, "service_name", None) or 
-                getattr(d, "description", None) or 
-                "Dịch vụ chuẩn"
+                getattr(d, "description", None) or "Dịch vụ chuẩn"
             )
-            
-            unit = (
-                getattr(d, "unit", None) or 
-                getattr(srv, "unit", None) or 
-                "Lượt"
-            )
-            
+            unit = getattr(d, "unit", None) or getattr(srv, "unit", None) or "Lượt"
             price = float(d.unit_price) if getattr(d, "unit_price", None) is not None else 0.0
 
             services_data.append({
@@ -148,11 +167,16 @@ class ApprovalService:
         price_code = price_list.price_list_code or str(price_list.id)
         latest_version = ApprovalService._get_latest_version(price_list)
 
-        valid_from_str = latest_version.valid_from.strftime("%Y-%m-%d") if (latest_version and latest_version.valid_from) else None
-        valid_to_str = latest_version.valid_to.strftime("%Y-%m-%d") if (latest_version and latest_version.valid_to) else None
+        valid_from_str = latest_version.valid_from.strftime("%d/%m/%Y") if (latest_version and latest_version.valid_from) else None
+        valid_to_str = latest_version.valid_to.strftime("%d/%m/%Y") if (latest_version and latest_version.valid_to) else None
 
-        updated_at_val = price_list.updated_at or price_list.created_at
-        updated_at_str = updated_at_val.strftime("%Y-%m-%d %H:%M") if updated_at_val else None
+        action_time_val = (
+            getattr(price_list, "updated_at", None) or 
+            getattr(price_list, "created_at", None) or 
+            getattr(latest_version, "updated_at", None) or 
+            getattr(latest_version, "created_at", None)
+        )
+        updated_at_str = action_time_val.strftime("%H:%M %d/%m/%Y") if action_time_val else None
 
         st_raw = getattr(latest_version, "status", "DRAFT") if latest_version else "DRAFT"
         status_val = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
@@ -176,8 +200,13 @@ class ApprovalService:
 
         services = ApprovalService._extract_services_from_pricelist(db, price_list)
 
-        raw_created_by = str(price_list.created_by) if getattr(price_list, "created_by", None) else "Staff"
-        updated_by_str = "Staff" if len(raw_created_by) > 20 else raw_created_by
+        user_id_to_lookup = None
+        if latest_version and getattr(latest_version, "approved_by", None):
+            user_id_to_lookup = latest_version.approved_by
+        else:
+            user_id_to_lookup = getattr(price_list, "created_by", None)
+
+        updated_by_display = ApprovalService._resolve_user_name(db, user_id_to_lookup)
 
         return ApprovalResponse(
             price_list_id=price_code,
@@ -189,7 +218,7 @@ class ApprovalService:
             effective_to=valid_to_str,
             status=status_val,
             approval_stage=stage_val,
-            updated_by=updated_by_str,
+            updated_by=updated_by_display,
             updated_at=updated_at_str,
             message=message,
             services=services
@@ -210,7 +239,6 @@ class ApprovalService:
 
         for pl in price_lists:
             res = ApprovalService._build_approval_response(db=db, price_list=pl, message="Lấy thông tin thành công")
-            
             if clean_status and clean_status not in ["TẤT CẢ", "ALL"]:
                 if res.status.upper() == clean_status:
                     results.append(res)
@@ -231,13 +259,10 @@ class ApprovalService:
 
         results = []
         clean_status = status.strip().upper() if status and status.strip() else None
-
-        # Chỉ giữ đúng 3 trạng thái dành cho Giám đốc
         ALLOWED_STATUSES = ["APPROVED", "EFFECTIVE", "REJECTED"]
 
         for pl in price_lists:
             res = ApprovalService._build_approval_response(db=db, price_list=pl, message="Lấy thông tin thành công")
-            
             if res.status in ALLOWED_STATUSES:
                 if clean_status and clean_status not in ["TẤT CẢ", "ALL"]:
                     if res.status.upper() == clean_status:
@@ -270,9 +295,11 @@ class ApprovalService:
     @staticmethod
     def submit_for_approval(db: Session, price_code: str, user_id: Optional[str] = None) -> ApprovalResponse:
         pl = ApprovalService._find_price_list(db, price_code)
-
         if not pl:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
+
+        now_vn = get_current_vn_time()
+        pl.updated_at = now_vn
 
         if pl.versions:
             for v in pl.versions:
@@ -293,18 +320,20 @@ class ApprovalService:
             raise HTTPException(status_code=400, detail="Hành động không hợp lệ.")
 
         pl = ApprovalService._find_price_list(db, price_code)
-
         if not pl:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
 
+        now_vn = get_current_vn_time()
+        pl.updated_at = now_vn
+
         target_status = "APPROVED" if act == "APPROVE" else "REJECTED"
-        target_stage = "APPROVED" if act == "APPROVE" else "REJECTED"
+        target_stage = "DIRECTOR_PENDING" if act == "APPROVE" else "REJECTED"
         reason_text = payload.rejected_reason or payload.comment or ""
 
         approved_by_uuid = None
         if manager_id:
             try:
-                approved_by_uuid = uuid.UUID(manager_id)
+                approved_by_uuid = uuid.UUID(str(manager_id))
             except ValueError:
                 approved_by_uuid = None
 
@@ -341,18 +370,20 @@ class ApprovalService:
             raise HTTPException(status_code=400, detail="Hành động không hợp lệ.")
 
         pl = ApprovalService._find_price_list(db, price_code)
-
         if not pl:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
 
+        now_vn = get_current_vn_time()
+        pl.updated_at = now_vn
+
         target_status = "EFFECTIVE" if act == "APPROVE" else "REJECTED"
-        target_stage = "EFFECTIVE" if act == "APPROVE" else "REJECTED"
+        target_stage = "COMPLETED" if act == "APPROVE" else "REJECTED"
         reason_text = payload.rejected_reason or payload.comment or ""
 
         approved_by_uuid = None
         if director_id:
             try:
-                approved_by_uuid = uuid.UUID(director_id)
+                approved_by_uuid = uuid.UUID(str(director_id))
             except ValueError:
                 approved_by_uuid = None
 

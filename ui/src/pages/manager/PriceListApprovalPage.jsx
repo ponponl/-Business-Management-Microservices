@@ -1,32 +1,46 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   Layers, Hourglass, CheckCircle2, XCircle, Eye, Search, 
   Download, Check, X, AlertCircle, Loader2,
-  ChevronLeft, ChevronRight, Calendar, ShieldCheck
+  ChevronLeft, ChevronRight, Calendar, ShieldCheck, ShieldAlert
 } from 'lucide-react';
 
 const PRICE_LIST_API = 'http://localhost:8082/api/v1/price-lists';
 const APPROVAL_API = 'http://localhost:8082/api/v1/approvals';
 
 export default function PriceListApprovalPage({ user }) {
-  // Stats Card State
+  const token = localStorage.getItem('token');
+
+  const isManager = useMemo(() => {
+    if (!user) return false;
+    const userRole = (user.role || '').toUpperCase();
+    const userRoles = Array.isArray(user.roles) 
+      ? user.roles.map(r => String(r).toUpperCase()) 
+      : [];
+    
+    const managerRoles = ['MANAGER', 'ADMIN', 'DIRECTOR', 'APPROVER', 'QUAN_LY'];
+    return managerRoles.includes(userRole) || userRoles.some(r => managerRoles.includes(r));
+  }, [user]);
+
+  // State Thống kê
   const [stats, setStats] = useState({ total: 0, submitted: 0, approved: 0, effective: 0, rejected: 0 });
 
-  // List Data State
+  // State Danh sách & Phân trang
   const [priceLists, setPriceLists] = useState([]);
   const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(false);
-
-  // Filters State
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [typeFilter, setTypeFilter] = useState('ALL');
-  const [searchTerm, setSearchTerm] = useState('');
-
-  // Pagination State
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  // Modals State
+  // State Bộ lọc & Tìm kiếm
+  const [activeStatusTab, setActiveStatusTab] = useState('Tất cả');
+  const [selectedType, setSelectedType] = useState('Tất cả');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
+
+  // State Modals
   const [selectedItem, setSelectedItem] = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [rejectModal, setRejectModal] = useState({ isOpen: false, item: null, reason: '' });
@@ -36,6 +50,15 @@ export default function PriceListApprovalPage({ user }) {
     title: '',
     message: ''
   });
+
+  // Debounce tìm kiếm
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput);
+      setPage(1);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   const getItemCode = (item) => {
     return item?.price_list_id || item?.price_code || item?.price_list_code || item?.id || '';
@@ -50,40 +73,54 @@ export default function PriceListApprovalPage({ user }) {
     }
   };
 
+  // 1. Lấy số liệu Thống kê
   const fetchStats = useCallback(async () => {
+    if (!token) return;
     try {
-      const res = await fetch(`${APPROVAL_API}/approval/stats`);
+      const res = await fetch(`${APPROVAL_API}/approval/stats`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
       if (!res.ok) throw new Error('Không thể tải thống kê');
       const data = await res.json();
       setStats(data);
     } catch (err) {
       console.error('Lỗi lấy thống kê:', err);
     }
-  }, []);
+  }, [token]);
 
+  // 2. Lấy danh sách phê duyệt Bảng giá
   const fetchPriceLists = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
 
     const params = new URLSearchParams();
-    if (statusFilter && statusFilter !== 'ALL' && statusFilter !== 'Tất cả') {
-      params.append('status', statusFilter);
+    if (activeStatusTab !== 'Tất cả') {
+      params.append('status', activeStatusTab);
     }
 
     try {
-      const res = await fetch(`${APPROVAL_API}?${params.toString()}`);
+      const res = await fetch(`${APPROVAL_API}?${params.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
       if (!res.ok) throw new Error(`Lỗi kết nối API (${res.status})`);
       
       const data = await res.json();
       let rawList = Array.isArray(data) ? data : (data.items || data.data || []);
 
-      // Filter loại đối tượng
-      if (typeFilter !== 'ALL') {
-        rawList = rawList.filter(item => item.target_type?.toUpperCase() === typeFilter.toUpperCase());
+      // Lọc Client theo Loại áp dụng
+      if (selectedType !== 'Tất cả') {
+        rawList = rawList.filter(item => item.target_type?.toUpperCase() === selectedType.toUpperCase());
       }
 
-      // Filter từ khóa tìm kiếm
-      if (searchTerm.trim() !== '') {
-        const term = searchTerm.trim().toLowerCase();
+      // Lọc Client theo Tìm kiếm
+      if (debouncedSearch.trim() !== '') {
+        const term = debouncedSearch.trim().toLowerCase();
         rawList = rawList.filter(item => 
           (item.price_list_id && item.price_list_id.toLowerCase().includes(term)) ||
           (item.price_name && item.price_name.toLowerCase().includes(term)) ||
@@ -93,7 +130,7 @@ export default function PriceListApprovalPage({ user }) {
 
       setTotalItems(rawList.length);
 
-      // Phân trang Client
+      // Phân trang phía Client
       const startIndex = (page - 1) * pageSize;
       setPriceLists(rawList.slice(startIndex, startIndex + pageSize));
     } catch (err) {
@@ -103,28 +140,7 @@ export default function PriceListApprovalPage({ user }) {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, typeFilter, searchTerm]);
-
-  const handleOpenDetail = async (item) => {
-    const code = getItemCode(item);
-    if (!code) return;
-
-    setModalLoading(true);
-    setSelectedItem(item);
-
-    try {
-      const res = await fetch(`${PRICE_LIST_API}/${code}`);
-      if (res.ok) {
-        const fullData = await res.json();
-        console.log('Chi tiết bảng giá API response:', fullData);
-        setSelectedItem(prev => ({ ...prev, ...fullData }));
-      }
-    } catch (err) {
-      console.warn('Dùng dữ liệu danh sách hiện tại:', err);
-    } finally {
-      setModalLoading(false);
-    }
-  };
+  }, [page, pageSize, activeStatusTab, selectedType, debouncedSearch, token]);
 
   useEffect(() => {
     fetchStats();
@@ -139,21 +155,48 @@ export default function PriceListApprovalPage({ user }) {
     setPage(1);
   };
 
-  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+  const handleOpenDetail = async (item) => {
+    const code = getItemCode(item);
+    if (!code) return;
 
+    setModalLoading(true);
+    setSelectedItem(item);
+
+    try {
+      const res = await fetch(`${PRICE_LIST_API}/${code}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (res.ok) {
+        const fullData = await res.json();
+        setSelectedItem(prev => ({ ...prev, ...fullData }));
+      }
+    } catch (err) {
+      console.warn('Sử dụng dữ liệu danh sách hiện tại:', err);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  // 3. Phê duyệt Bảng giá (API Call)
   const handleApprove = async (item) => {
-    const priceCode = getItemCode(item);
-    if (!priceCode) {
-      alert('Không tìm thấy mã bảng giá!');
+    if (!isManager) {
+      alert('Tài khoản của bạn không có quyền phê duyệt bảng giá này!');
       return;
     }
 
-    const managerName = user?.fullName || user?.name || 'Manager';
+    const priceCode = getItemCode(item);
+    if (!priceCode) return;
+
+    const managerName = user?.fullName || user?.username || 'Manager';
 
     try {
       const res = await fetch(`${APPROVAL_API}/${priceCode}/manager-approve`, {
         method: 'POST',
         headers: { 
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
           'X-User-Id': user?.id || '' 
         },
@@ -182,7 +225,13 @@ export default function PriceListApprovalPage({ user }) {
     }
   };
 
+  // 4. Từ chối Bảng giá (API Call)
   const handleRejectSubmit = async () => {
+    if (!isManager) {
+      alert('Tài khoản của bạn không có quyền từ chối bảng giá này!');
+      return;
+    }
+
     const trimmedReason = rejectModal.reason.trim();
     if (!trimmedReason) {
       alert('Vui lòng nhập lý do từ chối!');
@@ -190,17 +239,15 @@ export default function PriceListApprovalPage({ user }) {
     }
 
     const priceCode = getItemCode(rejectModal.item);
-    if (!priceCode) {
-      alert('Không tìm thấy mã bảng giá!');
-      return;
-    }
+    if (!priceCode) return;
 
-    const managerName = user?.fullName || user?.name || 'Manager';
+    const managerName = user?.fullName || user?.username || 'Manager';
 
     try {
       const res = await fetch(`${APPROVAL_API}/${priceCode}/manager-approve`, {
         method: 'POST',
         headers: { 
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
           'X-User-Id': user?.id || ''
         },
@@ -254,137 +301,164 @@ export default function PriceListApprovalPage({ user }) {
     }
   };
 
+  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+
   return (
-    <div className="space-y-3 font-sans text-slate-700 text-xs">
-      {/* Header Compact */}
-      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
-        <div className="flex items-baseline space-x-2">
-          <h1 className="text-base font-bold text-slate-800">Quản lý & Phê duyệt Bảng giá</h1>
-          <span className="text-[11px] text-slate-400 hidden sm:inline">Phê duyệt cấp Quản lý qua API</span>
-        </div>
-        <button className="px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-xs cursor-pointer">
-          <Download className="w-3.5 h-3.5 text-slate-500" />
-          <span>Xuất Excel</span>
-        </button>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-medium text-slate-500">Tổng bảng giá</p>
-            <p className="text-base font-bold text-slate-800 leading-tight">{stats.total || 0}</p>
+    <div className="space-y-4 text-slate-700 font-sans p-4">
+      
+      {/* Thẻ Cảnh báo nếu User chỉ có quyền Staff */}
+      {!isManager && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3.5 py-2.5 rounded-xl flex items-center justify-between shadow-xs">
+          <div className="flex items-center space-x-2">
+            <ShieldAlert className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <span className="text-xs font-medium">
+              Bạn đang xem ở <strong>Chế độ chỉ đọc (Read-only)</strong>. Tài khoản của bạn không có quyền phê duyệt hoặc từ chối bảng giá.
+            </span>
           </div>
-          <Layers className="w-4 h-4 text-slate-400" />
         </div>
+      )}
 
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-medium text-slate-500">Chờ duyệt</p>
-            <p className="text-base font-bold text-amber-600 leading-tight">{stats.submitted || 0}</p>
-          </div>
-          <Hourglass className="w-4 h-4 text-amber-500" />
+      {/* 1. HEADER TRANG & BUTTONS */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800">Quản lý & Phê duyệt Bảng giá</h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Theo dõi danh sách yêu cầu phê duyệt bảng giá dịch vụ logistics và xét duyệt cấp Quản lý.
+          </p>
         </div>
-
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-medium text-slate-500">Đã duyệt</p>
-            <p className="text-base font-bold text-blue-600 leading-tight">{stats.approved || 0}</p>
-          </div>
-          <ShieldCheck className="w-4 h-4 text-blue-500" />
-        </div>
-
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-medium text-slate-500">Hiệu lực</p>
-            <p className="text-base font-bold text-emerald-600 leading-tight">{stats.effective || 0}</p>
-          </div>
-          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-        </div>
-
-        <div className="bg-white p-2.5 rounded-lg border border-slate-200 col-span-2 sm:col-span-1 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-medium text-slate-500">Bị từ chối</p>
-            <p className="text-base font-bold text-rose-600 leading-tight">{stats.rejected || 0}</p>
-          </div>
-          <XCircle className="w-4 h-4 text-rose-500" />
+        <div className="flex items-center space-x-2.5">
+          <button className="px-3.5 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 shadow-xs flex items-center space-x-1.5 cursor-pointer">
+            <Download className="w-3.5 h-3.5 text-slate-500" />
+            <span>Xuất Excel</span>
+          </button>
         </div>
       </div>
 
-      {/* Filter Toolbar */}
-      <div className="bg-white p-2 rounded-lg border border-slate-200 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center space-x-1.5 bg-slate-50 px-2 py-1 rounded border border-slate-200 text-xs">
-          <span className="text-slate-400 text-[11px]">Loại:</span>
-          <select 
-            value={typeFilter} 
-            onChange={(e) => handleFilterChange(setTypeFilter, e.target.value)} 
-            className="bg-transparent font-semibold text-slate-700 outline-none cursor-pointer text-xs"
-          >
-            <option value="ALL">Tất cả</option>
-            <option value="CUSTOMER">CUSTOMER</option>
-            <option value="CONTRACT">CONTRACT</option>
-            <option value="GENERAL">GENERAL</option>
-            <option value="SERVICE_GROUP">SERVICE_GROUP</option>
-            <option value="SERVICE_TYPE">SERVICE_TYPE</option>
-          </select>
+      {/* 2. THỐNG KÊ */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-[11px] text-slate-500 font-medium">Tổng số bảng giá</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats.total || 0}</p>
+          </div>
+          <div className="p-2 rounded-lg bg-slate-50 text-slate-400">
+            <Layers className="w-5 h-5" />
+          </div>
         </div>
 
-        <div className="bg-slate-100 p-0.5 rounded-md flex items-center space-x-0.5 text-[11px] font-medium text-slate-500 overflow-x-auto">
-          {[
-            { key: 'ALL', label: 'Tất cả' },
-            { key: 'SUBMITTED', label: 'SUBMITTED' },
-            { key: 'APPROVED', label: 'APPROVED' },
-            { key: 'EFFECTIVE', label: 'EFFECTIVE' },
-            { key: 'DRAFT', label: 'DRAFT' },
-            { key: 'REJECTED', label: 'REJECTED' },
-            { key: 'SUPERSEDED', label: 'SUPERSEDED' },
-            { key: 'EXPIRED', label: 'EXPIRED' }
-          ].map((tab) => (
-            <button 
-              key={tab.key} 
-              onClick={() => handleFilterChange(setStatusFilter, tab.key)} 
-              className={`px-2 py-0.5 rounded transition whitespace-nowrap cursor-pointer ${statusFilter === tab.key ? 'bg-white text-slate-800 shadow-xs font-semibold' : 'hover:text-slate-800'}`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-[11px] text-slate-500 font-medium">Chờ duyệt (SUBMITTED)</p>
+            <p className="text-xl font-bold text-amber-600 mt-0.5">{stats.submitted || 0}</p>
+          </div>
+          <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
+            <Hourglass className="w-5 h-5" />
+          </div>
         </div>
 
-        <div className="relative flex-1 sm:flex-initial min-w-[140px]">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input 
-            type="text" 
-            value={searchTerm} 
-            onChange={(e) => handleFilterChange(setSearchTerm, e.target.value)} 
-            placeholder="Tìm kiếm..." 
-            className="w-full pl-7 pr-2 py-1 rounded border border-slate-200 text-xs focus:outline-none focus:border-sky-500 bg-white placeholder:text-slate-400" 
-          />
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-[11px] text-slate-500 font-medium">Đã duyệt (APPROVED)</p>
+            <p className="text-xl font-bold text-blue-600 mt-0.5">{stats.approved || 0}</p>
+          </div>
+          <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-[11px] text-slate-500 font-medium">Hiệu lực (EFFECTIVE)</p>
+            <p className="text-xl font-bold text-emerald-600 mt-0.5">{stats.effective || 0}</p>
+          </div>
+          <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
+          <div>
+            <p className="text-[11px] text-slate-500 font-medium">Bị từ chối (REJECTED)</p>
+            <p className="text-xl font-bold text-rose-600 mt-0.5">{stats.rejected || 0}</p>
+          </div>
+          <div className="p-2 rounded-lg bg-rose-50 text-rose-600">
+            <XCircle className="w-5 h-5" />
+          </div>
         </div>
       </div>
 
-      {/* Table Data */}
-      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      {/* 3. BỘ LỌC */}
+      <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          
+          <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 text-[11px]">
+              <span className="text-slate-500 whitespace-nowrap">Loại:</span>
+              <select 
+                value={selectedType}
+                onChange={(e) => handleFilterChange(setSelectedType, e.target.value)}
+                className="bg-transparent font-semibold text-slate-800 outline-none cursor-pointer text-[11px] max-w-[110px] truncate"
+              >
+                {availableTypes.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-2 overflow-x-auto max-w-full">
+            <div className="bg-slate-100/80 p-0.5 rounded-lg flex items-center text-[11px] font-medium text-slate-500 overflow-x-auto shrink-0">
+              {['Tất cả', 'SUBMITTED', 'APPROVED', 'EFFECTIVE', 'DRAFT', 'REJECTED', 'SUPERSEDED', 'EXPIRED'].map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => handleFilterChange(setActiveStatusTab, tab)}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer whitespace-nowrap ${
+                    activeStatusTab === tab 
+                      ? 'bg-white text-slate-800 shadow-xs font-semibold' 
+                      : 'hover:text-slate-800'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative shrink-0">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm kiếm..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="pl-7 pr-2.5 py-1 rounded-lg border border-slate-200 text-[11px] w-36 focus:outline-none focus:border-sky-500 bg-white placeholder:text-slate-400"
+              />
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* 4. BẢNG DỮ LIỆU */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse whitespace-nowrap">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500">
-                <th className="py-2.5 px-3">Mã bảng giá</th>
-                <th className="py-2.5 px-3">Tên bảng giá / Đối tượng</th>
-                <th className="py-2.5 px-3">Loại áp dụng</th>
-                <th className="py-2.5 px-3">Phiên bản</th>
-                <th className="py-2.5 px-3">Thời gian hiệu lực</th>
-                <th className="py-2.5 px-3">Trạng thái</th>
-                <th className="py-2.5 px-3">Tạo / Cập nhật</th>
-                <th className="py-2.5 px-3 text-center">Hành động</th>
+              <tr className="border-b border-slate-200 bg-slate-50/50 text-[11px] font-semibold text-slate-500">
+                <th className="py-3 px-4">Mã bảng giá</th>
+                <th className="py-3 px-4">Tên bảng giá / Đối tượng</th>
+                <th className="py-3 px-4">Loại áp dụng</th>
+                <th className="py-3 px-4">Phiên bản</th>
+                <th className="py-3 px-4">Thời gian hiệu lực</th>
+                <th className="py-3 px-4">Trạng thái</th>
+                <th className="py-3 px-4">Tạo / Cập nhật</th>
+                <th className="py-3 px-4 text-center">Hành động</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-400">
-                    <div className="flex items-center justify-center space-x-2">
-                      <Loader2 className="w-4 h-4 animate-spin text-sky-600" />
-                      <span>Đang tải dữ liệu...</span>
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#2b727d]" />
+                      <span>Đang tải dữ liệu từ server...</span>
                     </div>
                   </td>
                 </tr>
@@ -404,27 +478,27 @@ export default function PriceListApprovalPage({ user }) {
                   const versionStr = item.version || 'v1.0';
 
                   return (
-                    <tr key={code} className="hover:bg-slate-50/80 transition border-b border-slate-100">
-                      <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{code}</td>
-                      <td className="py-2.5 px-3 max-w-[220px]">
+                    <tr key={code} className="hover:bg-slate-50/70 transition">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900">{code}</td>
+                      <td className="py-3 px-4 max-w-[220px]">
                         <div className="font-bold text-slate-800 leading-snug truncate">{name}</div>
                         <div className="text-[10px] font-mono text-slate-400 truncate leading-none mt-0.5">
                           {subTarget}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
                           {targetType}
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 font-mono text-slate-500">{versionStr}</td>
-                      <td className="py-2.5 px-3 text-slate-600 font-medium">{`${effectiveFrom} - ${effectiveTo}`}</td>
-                      <td className="py-2.5 px-3">{renderStatusBadge(status)}</td>
-                      <td className="py-2.5 px-3">
-                        <div className="font-semibold text-slate-800 leading-snug">{updatedBy}</div>
+                      <td className="py-3 px-4 font-mono text-slate-600 font-medium">{versionStr}</td>
+                      <td className="py-3 px-4 text-slate-600">{`${effectiveFrom} - ${effectiveTo}`}</td>
+                      <td className="py-3 px-4">{renderStatusBadge(status)}</td>
+                      <td className="py-3 px-4">
+                        <div className="text-slate-800 font-medium leading-snug">{updatedBy}</div>
                         <div className="text-[10px] text-slate-400 font-mono leading-none mt-0.5">{updatedAt}</div>
                       </td>
-                      <td className="py-2.5 px-3 text-center">
+                      <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center space-x-1">
                           <button 
                             onClick={() => handleOpenDetail(item)} 
@@ -434,12 +508,12 @@ export default function PriceListApprovalPage({ user }) {
                             <Eye className="w-4 h-4" />
                           </button>
 
-                          {status === 'SUBMITTED' && (
+                          {status === 'SUBMITTED' && isManager && (
                             <>
                               <button 
                                 onClick={() => handleApprove(item)} 
                                 className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition cursor-pointer" 
-                                title="Duyệt"
+                                title="Phê duyệt"
                               >
                                 <Check className="w-4 h-4" />
                               </button>
@@ -459,8 +533,8 @@ export default function PriceListApprovalPage({ user }) {
                 })
               ) : (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-slate-400 text-xs">
-                    Không tìm thấy bảng giá phù hợp.
+                  <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                    Không tìm thấy bảng giá phù hợp với bộ lọc.
                   </td>
                 </tr>
               )}
@@ -468,26 +542,26 @@ export default function PriceListApprovalPage({ user }) {
           </table>
         </div>
 
-        {/* Pagination */}
-        <div className="px-3 py-2 border-t border-slate-100 bg-white flex items-center justify-between text-xs text-slate-500">
+        {/* 5. PHÂN TRANG */}
+        <div className="p-3.5 border-t border-slate-200 bg-white flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div>
-            Hiển thị <strong className="text-slate-800">{priceLists.length}</strong> / <strong className="text-slate-800">{totalItems}</strong> bảng giá
+            Hiển thị <strong className="text-slate-800 font-semibold">{priceLists.length}</strong> trong tổng số <strong className="text-slate-800 font-semibold">{totalItems}</strong> bảng giá
           </div>
           <div className="flex items-center space-x-1">
             <button 
               disabled={page <= 1}
               onClick={() => setPage(prev => Math.max(prev - 1, 1))}
-              className="p-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
-            <span className="px-2 py-0.5 rounded bg-slate-800 text-white font-medium text-[11px]">
+            <span className="px-3 py-1 rounded-lg bg-slate-900 text-white font-semibold text-[11px]">
               {page} / {totalPages}
             </span>
             <button 
               disabled={page >= totalPages}
               onClick={() => setPage(prev => Math.min(prev + 1, totalPages))}
-              className="p-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
@@ -495,7 +569,7 @@ export default function PriceListApprovalPage({ user }) {
         </div>
       </div>
 
-      {/* Detail Modal */}
+      {/* Modal Xem chi tiết */}
       {selectedItem && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-2xl p-4 shadow-2xl space-y-3 max-h-[85vh] flex flex-col border border-slate-100">
@@ -516,7 +590,7 @@ export default function PriceListApprovalPage({ user }) {
 
             {modalLoading ? (
               <div className="py-8 flex flex-col items-center justify-center space-y-2 text-slate-400">
-                <Loader2 className="w-5 h-5 animate-spin text-sky-600" />
+                <Loader2 className="w-5 h-5 animate-spin text-[#2b727d]" />
                 <span className="text-xs">Đang tải thông tin chi tiết...</span>
               </div>
             ) : (
@@ -608,7 +682,7 @@ export default function PriceListApprovalPage({ user }) {
                 Đóng
               </button>
 
-              {selectedItem?.status === 'SUBMITTED' && (
+              {selectedItem?.status === 'SUBMITTED' && isManager && (
                 <>
                   <button 
                     onClick={() => setRejectModal({ isOpen: true, item: selectedItem, reason: '' })} 
@@ -629,7 +703,7 @@ export default function PriceListApprovalPage({ user }) {
         </div>
       )}
 
-      {/* Reject Modal */}
+      {/* Modal Từ chối */}
       {rejectModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-sm p-4 shadow-2xl space-y-3 border border-slate-100">
@@ -643,17 +717,17 @@ export default function PriceListApprovalPage({ user }) {
               </button>
             </div>
             <textarea
-              rows={2}
+              rows={3}
               value={rejectModal.reason}
               onChange={(e) => setRejectModal({ ...rejectModal, reason: e.target.value })}
               placeholder="Nhập lý do từ chối..."
               className="w-full text-xs p-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500 bg-slate-50/50"
             />
             <div className="flex justify-end space-x-2">
-              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-md text-xs font-semibold">
+              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-md text-xs font-semibold cursor-pointer">
                 Hủy
               </button>
-              <button onClick={handleRejectSubmit} className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-xs font-semibold">
+              <button onClick={handleRejectSubmit} className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-xs font-semibold cursor-pointer">
                 Xác nhận
               </button>
             </div>
@@ -661,7 +735,7 @@ export default function PriceListApprovalPage({ user }) {
         </div>
       )}
 
-      {/* Notification Modal */}
+      {/* Modal Thông báo kết quả */}
       {modalConfig.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
           <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xs w-full p-4 text-center space-y-3">
@@ -680,6 +754,7 @@ export default function PriceListApprovalPage({ user }) {
           </div>
         </div>
       )}
+
     </div>
   );
 }
