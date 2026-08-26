@@ -5,8 +5,13 @@ from app.api.v1.router import api_router
 from app.core.events import init_kafka, stop_kafka
 from app.db.session import engine
 from app.models.user import Base
+from seed import seed_data
 
 Base.metadata.create_all(bind=engine)
+try:
+    seed_data()
+except Exception as e:
+    print(f"Lỗi khi chạy seed data: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
