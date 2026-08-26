@@ -1,1 +1,19 @@
 @import "tailwindcss";
+
+@theme {
+    --color-sidebar: #0f172a;
+    --color-primary: #0d9488;
+    --color-bgLight: #f8fafc;
+}
+
+body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Badges */
+.badge-locked { background-color: #fee2e2; color: #dc2626; }
+.badge-unlocked { background-color: #dcfce7; color: #16a34a; }
+.badge-pending { background-color: #e0f2fe; color: #0284c7; }
+.badge-draft { background-color: #fef3c7; color: #d97706; }

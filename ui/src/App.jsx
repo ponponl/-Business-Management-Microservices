@@ -13,6 +13,11 @@ import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
 import PriceListApprovalPage from './pages/manager/PriceListApprovalPage.jsx';
 import DirectorPriceListApprovalPage from './pages/director/DirectorPriceListApprovalPage.jsx';
 
+// Quản lý sản lượng
+import ProductionManagementStaffPage from './pages/staff/ProductionManagementPage.jsx';
+import ProductionManagementManagerPage from './pages/manager/ProductionManagementPage.jsx';
+import ProductionManagementDirectorPage from './pages/director/ProductionManagementPage.jsx';
+
 const EmptyPage = () => <div className="w-full min-h-[400px] bg-transparent" />;
 
 const IndexRedirect = ({ user }) => {
@@ -73,7 +78,7 @@ export default function App() {
 
           {/* SERVICE KHÁC */}
           <Route path="/staff/contracts" element={<EmptyPage />} />
-          <Route path="/staff/volumes" element={<EmptyPage />} />
+          <Route path="/staff/volumes" element={<ProductionManagementStaffPage user={user} />} />
           <Route path="/staff/payments" element={<EmptyPage />} />
         </Route>
 
@@ -88,7 +93,7 @@ export default function App() {
 
           {/* SERVICE KHÁC */}
           <Route path="/manager/contracts" element={<EmptyPage />} />
-          <Route path="/manager/volumes" element={<EmptyPage />} />
+          <Route path="/manager/volumes" element={<ProductionManagementManagerPage user={user} />} />
           <Route path="/manager/payments" element={<EmptyPage />} />
         </Route>
 
@@ -103,7 +108,7 @@ export default function App() {
 
           {/* SERVICE KHÁC */}
           <Route path="/director/contracts" element={<EmptyPage />} />
-          <Route path="/director/volumes" element={<EmptyPage />} />
+          <Route path="/director/volumes" element={<ProductionManagementDirectorPage user={user} />} />
           <Route path="/director/payments" element={<EmptyPage />} />
         </Route>
 
