@@ -9,6 +9,7 @@ import DashboardPage from './pages/HomePage';
 import PriceManagementStaff from './pages/staff/PriceManagementPage.jsx';
 import CreatePriceListStaff from './pages/staff/CreatePriceListPage.jsx';
 import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
+import PriceListHistoryDetail from './pages/PriceListHistoryDetail.jsx';
 
 import PriceListApprovalPage from './pages/manager/PriceListApprovalPage.jsx';
 import DirectorPriceListApprovalPage from './pages/director/DirectorPriceListApprovalPage.jsx';
@@ -66,7 +67,7 @@ export default function App() {
         />
 
         {/* ========================================================= */}
-        {/* 1. KHU VỰC NHÂN VIÊN (STAFF)                              */}
+        {/* 1. KHU VỰC NHÂN VIÊN (STAFF)                             */}
         {/* ========================================================= */}
         <Route element={<RoleRoute user={user} allowedRoles={['STAFF']}><MainLayout user={user} onLogout={handleLogout} /></RoleRoute>}>
           <Route path="/staff" element={<DashboardPage user={user} />} />
@@ -75,6 +76,7 @@ export default function App() {
           <Route path="/staff/price-lists" element={<PriceManagementStaff user={user} />} />
           <Route path="/staff/price-lists/create" element={<CreatePriceListStaff user={user} />} />
           <Route path="/staff/price-lists/:id" element={<PriceListDetailStaff user={user} />} />
+          <Route path="/staff/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
 
           {/* SERVICE KHÁC */}
           <Route path="/staff/contracts" element={<EmptyPage />} />
@@ -90,6 +92,7 @@ export default function App() {
 
           {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
           <Route path="/manager/price-lists" element={<PriceListApprovalPage user={user} />} />
+          <Route path="/manager/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
 
           {/* SERVICE KHÁC */}
           <Route path="/manager/contracts" element={<EmptyPage />} />
@@ -105,6 +108,7 @@ export default function App() {
 
           {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
           <Route path="/director/price-lists" element={<DirectorPriceListApprovalPage user={user} />} />
+          <Route path="/director/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
 
           {/* SERVICE KHÁC */}
           <Route path="/director/contracts" element={<EmptyPage />} />

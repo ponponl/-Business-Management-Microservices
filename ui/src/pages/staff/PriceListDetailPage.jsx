@@ -342,7 +342,6 @@ export default function PriceListDetailPage() {
         </div>
       </div>
 
-      {/* Ẩn cảnh báo đỏ khi chuyển sang SUBMITTED */}
       {priceDetail.status === 'REJECTED' && (
         <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4 flex items-start space-x-3 shadow-xs animate-in fade-in">
           <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
@@ -455,7 +454,6 @@ export default function PriceListDetailPage() {
               />
             </div>
 
-            {/* Ẩn ô lý do từ chối khi ở trạng thái SUBMITTED */}
             {priceDetail.status === 'REJECTED' && (
               <div className="md:col-span-3">
                 <label className="block text-rose-700 font-medium mb-1.5">Lý do từ chối từ Ban quản lý</label>
@@ -608,7 +606,7 @@ export default function PriceListDetailPage() {
         </button>
 
         <button
-          onClick={() => alert('Chức năng lịch sử phiên bản!')}
+          onClick={() => navigate(`/staff/price-lists/${priceDetail.priceCode}/versions`)}
           className="px-4 py-2 rounded-lg bg-white border border-[#2b727d] text-[#2b727d] hover:bg-[#2b727d]/5 text-xs font-semibold flex items-center space-x-1.5 cursor-pointer transition"
         >
           <Clock className="w-3.5 h-3.5" />
