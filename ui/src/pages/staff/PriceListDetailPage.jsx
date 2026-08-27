@@ -10,7 +10,6 @@ export default function PriceListDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  // Lấy Token xác thực từ localStorage
   const token = localStorage.getItem('token');
 
   const [priceDetail, setPriceDetail] = useState(null);
@@ -22,6 +21,26 @@ export default function PriceListDetailPage() {
 
   const [showUpdateSuccessModal, setShowUpdateSuccessModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+
+  // Hàm tính toán tự động tăng Minor Version (1.0 -> 1.1, 1.9 -> 2.0)
+  const incrementVersion = (currentVersion) => {
+    if (!currentVersion) return '1.0';
+    const cleanVer = String(currentVersion).toLowerCase().replace('v', '').trim();
+    const parts = cleanVer.split('.');
+    
+    if (parts.length < 2) return `${cleanVer}.1`;
+
+    let major = parseInt(parts[0], 10) || 1;
+    let minor = parseInt(parts[1], 10) || 0;
+
+    minor += 1;
+    if (minor >= 10) {
+      major += 1;
+      minor = 0;
+    }
+
+    return `${major}.${minor}`;
+  };
 
   const formatNumberWithDots = (val) => {
     if (val === undefined || val === null || val === '') return '';
@@ -36,7 +55,6 @@ export default function PriceListDetailPage() {
     return rawNumber ? Number(rawNumber) : 0;
   };
 
-  // 1. Lấy danh sách Dịch vụ dùng để chọn trong dropdown
   useEffect(() => {
     fetch(SERVICES_API_URL, {
       headers: {
@@ -54,7 +72,6 @@ export default function PriceListDetailPage() {
       .catch((err) => console.error('Lỗi lấy danh sách dịch vụ:', err));
   }, [token]);
 
-  // 2. Lấy thông tin chi tiết bảng giá
   useEffect(() => {
     if (!id) return;
 
@@ -109,7 +126,6 @@ export default function PriceListDetailPage() {
     }));
   };
 
-  // Thay đổi thông tin khi chọn dịch vụ từ dropdown
   const handleSelectServiceChange = (index, selectedCode) => {
     const selectedObj = availableServices.find(
       (s) => (s.serviceCode || s.code) === selectedCode
@@ -162,7 +178,6 @@ export default function PriceListDetailPage() {
     }));
   };
 
-  // 3. Cập nhật bảng giá
   const handleSaveUpdate = async () => {
     setSaving(true);
     try {
@@ -202,7 +217,6 @@ export default function PriceListDetailPage() {
         } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
         }
-
         throw new Error(errorMessage);
       }
 
@@ -214,16 +228,21 @@ export default function PriceListDetailPage() {
     }
   };
 
-  // 4. Gửi phê duyệt
   const handleSubmitApproval = async () => {
     setSubmitting(true);
     try {
+      // Tự động tăng phiên bản nếu trước đó bản ghi bị từ chối
+      const newVersion = priceDetail.status === 'REJECTED' 
+        ? incrementVersion(priceDetail.version) 
+        : priceDetail.version;
+
       const response = await fetch(`${APPROVAL_BASE_URL}/${priceDetail.priceCode}/submit`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ version: newVersion }),
       });
 
       if (!response.ok) {
@@ -236,11 +255,17 @@ export default function PriceListDetailPage() {
         } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
         }
-
         throw new Error(errorMessage);
       }
 
-      setPriceDetail((prev) => ({ ...prev, status: 'SUBMITTED' }));
+      // Cập nhật state local: Trạng thái SUBMITTED, phiên bản mới & xóa lý do từ chối
+      setPriceDetail((prev) => ({ 
+        ...prev, 
+        status: 'SUBMITTED', 
+        version: newVersion,
+        rejectionReason: '' 
+      }));
+      
       setShowSuccessModal(true);
     } catch (err) {
       alert(`Gửi phê duyệt thất bại:\n${err.message}`);
@@ -317,6 +342,7 @@ export default function PriceListDetailPage() {
         </div>
       </div>
 
+      {/* Ẩn cảnh báo đỏ khi chuyển sang SUBMITTED */}
       {priceDetail.status === 'REJECTED' && (
         <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4 flex items-start space-x-3 shadow-xs animate-in fade-in">
           <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
@@ -429,6 +455,7 @@ export default function PriceListDetailPage() {
               />
             </div>
 
+            {/* Ẩn ô lý do từ chối khi ở trạng thái SUBMITTED */}
             {priceDetail.status === 'REJECTED' && (
               <div className="md:col-span-3">
                 <label className="block text-rose-700 font-medium mb-1.5">Lý do từ chối từ Ban quản lý</label>
@@ -659,7 +686,7 @@ export default function PriceListDetailPage() {
                 Gửi phê duyệt thành công!
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed px-2">
-                Hệ thống đã gửi dữ liệu bảng giá <span className="font-bold text-slate-700">{priceDetail.priceCode}</span> đến ban điều hành xem xét duyệt bản ghi.
+                Hệ thống đã gửi dữ liệu bảng giá <span className="font-bold text-slate-700">{priceDetail.priceCode}</span> (Phiên bản: <span className="font-bold text-[#2b727d]">{priceDetail.version}</span>) đến ban điều hành xem xét duyệt bản ghi.
               </p>
             </div>
 

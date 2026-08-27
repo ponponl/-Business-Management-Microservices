@@ -38,7 +38,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
     message: ''
   });
 
-  // Helper lấy Header kèm Authentication Token
+  // Helper authentication token headers
   const getAuthHeaders = useCallback(() => {
     const token = localStorage.getItem('token') || user?.token || '';
     return {
@@ -49,7 +49,28 @@ export default function DirectorPriceListApprovalPage({ user }) {
   }, [user]);
 
   const getItemCode = (item) => {
-    return item?.price_list_id || item?.price_code || item?.price_list_code || item?.id || '';
+    if (!item) return '';
+    return (
+      item.price_code || 
+      item.priceCode || 
+      item.price_list_id || 
+      item.priceListId || 
+      item.code || 
+      item.id || 
+      ''
+    ).toString();
+  };
+
+  const getItemName = (item) => {
+    return item?.price_name || item?.priceName || item?.name || item?.title || 'Bảng giá dịch vụ';
+  };
+
+  const getSpecificTarget = (item) => {
+    return item?.specific_target || item?.specificTarget || item?.customer_name || item?.customerName || 'Áp dụng chung';
+  };
+
+  const getTargetType = (item) => {
+    return item?.target_type || item?.targetType || item?.type || 'GENERAL';
   };
 
   const formatDate = (dateStr) => {
@@ -61,6 +82,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
     }
   };
 
+  // Keyboard support (Escape key to close modals)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -73,72 +95,109 @@ export default function DirectorPriceListApprovalPage({ user }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [rejectModal.isOpen, selectedItem, modalConfig.isOpen]);
 
+  // Fetch Statistics
   const fetchStats = useCallback(async () => {
     try {
       const res = await fetch(`${APPROVAL_API}/director-approval/stats`, {
         headers: getAuthHeaders()
       });
-      if (res.status === 401) {
-        console.warn('Lỗi 401: Chưa đăng nhập hoặc Token hết hạn (fetchStats)');
-        return;
-      }
       if (!res.ok) throw new Error('Không thể tải thống kê');
       const data = await res.json();
       setStats({
-        approved: data.approved || 0,
-        effective: data.effective || 0,
-        rejected: data.rejected || 0
+        approved: data.approved || data.APPROVED || 0,
+        effective: data.effective || data.EFFECTIVE || 0,
+        rejected: data.rejected || data.REJECTED || 0
       });
     } catch (err) {
       console.error('Lỗi lấy thống kê:', err);
     }
   }, [getAuthHeaders]);
 
+  // Fetch & Filter (Chỉ lọc đúng Tab và lấy duy nhất Phiên bản mới nhất)
   const fetchPriceLists = useCallback(async () => {
     setLoading(true);
 
-    const params = new URLSearchParams();
-    if (statusFilter && statusFilter !== 'ALL') {
-      params.append('status', statusFilter);
-    }
-
     try {
+      const params = new URLSearchParams();
+      if (statusFilter !== 'ALL') {
+        params.append('status', statusFilter);
+      }
+
       const res = await fetch(`${APPROVAL_API}/director-list?${params.toString()}`, {
         headers: getAuthHeaders()
       });
 
-      if (res.status === 401) {
-        console.warn('Lỗi 401: Chưa đăng nhập hoặc Token hết hạn (fetchPriceLists)');
-        setPriceLists([]);
-        setTotalItems(0);
-        return;
-      }
-      
       if (!res.ok) throw new Error(`Lỗi kết nối API (${res.status})`);
       
       const data = await res.json();
-      let rawList = Array.isArray(data) ? data : (data.items || data.data || []);
+      let rawList = Array.isArray(data) ? data : (data.items || data.data || data.content || []);
 
-      const allowedStatuses = ['APPROVED', 'EFFECTIVE', 'REJECTED'];
-      rawList = rawList.filter(item => allowedStatuses.includes((item.status || '').toUpperCase()));
-
-      if (typeFilter !== 'ALL') {
-        rawList = rawList.filter(item => item.target_type?.toUpperCase() === typeFilter.toUpperCase());
+      // 1. LỌC CHÍNH XÁC THEO TAB (APPROVED / EFFECTIVE / REJECTED)
+      if (statusFilter !== 'ALL') {
+        rawList = rawList.filter(item => {
+          const itemStatus = (item.status || item.approval_status || '').toUpperCase();
+          return itemStatus === statusFilter.toUpperCase();
+        });
       }
 
+      // 2. Lọc theo Loại đối tượng
+      if (typeFilter !== 'ALL') {
+        rawList = rawList.filter(item => getTargetType(item).toUpperCase() === typeFilter.toUpperCase());
+      }
+
+      // 3. Lọc theo Từ khóa tìm kiếm
       if (searchTerm.trim() !== '') {
         const term = searchTerm.trim().toLowerCase();
         rawList = rawList.filter(item => 
-          (item.price_list_id && item.price_list_id.toLowerCase().includes(term)) ||
-          (item.price_name && item.price_name.toLowerCase().includes(term)) ||
-          (item.specific_target && item.specific_target.toLowerCase().includes(term))
+          getItemCode(item).toLowerCase().includes(term) ||
+          getItemName(item).toLowerCase().includes(term) ||
+          getSpecificTarget(item).toLowerCase().includes(term)
         );
       }
 
-      setTotalItems(rawList.length);
+      // Helper hỗ trợ parse version chuỗi "v1.2" -> 1.2
+      const parseVersion = (v) => {
+        if (!v) return 0;
+        const num = parseFloat(String(v).replace(/[^0-9.]/g, ''));
+        return isNaN(num) ? 0 : num;
+      };
 
+      // Helper lấy thời gian cập nhật/duyệt
+      const getTime = (item) => {
+        const d = item.approved_at || item.approvedAt || item.updated_at || item.updatedAt || item.created_at;
+        return d ? new Date(d).getTime() : 0;
+      };
+
+      // 4. CHỈ GIỮ LẠI PHIÊN BẢN MỚI NHẤT CHO MỖI MÃ BẢNG GIÁ
+      const latestMap = new Map();
+
+      rawList.forEach(item => {
+        const code = getItemCode(item);
+        if (!code) return;
+
+        if (!latestMap.has(code)) {
+          latestMap.set(code, item);
+        } else {
+          const existing = latestMap.get(code);
+          const currentVer = parseVersion(item.version || item.version_name);
+          const existingVer = parseVersion(existing.version || existing.version_name);
+
+          // So sánh Version (VD: v1.2 > v1.1). Nếu bằng version thì so sánh thời gian
+          if (
+            currentVer > existingVer || 
+            (currentVer === existingVer && getTime(item) > getTime(existing))
+          ) {
+            latestMap.set(code, item);
+          }
+        }
+      });
+      
+      const uniqueList = Array.from(latestMap.values());
+
+      setTotalItems(uniqueList.length);
       const startIndex = (page - 1) * pageSize;
-      setPriceLists(rawList.slice(startIndex, startIndex + pageSize));
+      setPriceLists(uniqueList.slice(startIndex, startIndex + pageSize));
+
     } catch (err) {
       console.error('Lỗi tải danh sách phê duyệt:', err);
       setPriceLists([]);
@@ -174,10 +233,10 @@ export default function DirectorPriceListApprovalPage({ user }) {
       });
       if (res.ok) {
         const fullData = await res.json();
-        setSelectedItem(prev => ({ ...prev, ...fullData }));
+        setSelectedItem(prev => ({ ...prev, ...(fullData.data || fullData) }));
       }
     } catch (err) {
-      console.warn('Dùng dữ liệu danh sách hiện tại:', err);
+      console.warn('Dùng dữ liệu hiện tại:', err);
     } finally {
       setModalLoading(false);
     }
@@ -226,7 +285,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
     }
   };
 
-  const handleDirectorRejectSubmit = async () => {
+  const handleRejectSubmit = async () => {
     const trimmedReason = rejectModal.reason.trim();
     if (!trimmedReason) {
       alert('Vui lòng nhập lý do từ chối!');
@@ -363,7 +422,6 @@ export default function DirectorPriceListApprovalPage({ user }) {
           </select>
         </div>
 
-        {/* Tab lọc Trạng thái */}
         <div className="bg-slate-100 p-0.5 rounded-md flex items-center space-x-0.5 text-[11px] font-medium text-slate-500 overflow-x-auto">
           {[
             { key: 'ALL', label: 'TẤT CẢ' },
@@ -424,23 +482,23 @@ export default function DirectorPriceListApprovalPage({ user }) {
                   </tr>
                 ))
               ) : priceLists.length > 0 ? (
-                priceLists.map((item) => {
+                priceLists.map((item, idx) => {
                   const code = getItemCode(item);
-                  const name = item.price_name || 'Bảng giá dịch vụ';
-                  const subTarget = item.specific_target || 'N/A';
-                  const targetType = item.target_type || 'GENERAL';
+                  const name = getItemName(item);
+                  const subTarget = getSpecificTarget(item);
+                  const targetType = getTargetType(item);
                   
-                  const effectiveFrom = formatDate(item.effective_from);
-                  const effectiveTo = formatDate(item.effective_to);
+                  const effectiveFrom = formatDate(item.effective_from || item.effectiveFrom || item.valid_from || item.validFrom);
+                  const effectiveTo = formatDate(item.effective_to || item.effectiveTo || item.valid_to || item.validTo);
                   
-                  const approvedBy = item.approved_by || item.updated_by || 'Manager';
-                  const approvedAt = item.approved_at || item.updated_at || '-';
+                  const approvedBy = item.approved_by || item.approvedBy || item.updated_by || item.updatedBy || 'Manager';
+                  const approvedAt = formatDate(item.approved_at || item.approvedAt || item.updated_at || item.updatedAt);
                   const status = (item.status || '').toUpperCase();
-                  const versionStr = item.version || 'v1.0';
+                  const versionStr = item.version || item.version_name || 'v1.0';
                   const isActioning = actionLoadingId === code;
 
                   return (
-                    <tr key={code} className="hover:bg-slate-50/80 transition border-b border-slate-100">
+                    <tr key={code || idx} className="hover:bg-slate-50/80 transition border-b border-slate-100">
                       <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{code}</td>
                       <td className="py-2.5 px-3 max-w-[220px]">
                         <div className="font-bold text-slate-800 leading-snug truncate">{name}</div>
@@ -548,7 +606,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
                   {getItemCode(selectedItem)}
                 </span>
                 <h3 className="text-sm font-bold text-slate-900 truncate max-w-[300px]">
-                  {selectedItem.price_name || 'Chi tiết bảng giá'}
+                  {getItemName(selectedItem)}
                 </h3>
                 {renderStatusBadge(selectedItem.status)}
               </div>
@@ -567,30 +625,30 @@ export default function DirectorPriceListApprovalPage({ user }) {
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-100">
                   <div>
                     <span className="block text-slate-400 text-[10px]">Loại đối tượng</span>
-                    <p className="font-semibold text-slate-800">{selectedItem.target_type || 'GENERAL'}</p>
+                    <p className="font-semibold text-slate-800">{getTargetType(selectedItem)}</p>
                   </div>
                   <div>
                     <span className="block text-slate-400 text-[10px]">Đối tượng cụ thể</span>
-                    <p className="font-semibold text-slate-800 truncate">{selectedItem.specific_target || 'Tất cả'}</p>
+                    <p className="font-semibold text-slate-800 truncate">{getSpecificTarget(selectedItem)}</p>
                   </div>
                   <div>
                     <span className="block text-slate-400 text-[10px]">Phiên bản</span>
-                    <p className="font-semibold text-slate-800 font-mono">{selectedItem.version || 'v1.0'}</p>
+                    <p className="font-semibold text-slate-800 font-mono">{selectedItem.version || selectedItem.version_name || 'v1.0'}</p>
                   </div>
                   <div className="col-span-2 sm:col-span-3 flex items-center space-x-3 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
                     <span className="flex items-center space-x-1">
                       <Calendar className="w-3 h-3 text-slate-400" />
-                      <span>Từ: {formatDate(selectedItem.effective_from)}</span>
+                      <span>Từ: {formatDate(selectedItem.effective_from || selectedItem.effectiveFrom || selectedItem.valid_from)}</span>
                     </span>
                     <span className="flex items-center space-x-1">
                       <Calendar className="w-3 h-3 text-slate-400" />
-                      <span>Đến: {formatDate(selectedItem.effective_to)}</span>
+                      <span>Đến: {formatDate(selectedItem.effective_to || selectedItem.effectiveTo || selectedItem.valid_to)}</span>
                     </span>
                   </div>
                 </div>
 
                 {(() => {
-                  const serviceList = selectedItem.services || selectedItem.items || selectedItem.details || selectedItem.price_list_items || [];
+                  const serviceList = selectedItem.services || selectedItem.items || selectedItem.details || selectedItem.price_list_items || selectedItem.priceListItems || [];
                   return (
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-xs font-bold text-slate-800">
@@ -610,10 +668,10 @@ export default function DirectorPriceListApprovalPage({ user }) {
                           <tbody className="divide-y divide-slate-100 bg-white">
                             {serviceList.length > 0 ? (
                               serviceList.map((srv, idx) => {
-                                const serviceCode = srv.service_code || srv.code || srv.service_id || srv.item_code || '-';
-                                const serviceName = srv.service_name || srv.name || srv.description || srv.service_type_name || srv.title || '-';
-                                const unit = srv.unit || srv.uom || srv.unit_name || '-';
-                                const price = srv.price ?? srv.unit_price ?? srv.amount ?? srv.rate ?? 0;
+                                const serviceCode = srv.service_code || srv.serviceCode || srv.code || srv.service_id || srv.item_code || '-';
+                                const serviceName = srv.service_name || srv.serviceName || srv.name || srv.description || srv.service_type_name || '-';
+                                const unit = srv.unit || srv.uom || srv.unit_name || srv.unitName || '-';
+                                const price = srv.price ?? srv.unit_price ?? srv.unitPrice ?? srv.amount ?? srv.rate ?? 0;
 
                                 return (
                                   <tr key={srv.id || serviceCode || idx} className="hover:bg-slate-50/80">
@@ -675,16 +733,19 @@ export default function DirectorPriceListApprovalPage({ user }) {
         </div>
       )}
 
-      {/* Reject Modal */}
+      {/* Modal Từ Chối */}
       {rejectModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-sm p-4 shadow-2xl space-y-3 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-xl w-full max-w-sm p-4 shadow-2xl space-y-3 border border-slate-100">
             <div className="flex justify-between items-center border-b border-slate-100 pb-2">
               <h3 className="text-xs font-bold text-rose-600 flex items-center space-x-1">
                 <AlertCircle className="w-3.5 h-3.5" />
-                <span>Lý do từ chối</span>
+                <span>Từ chối phê duyệt</span>
               </h3>
-              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+              <button 
+                onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} 
+                className="text-slate-400 hover:text-slate-600"
+              >
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -692,9 +753,8 @@ export default function DirectorPriceListApprovalPage({ user }) {
               rows={3}
               value={rejectModal.reason}
               onChange={(e) => setRejectModal({ ...rejectModal, reason: e.target.value })}
-              placeholder="Nhập ghi chú / lý do từ chối..."
+              placeholder="Nhập lý do từ chối..."
               className="w-full text-xs p-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500 bg-slate-50/50"
-              autoFocus
             />
             <div className="flex justify-end space-x-2">
               <button 
@@ -704,22 +764,22 @@ export default function DirectorPriceListApprovalPage({ user }) {
                 Hủy
               </button>
               <button 
+                onClick={handleRejectSubmit} 
                 disabled={actionLoadingId === getItemCode(rejectModal.item)}
-                onClick={handleDirectorRejectSubmit} 
                 className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-xs font-semibold cursor-pointer disabled:opacity-50 flex items-center space-x-1"
               >
                 {actionLoadingId === getItemCode(rejectModal.item) && <Loader2 className="w-3 h-3 animate-spin" />}
-                <span>Xác nhận từ chối</span>
+                <span>Xác nhận</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Notification Modal */}
+      {/* Modal Thông báo kết quả */}
       {modalConfig.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xs w-full p-4 text-center space-y-3 animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-100 max-w-xs w-full p-4 text-center space-y-3">
             <div className="flex justify-center">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${modalConfig.type === 'approve' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
                 {modalConfig.type === 'approve' ? <Check className="w-5 h-5 stroke-[3]" /> : <X className="w-5 h-5 stroke-[3]" />}
@@ -729,7 +789,10 @@ export default function DirectorPriceListApprovalPage({ user }) {
               <h3 className="text-sm font-bold text-slate-900">{modalConfig.title}</h3>
               <p className="text-[11px] text-slate-500 mt-0.5">{modalConfig.message}</p>
             </div>
-            <button onClick={() => setModalConfig({ ...modalConfig, isOpen: false })} className={`w-full py-1.5 px-3 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer ${modalConfig.type === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}>
+            <button 
+              onClick={() => setModalConfig({ ...modalConfig, isOpen: false })} 
+              className={`w-full py-1.5 px-3 rounded-lg text-xs font-bold text-white shadow-xs cursor-pointer ${modalConfig.type === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}`}
+            >
               Đóng
             </button>
           </div>
