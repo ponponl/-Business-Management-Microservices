@@ -1,6 +1,6 @@
 # app/api/v1/api.py
 from fastapi import APIRouter
-from app.api.v1.endpoints import price_list, approval
+from app.api.v1.endpoints import price_list, approval, payment_integration
 
 api_router = APIRouter()
 
@@ -16,4 +16,11 @@ api_router.include_router(
     approval.router, 
     prefix="/approvals", 
     tags=["Approvals"]
+)
+
+# 3. Router xác thực cho Payment Service
+api_router.include_router(
+    payment_integration.router,
+    prefix="/payment-integration",
+    tags=["Payment Integration"]
 )
