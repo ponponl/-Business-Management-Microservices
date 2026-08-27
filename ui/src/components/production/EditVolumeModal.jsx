@@ -15,7 +15,7 @@ export default function EditVolumeModal({ isOpen, onClose }) {
                         <div className="mb-4">
                             <label className="block text-sm font-medium text-slate-700 mb-2">Dịch vụ điều chỉnh</label>
                             <div className="p-3 bg-slate-50 rounded-lg text-sm text-slate-800 font-medium border border-slate-200">
-                                Xếp dỡ Container 20feet (C001)
+                                Bốc xếp container 20ft (Hàng nhập) (SRV-20ft-IN)
                             </div>
                         </div>
                         <div className="mb-4">

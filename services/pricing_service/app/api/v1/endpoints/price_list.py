@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -8,8 +8,10 @@ from app.schemas.price_list import (
     PriceListCreate,
     PriceListPaginatedResponse,
     PriceListStatsResponse,
+    ServiceItemResponse,  
 )
 from app.services.price_list_service import PriceListService
+from app.models.pricing import ServiceItem
 
 router = APIRouter()
 
@@ -44,6 +46,24 @@ def get_price_lists(
         page=page,
         page_size=page_size,
     )
+
+
+# --- ROUTE NÀY NẰM TRƯỚC ROUTE /{price_code} LÀ CHÍNH XÁC ---
+@router.get("/services", response_model=List[ServiceItemResponse])  # <-- Gắn response_model
+def get_services_from_db(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Lấy danh sách các dịch vụ (ServiceItem) đang ACTIVE từ PostgreSQL"""
+    try:
+        # Lấy danh sách dịch vụ có trạng thái ACTIVE
+        services = db.query(ServiceItem).filter(ServiceItem.status == "ACTIVE").all()
+        return services
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Lỗi khi lấy danh sách dịch vụ: {str(e)}",
+        )
 
 
 @router.get("/{price_code}")

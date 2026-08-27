@@ -4,15 +4,16 @@ import { ArrowLeft, Clock, Loader2, AlertCircle, Plus, Trash2, Send, Check, Aler
 
 const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 const APPROVAL_BASE_URL = 'http://localhost:8082/api/v1/approvals';
+const SERVICES_API_URL = 'http://localhost:8082/api/v1/price-lists/services';
 
 export default function PriceListDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  // Lấy Token xác thực từ localStorage
   const token = localStorage.getItem('token');
 
   const [priceDetail, setPriceDetail] = useState(null);
+  const [availableServices, setAvailableServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -20,6 +21,26 @@ export default function PriceListDetailPage() {
 
   const [showUpdateSuccessModal, setShowUpdateSuccessModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+
+  // Hàm tính toán tự động tăng Minor Version (1.0 -> 1.1, 1.9 -> 2.0)
+  const incrementVersion = (currentVersion) => {
+    if (!currentVersion) return '1.0';
+    const cleanVer = String(currentVersion).toLowerCase().replace('v', '').trim();
+    const parts = cleanVer.split('.');
+    
+    if (parts.length < 2) return `${cleanVer}.1`;
+
+    let major = parseInt(parts[0], 10) || 1;
+    let minor = parseInt(parts[1], 10) || 0;
+
+    minor += 1;
+    if (minor >= 10) {
+      major += 1;
+      minor = 0;
+    }
+
+    return `${major}.${minor}`;
+  };
 
   const formatNumberWithDots = (val) => {
     if (val === undefined || val === null || val === '') return '';
@@ -34,7 +55,23 @@ export default function PriceListDetailPage() {
     return rawNumber ? Number(rawNumber) : 0;
   };
 
-  // 1. Lấy thông tin chi tiết bảng giá
+  useEffect(() => {
+    fetch(SERVICES_API_URL, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Không thể lấy danh sách dịch vụ');
+        return res.json();
+      })
+      .then((data) => {
+        setAvailableServices(Array.isArray(data) ? data : data.content || []);
+      })
+      .catch((err) => console.error('Lỗi lấy danh sách dịch vụ:', err));
+  }, [token]);
+
   useEffect(() => {
     if (!id) return;
 
@@ -89,6 +126,30 @@ export default function PriceListDetailPage() {
     }));
   };
 
+  const handleSelectServiceChange = (index, selectedCode) => {
+    const selectedObj = availableServices.find(
+      (s) => (s.serviceCode || s.code) === selectedCode
+    );
+
+    setPriceDetail((prev) => {
+      const newServices = [...prev.services];
+      if (selectedObj) {
+        newServices[index] = {
+          ...newServices[index],
+          serviceCode: selectedObj.serviceCode || selectedObj.code || '',
+          serviceName: selectedObj.serviceName || selectedObj.name || '',
+          unit: selectedObj.unit || newServices[index].unit || '',
+        };
+      } else {
+        newServices[index] = {
+          ...newServices[index],
+          serviceCode: selectedCode,
+        };
+      }
+      return { ...prev, services: newServices };
+    });
+  };
+
   const handleServiceChange = (index, field, value) => {
     setPriceDetail((prev) => {
       const newServices = [...prev.services];
@@ -117,7 +178,6 @@ export default function PriceListDetailPage() {
     }));
   };
 
-  // 2. Cập nhật bảng giá
   const handleSaveUpdate = async () => {
     setSaving(true);
     try {
@@ -157,7 +217,6 @@ export default function PriceListDetailPage() {
         } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
         }
-
         throw new Error(errorMessage);
       }
 
@@ -169,16 +228,21 @@ export default function PriceListDetailPage() {
     }
   };
 
-  // 3. Gửi phê duyệt
   const handleSubmitApproval = async () => {
     setSubmitting(true);
     try {
+      // Tự động tăng phiên bản nếu trước đó bản ghi bị từ chối
+      const newVersion = priceDetail.status === 'REJECTED' 
+        ? incrementVersion(priceDetail.version) 
+        : priceDetail.version;
+
       const response = await fetch(`${APPROVAL_BASE_URL}/${priceDetail.priceCode}/submit`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ version: newVersion }),
       });
 
       if (!response.ok) {
@@ -191,11 +255,17 @@ export default function PriceListDetailPage() {
         } else if (typeof errorData.detail === 'string') {
           errorMessage = errorData.detail;
         }
-
         throw new Error(errorMessage);
       }
 
-      setPriceDetail((prev) => ({ ...prev, status: 'SUBMITTED' }));
+      // Cập nhật state local: Trạng thái SUBMITTED, phiên bản mới & xóa lý do từ chối
+      setPriceDetail((prev) => ({ 
+        ...prev, 
+        status: 'SUBMITTED', 
+        version: newVersion,
+        rejectionReason: '' 
+      }));
+      
       setShowSuccessModal(true);
     } catch (err) {
       alert(`Gửi phê duyệt thất bại:\n${err.message}`);
@@ -272,6 +342,7 @@ export default function PriceListDetailPage() {
         </div>
       </div>
 
+      {/* Ẩn cảnh báo đỏ khi chuyển sang SUBMITTED */}
       {priceDetail.status === 'REJECTED' && (
         <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4 flex items-start space-x-3 shadow-xs animate-in fade-in">
           <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
@@ -384,6 +455,7 @@ export default function PriceListDetailPage() {
               />
             </div>
 
+            {/* Ẩn ô lý do từ chối khi ở trạng thái SUBMITTED */}
             {priceDetail.status === 'REJECTED' && (
               <div className="md:col-span-3">
                 <label className="block text-rose-700 font-medium mb-1.5">Lý do từ chối từ Ban quản lý</label>
@@ -434,13 +506,22 @@ export default function PriceListDetailPage() {
                     <tr key={index} className="hover:bg-slate-50/50 transition">
                       <td className="py-2.5 px-4">
                         {canEdit ? (
-                          <input
-                            type="text"
-                            value={srv.serviceName}
-                            placeholder="Tên dịch vụ..."
-                            onChange={(e) => handleServiceChange(index, 'serviceName', e.target.value)}
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d]"
-                          />
+                          <select
+                            value={srv.serviceCode}
+                            onChange={(e) => handleSelectServiceChange(index, e.target.value)}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d] bg-white text-slate-800"
+                          >
+                            <option value="">-- Chọn dịch vụ --</option>
+                            {availableServices.map((s, idx) => {
+                              const code = s.serviceCode || s.code;
+                              const name = s.serviceName || s.name;
+                              return (
+                                <option key={idx} value={code}>
+                                  {name} ({code})
+                                </option>
+                              );
+                            })}
+                          </select>
                         ) : (
                           <span className="text-slate-800 font-medium">{srv.serviceName}</span>
                         )}
@@ -450,9 +531,9 @@ export default function PriceListDetailPage() {
                           <input
                             type="text"
                             value={srv.serviceCode}
+                            readOnly
                             placeholder="Mã..."
-                            onChange={(e) => handleServiceChange(index, 'serviceCode', e.target.value)}
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 font-mono focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d]"
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 font-mono bg-slate-50 text-slate-500 cursor-default"
                           />
                         ) : (
                           <span className="text-slate-500 font-mono">{srv.serviceCode}</span>
@@ -463,8 +544,8 @@ export default function PriceListDetailPage() {
                           <input
                             type="text"
                             value={srv.unit}
-                            placeholder="ĐVT..."
                             onChange={(e) => handleServiceChange(index, 'unit', e.target.value)}
+                            placeholder="ĐVT..."
                             className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 focus:outline-none focus:border-[#2b727d] focus:ring-1 focus:ring-[#2b727d]"
                           />
                         ) : (
@@ -605,7 +686,7 @@ export default function PriceListDetailPage() {
                 Gửi phê duyệt thành công!
               </h3>
               <p className="text-xs text-slate-500 leading-relaxed px-2">
-                Hệ thống đã gửi dữ liệu bảng giá <span className="font-bold text-slate-700">{priceDetail.priceCode}</span> đến ban điều hành xem xét duyệt bản ghi.
+                Hệ thống đã gửi dữ liệu bảng giá <span className="font-bold text-slate-700">{priceDetail.priceCode}</span> (Phiên bản: <span className="font-bold text-[#2b727d]">{priceDetail.version}</span>) đến ban điều hành xem xét duyệt bản ghi.
               </p>
             </div>
 

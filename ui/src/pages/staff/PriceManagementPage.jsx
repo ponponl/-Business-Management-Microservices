@@ -9,7 +9,6 @@ const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 
 export default function PriceManagementPage() {
   const navigate = useNavigate();
-
   const token = localStorage.getItem('token');
 
   const [stats, setStats] = useState({ total: 0, submitted: 0, approved: 0, effective: 0, rejected: 0 });
@@ -30,6 +29,51 @@ export default function PriceManagementPage() {
 
   const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
 
+  const formatVersion = (item) => {
+    if (!item) return 'v1.0';
+
+    const getVerString = (v) => {
+      if (!v) return null;
+      if (typeof v === 'string' || typeof v === 'number') return String(v);
+      if (typeof v === 'object') return v.version_number || v.versionNumber || v.version || null;
+      return null;
+    };
+
+    let raw = 
+      getVerString(item.version) ||
+      getVerString(item.version_number) ||
+      getVerString(item.versionNumber) ||
+      getVerString(item.latest_version) ||
+      getVerString(item.latestVersion) ||
+      getVerString(item.current_version) ||
+      getVerString(item.currentVersion) ||
+      getVerString(item.active_version) ||
+      getVerString(item.activeVersion);
+
+    if (!raw && Array.isArray(item.versions) && item.versions.length > 0) {
+      const sortedVersions = [...item.versions].sort((a, b) => {
+        const parseVer = (vObj) => {
+          const vStr = String(vObj?.version_number || vObj?.version || '0');
+          return vStr.replace(/[^\d.]/g, '').split('.').map(Number);
+        };
+        const numA = parseVer(a);
+        const numB = parseVer(b);
+        for (let i = 0; i < Math.max(numA.length, numB.length); i++) {
+          const valA = numA[i] || 0;
+          const valB = numB[i] || 0;
+          if (valA !== valB) return valB - valA;
+        }
+        return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+      });
+      raw = getVerString(sortedVersions[0]);
+    }
+
+    if (!raw) return 'v1.0';
+
+    const cleanStr = String(raw).trim();
+    return cleanStr.toLowerCase().startsWith('v') ? cleanStr : `v${cleanStr}`;
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchInput);
@@ -38,7 +82,6 @@ export default function PriceManagementPage() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  // 1. Lấy số liệu Stat Cards
   useEffect(() => {
     if (!token) return;
 
@@ -56,7 +99,6 @@ export default function PriceManagementPage() {
       .catch((err) => console.error('Lỗi lấy thống kê:', err));
   }, [token]);
 
-  // 2. Gọi API lấy danh sách Bảng giá
   useEffect(() => {
     if (!token) return;
     setLoading(true);
@@ -82,8 +124,11 @@ export default function PriceManagementPage() {
         return res.json();
       })
       .then((data) => {
-        setPriceLists(data.items || []);
-        setTotalItems(data.total || 0);
+        const listData = Array.isArray(data) ? data : (data.items || []);
+        const total = Array.isArray(data) ? data.length : (data.total || listData.length);
+
+        setPriceLists(listData);
+        setTotalItems(total);
         if (data.available_customers) {
           setAvailableCustomers(data.available_customers);
         }
@@ -126,8 +171,6 @@ export default function PriceManagementPage() {
 
   return (
     <div className="space-y-4 text-slate-700 font-sans p-4">
-      
-      {/* 1. HEADER TRANG & BUTTONS */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-800">Quản lý đơn giá</h1>
@@ -151,12 +194,11 @@ export default function PriceManagementPage() {
         </div>
       </div>
 
-      {/* 2. THỐNG KÊ */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Tổng số bảng giá</p>
-            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats.total}</p>
+            <p className="text-xl font-bold text-slate-800 mt-0.5">{stats.total || 0}</p>
           </div>
           <div className="p-2 rounded-lg bg-slate-50 text-slate-400">
             <Layers className="w-5 h-5" />
@@ -166,7 +208,7 @@ export default function PriceManagementPage() {
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Chờ duyệt (SUBMITTED)</p>
-            <p className="text-xl font-bold text-amber-600 mt-0.5">{stats.submitted}</p>
+            <p className="text-xl font-bold text-amber-600 mt-0.5">{stats.submitted || 0}</p>
           </div>
           <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
             <Hourglass className="w-5 h-5" />
@@ -186,7 +228,7 @@ export default function PriceManagementPage() {
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Hiệu lực (EFFECTIVE)</p>
-            <p className="text-xl font-bold text-emerald-600 mt-0.5">{stats.effective}</p>
+            <p className="text-xl font-bold text-emerald-600 mt-0.5">{stats.effective || 0}</p>
           </div>
           <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
             <CheckCircle2 className="w-5 h-5" />
@@ -196,7 +238,7 @@ export default function PriceManagementPage() {
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <p className="text-[11px] text-slate-500 font-medium">Bị từ chối (REJECTED)</p>
-            <p className="text-xl font-bold text-rose-600 mt-0.5">{stats.rejected}</p>
+            <p className="text-xl font-bold text-rose-600 mt-0.5">{stats.rejected || 0}</p>
           </div>
           <div className="p-2 rounded-lg bg-rose-50 text-rose-600">
             <XCircle className="w-5 h-5" />
@@ -204,10 +246,8 @@ export default function PriceManagementPage() {
         </div>
       </div>
 
-      {/* 3. BỘ LỌC */}
       <div className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          
           <div className="flex items-center space-x-2">
             <div className="flex items-center space-x-1 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 text-[11px]">
               <span className="text-slate-500 whitespace-nowrap">Loại:</span>
@@ -260,11 +300,9 @@ export default function PriceManagementPage() {
               />
             </div>
           </div>
-
         </div>
       </div>
 
-      {/* 4. BẢNG DỮ LIỆU */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -276,7 +314,7 @@ export default function PriceManagementPage() {
                 <th className="py-3 px-4">Phiên bản</th>
                 <th className="py-3 px-4">Thời gian hiệu lực</th>
                 <th className="py-3 px-4">Trạng thái</th>
-                <th className="py-3 px-4">Tạo bởi</th>
+                <th className="py-3 px-4">Tạo / Cập nhật bởi</th>
                 <th className="py-3 px-4 text-center">Hành động</th>
               </tr>
             </thead>
@@ -291,40 +329,60 @@ export default function PriceManagementPage() {
                   </td>
                 </tr>
               ) : priceLists.length > 0 ? (
-                priceLists.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/70 transition">
-                    <td className="py-3 px-4 font-semibold text-slate-900">{item.id}</td>
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-slate-800">{item.name}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">{item.contractId}</div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
-                        {item.type}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-slate-600 font-medium">{item.version}</td>
-                    <td className="py-3 px-4 text-slate-600">{item.effectiveTime}</td>
-                    <td className="py-3 px-4">{renderStatusBadge(item.status)}</td>
-                    <td className="py-3 px-4">
-                      <div className="text-slate-800 font-medium">
-                        {item.updatedBy || 'Admin'}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {item.updatedAt}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <button 
-                        onClick={() => navigate(`/staff/price-lists/${item.id}`)}
-                        className="p-1 text-slate-400 hover:text-sky-600 rounded transition cursor-pointer"
-                        title="Xem chi tiết"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                priceLists.map((item, index) => {
+                  const itemCode = item.price_list_code || item.price_code || item.id;
+                  const itemName = item.price_name || item.name || 'Bảng giá dịch vụ';
+                  const itemType = item.target_type || item.type || 'GENERAL';
+                  const itemCustomer = item.specific_target || item.contractId || '-';
+
+                  const effectiveFrom = item.effective_from || item.valid_from;
+                  const effectiveTo = item.effective_to || item.valid_to;
+                  const effectiveDisplay = (effectiveFrom || effectiveTo) 
+                    ? `${effectiveFrom || '...'} - ${effectiveTo || 'Vô thời hạn'}` 
+                    : (item.effectiveTime || 'Vô thời hạn');
+
+                  return (
+                    <tr 
+                      key={item.price_list_id || item.price_list_code || item.id || index} 
+                      className="hover:bg-slate-50/70 transition"
+                    >
+                      <td className="py-3 px-4 font-semibold text-slate-900">{itemCode}</td>
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-800">{itemName}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{itemCustomer}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
+                          {itemType}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-600 font-medium">
+                        {formatVersion(item)}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">
+                        {effectiveDisplay}
+                      </td>
+                      <td className="py-3 px-4">{renderStatusBadge(item.status)}</td>
+                      <td className="py-3 px-4">
+                        <div className="text-slate-800 font-medium">
+                          {item.updated_by || item.updatedBy || 'Staff'}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {item.updated_at || item.updatedAt || ''}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button 
+                          onClick={() => navigate(`/staff/price-lists/${item.price_list_code || itemCode}`)}
+                          className="p-1 text-slate-400 hover:text-sky-600 rounded transition cursor-pointer"
+                          title="Xem chi tiết"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
@@ -336,7 +394,6 @@ export default function PriceManagementPage() {
           </table>
         </div>
 
-        {/* 5. PHÂN TRANG */}
         <div className="p-3.5 border-t border-slate-200 bg-white flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div>
             Hiển thị <strong className="text-slate-800 font-semibold">{priceLists.length}</strong> trong tổng số <strong className="text-slate-800 font-semibold">{totalItems}</strong> bảng giá
@@ -361,9 +418,7 @@ export default function PriceManagementPage() {
             </button>
           </div>
         </div>
-
       </div>
-
     </div>
   );
 }
