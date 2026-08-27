@@ -19,6 +19,9 @@ import ProductionManagementStaffPage from './pages/staff/ProductionManagementPag
 import ProductionManagementManagerPage from './pages/manager/ProductionManagementPage.jsx';
 import ProductionManagementDirectorPage from './pages/director/ProductionManagementPage.jsx';
 
+// Quản lý thanh toán
+import PaymentManagementPage from './pages/staff/PaymentManagementPage.jsx';
+
 const EmptyPage = () => <div className="w-full min-h-[400px] bg-transparent" />;
 
 const IndexRedirect = ({ user }) => {
@@ -81,7 +84,7 @@ export default function App() {
           {/* SERVICE KHÁC */}
           <Route path="/staff/contracts" element={<EmptyPage />} />
           <Route path="/staff/volumes" element={<ProductionManagementStaffPage user={user} />} />
-          <Route path="/staff/payments" element={<EmptyPage />} />
+          <Route path="/staff/payments" element={<PaymentManagementPage user={user} />} />
         </Route>
 
         {/* ========================================================= */}
@@ -97,7 +100,7 @@ export default function App() {
           {/* SERVICE KHÁC */}
           <Route path="/manager/contracts" element={<EmptyPage />} />
           <Route path="/manager/volumes" element={<ProductionManagementManagerPage user={user} />} />
-          <Route path="/manager/payments" element={<EmptyPage />} />
+          <Route path="/manager/payments" element={<PaymentManagementPage user={user} />} />
         </Route>
 
         {/* ========================================================= */}
@@ -113,7 +116,7 @@ export default function App() {
           {/* SERVICE KHÁC */}
           <Route path="/director/contracts" element={<EmptyPage />} />
           <Route path="/director/volumes" element={<ProductionManagementDirectorPage user={user} />} />
-          <Route path="/director/payments" element={<EmptyPage />} />
+          <Route path="/director/payments" element={<PaymentManagementPage user={user} />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
