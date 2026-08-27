@@ -1,6 +1,22 @@
-import React from 'react';
+import React, { useState } from 'react';
+
+const PRICING_SERVICES = [
+    { code: 'SRV-20ft-IN', name: 'Bốc xếp container 20ft (Hàng nhập)', unit: 'Container' },
+    { code: 'SRV-40ft-OUT', name: 'Bốc xếp container 40ft (Hàng xuất)', unit: 'Container' },
+    { code: 'SRV-WH-GEN', name: 'Lưu kho bãi tổng hợp', unit: 'Ngày/Tấn' },
+    { code: 'SRV-PORT-OP', name: 'Khai thác bến bãi hạ tải', unit: 'Lượt xe' },
+    { code: 'SRV-CUST-CLR', name: 'Khai báo hải quan trọn gói', unit: 'Tờ khai' },
+];
 
 export default function RecordVolumeForm({ onCancel, onSubmit }) {
+    const [selectedUnit, setSelectedUnit] = useState('');
+
+    const handleServiceChange = (e) => {
+        const serviceCode = e.target.value;
+        const srv = PRICING_SERVICES.find(s => s.code === serviceCode);
+        setSelectedUnit(srv ? srv.unit : '');
+    };
+
     return (
         <div>
             {/* Header & Back btn */}
@@ -47,9 +63,11 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                             <h3 className="text-base font-bold text-slate-800 mb-4 border-b pb-2">Chi tiết Dịch vụ</h3>
                             <div className="mb-4">
                                 <label className="block text-sm font-medium text-slate-700 mb-2">Hạng mục Dịch vụ áp dụng <span className="text-red-500">*</span></label>
-                                <select required className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
+                                <select required onChange={handleServiceChange} className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
                                     <option value="">-- Chọn Dịch vụ --</option>
-                                    <option value="S001">Xếp dỡ Container 20feet</option>
+                                    {PRICING_SERVICES.map(srv => (
+                                        <option key={srv.code} value={srv.code}>{srv.name} ({srv.code})</option>
+                                    ))}
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-4">
@@ -59,7 +77,7 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-2">Đơn vị tính</label>
-                                    <input type="text" readOnly className="w-full border border-slate-300 bg-slate-50 rounded-lg px-4 py-2.5 outline-none text-sm text-slate-500" value="Cont" />
+                                    <input type="text" readOnly className="w-full border border-slate-300 bg-slate-50 rounded-lg px-4 py-2.5 outline-none text-sm text-slate-500" value={selectedUnit} placeholder="Tự động" />
                                 </div>
                             </div>
                         </div>
