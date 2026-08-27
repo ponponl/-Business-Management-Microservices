@@ -1,493 +1,387 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  CheckCircle2, XCircle, Eye, Search, Download, Check, X, AlertCircle, Loader2,
-  ChevronLeft, ChevronRight, Calendar, ShieldCheck, Crown, RefreshCw, Copy
-} from 'lucide-react';
+import uuid
+import re
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict, Any
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_, func, desc
+from fastapi import HTTPException
 
-// API Configuration
-const BASE_URL = 'http://localhost:8082/api/v1';
-const APPROVAL_API = `${BASE_URL}/approvals`;
-const PRICE_LIST_API = `${BASE_URL}/price-lists`;
+from app.models.pricing import PriceList, PriceListVersion, PriceListDetail, UserCache
+from app.schemas.approval import ApprovalActionRequest, ApprovalResponse
 
-export default function DirectorPriceListApprovalPage({ user }) {
-  // States
-  const [stats, setStats] = useState({ approved: 0, effective: 0, rejected: 0, total: 0 });
-  const [rawData, setRawData] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [actionLoadingId, setActionLoadingId] = useState(null);
+VN_TZ = timezone(timedelta(hours=7))
 
-  // Filter states
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [typeFilter, setTypeFilter] = useState('ALL');
-  const [searchTerm, setSearchTerm] = useState('');
 
-  // Pagination states
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
+def get_current_vn_time() -> datetime:
+    return datetime.now(VN_TZ).replace(tzinfo=None)
 
-  // Modals
-  const [selectedItem, setSelectedItem] = useState(null);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [rejectModal, setRejectModal] = useState({ isOpen: false, item: null, reason: '' });
 
-  // Headers auth
-  const getAuthHeaders = useCallback(() => ({
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${localStorage.getItem('token') || user?.token || ''}`,
-    'X-User-Id': user?.id || ''
-  }), [user]);
+class ApprovalService:
 
-  // --- XỬ LÝ MÃ BẢNG GIÁ ĐẸP (ƯU TIÊN MÃ NGẮN NẾU DÙNG UUID THÌ CẮT GỌN) ---
-  const getItemCode = (item) => {
-    const rawCode = item?.price_code || item?.price_list_code || item?.priceCode || item?.code;
-    if (rawCode && !rawCode.includes('-4') && rawCode.length < 25) {
-      return rawCode; // Ví dụ: SCOPE-PL-2026-011
-    }
-    const fallbackId = item?.price_list_id || item?.id || rawCode || '';
-    if (fallbackId.length > 15) {
-      return `${fallbackId.substring(0, 8)}...`; // Cắt UUID dài sọc thành 3a87b124...
-    }
-    return fallbackId || '-';
-  };
+    @staticmethod
+    def _get_latest_version(price_list: PriceList) -> Optional[PriceListVersion]:
+        if not price_list or not getattr(price_list, "versions", None):
+            return None
 
-  const getFullCode = (item) => item?.price_code || item?.price_list_code || item?.price_list_id || item?.id || '';
+        def parse_version_key(v: PriceListVersion):
+            c_at = getattr(v, "created_at", None)
+            if c_at and hasattr(c_at, "tzinfo") and c_at.tzinfo is not None:
+                c_at = c_at.replace(tzinfo=None)
+            created_at = c_at or datetime.min
 
-  // --- LẤY TRẠNG THÁI VÀ LOẠI ÁP DỤNG CHUẨN TỪ BE ---
-  const getItemStatus = (item) => String(item?.status || item?.approval_status || '').trim().toUpperCase();
+            raw_ver = str(getattr(v, "version_number", "1.0") or "1.0").strip()
+            version_numbers = [int(num) for num in re.findall(r'\d+', raw_ver)]
 
-  const getItemType = (item) => {
-    const rawType = String(item?.target_type || item?.scope_type || item?.targetType || '').trim().toUpperCase();
-    if (rawType.includes('CUSTOMER')) return 'CUSTOMER';
-    if (rawType.includes('CONTRACT')) return 'CONTRACT';
-    if (rawType.includes('SERVICE')) return 'SERVICE_GROUP';
-    return rawType || 'GENERAL';
-  };
+            if not version_numbers:
+                version_numbers = [0, 0]
 
-  // Helper date
-  const formatDate = (dateStr) => {
-    if (!dateStr || dateStr === '-') return '-';
-    try {
-      const parts = dateStr.split('/');
-      if (parts.length === 3) return dateStr; // Đã đúng định dạng dd/mm/yyyy từ BE
-      const date = new Date(dateStr);
-      return isNaN(date.getTime()) ? dateStr : date.toLocaleDateString('vi-VN');
-    } catch { return dateStr; }
-  };
+            return (created_at, tuple(version_numbers))
 
-  // Lấy Thống kê cho Giám đốc
-  const fetchStats = useCallback(async () => {
-    try {
-      const res = await fetch(`${APPROVAL_API}/director-approval/stats`, { headers: getAuthHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        setStats({ 
-          approved: data.approved || 0, 
-          effective: data.effective || 0, 
-          rejected: data.rejected || 0,
-          total: data.total || 0
-        });
-      }
-    } catch (err) { console.error('Lỗi lấy thống kê:', err); }
-  }, [getAuthHeaders]);
+        return max(price_list.versions, key=parse_version_key)
 
-  // Lấy Danh sách theo Trạng thái (Gửi params chuẩn theo BE)
-  const fetchPriceLists = useCallback(async () => {
-    setLoading(true);
-    try {
-      const queryParam = statusFilter !== 'ALL' ? `?status=${statusFilter}` : '';
-      const res = await fetch(`${APPROVAL_API}/director-list${queryParam}`, { headers: getAuthHeaders() });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setRawData(Array.isArray(data) ? data : (data.items || data.data || []));
-    } catch { 
-      setRawData([]); 
-    } finally { 
-      setLoading(false); 
-    }
-  }, [getAuthHeaders, statusFilter]);
+    @staticmethod
+    def _resolve_user_name(db: Session, user_id_val: Optional[Any]) -> str:
+        if not user_id_val:
+            return "Staff"
+        u_str = str(user_id_val).strip().lower()
+        if not u_str or u_str == "none":
+            return "Staff"
 
-  useEffect(() => {
-    fetchStats();
-    fetchPriceLists();
-  }, [fetchStats, fetchPriceLists]);
+        user_cache = db.query(UserCache).filter(func.lower(UserCache.user_id) == u_str).first()
+        if user_cache:
+            return user_cache.full_name or user_cache.username or u_str
+        return u_str if len(u_str) < 20 else "Staff"
 
-  // --- BỘ LỌC CLIENT ĐA TẦNG (LỌC LOẠI & TÌM KIẾM TÊN/MÃ) ---
-  const filteredLists = useMemo(() => {
-    return rawData.filter(item => {
-      // 1. Lọc Trạng thái (Nếu BE chưa lọc hết)
-      const itemStatus = getItemStatus(item);
-      const statusMatch = statusFilter === 'ALL' || itemStatus === statusFilter;
+    @staticmethod
+    def get_approval_stats(db: Session) -> Dict[str, int]:
+        versions = db.query(PriceListVersion).join(
+            PriceList, PriceList.id == PriceListVersion.price_list_id
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
+        ).all()
 
-      // 2. Lọc Loại áp dụng
-      const itemType = getItemType(item);
-      const typeMatch = typeFilter === 'ALL' || itemType === typeFilter;
+        submitted = approved = effective = rejected = 0
 
-      // 3. Tìm kiếm tên/mã/đối tượng
-      const term = searchTerm.trim().toLowerCase();
-      const code = getFullCode(item).toLowerCase();
-      const name = String(item?.price_name || item?.name || '').toLowerCase();
-      const target = String(item?.specific_target || item?.customer_name || '').toLowerCase();
-      const searchMatch = !term || code.includes(term) || name.includes(term) || target.includes(term);
+        for ver in versions:
+            st_raw = getattr(ver, "status", "DRAFT")
+            st = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
 
-      return statusMatch && typeMatch && searchMatch;
-    });
-  }, [rawData, statusFilter, typeFilter, searchTerm]);
+            if st == "SUBMITTED":
+                submitted += 1
+            elif st == "APPROVED":
+                approved += 1
+            elif st == "EFFECTIVE":
+                effective += 1
+            elif st == "REJECTED":
+                rejected += 1
 
-  // Phân trang Client
-  const paginatedLists = useMemo(() => {
-    const startIndex = (page - 1) * pageSize;
-    return filteredLists.slice(startIndex, startIndex + pageSize);
-  }, [filteredLists, page, pageSize]);
+        return {
+            "total": len(versions),
+            "submitted": submitted,
+            "approved": approved,
+            "effective": effective,
+            "rejected": rejected
+        }
 
-  const totalPages = Math.ceil(filteredLists.length / pageSize) || 1;
+    @staticmethod
+    def get_director_approval_stats(db: Session) -> Dict[str, int]:
+        versions = db.query(PriceListVersion).join(
+            PriceList, PriceList.id == PriceListVersion.price_list_id
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
+        ).all()
 
-  // Event Handlers
-  const handleStatusFilterChange = (statusKey) => {
-    setStatusFilter(statusKey);
-    setPage(1);
-  };
+        approved = effective = rejected = 0
 
-  const handleTypeFilterChange = (typeKey) => {
-    setTypeFilter(typeKey);
-    setPage(1);
-  };
+        for ver in versions:
+            st_raw = getattr(ver, "status", "DRAFT")
+            st = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
 
-  const handleOpenDetail = async (item) => {
-    const code = getFullCode(item);
-    if (!code) return;
-    setModalLoading(true);
-    setSelectedItem(item);
-    try {
-      const res = await fetch(`${PRICE_LIST_API}/${code}`, { headers: getAuthHeaders() });
-      if (res.ok) {
-        const fullData = await res.json();
-        setSelectedItem(prev => ({ ...prev, ...fullData }));
-      }
-    } catch (err) { console.warn(err); } 
-    finally { setModalLoading(false); }
-  };
+            if st == "APPROVED":
+                approved += 1
+            elif st == "EFFECTIVE":
+                effective += 1
+            elif st == "REJECTED":
+                rejected += 1
 
-  // Giám đốc duyệt
-  const handleDirectorApprove = async (item) => {
-    const priceCode = getFullCode(item);
-    if (!priceCode) return alert('Không tìm thấy mã bảng giá!');
-    setActionLoadingId(priceCode);
-    try {
-      const res = await fetch(`${APPROVAL_API}/${priceCode}/director-approve`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'APPROVE', comment: 'Đã duyệt bởi Giám Đốc' })
-      });
-      if (!res.ok) throw new Error();
-      setSelectedItem(null);
-      await Promise.all([fetchPriceLists(), fetchStats()]);
-    } catch (err) { alert('Phê duyệt thất bại!'); } 
-    finally { setActionLoadingId(null); }
-  };
+        return {
+            "total": approved + effective + rejected,
+            "approved": approved,
+            "effective": effective,
+            "rejected": rejected
+        }
 
-  // Giám đốc từ chối
-  const handleDirectorRejectSubmit = async () => {
-    if (!rejectModal.reason.trim()) return alert('Vui lòng nhập lý do từ chối!');
-    const priceCode = getFullCode(rejectModal.item);
-    setActionLoadingId(priceCode);
-    try {
-      const res = await fetch(`${APPROVAL_API}/${priceCode}/director-approve`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ 
-          action: 'REJECT', 
-          rejected_reason: rejectModal.reason,
-          comment: rejectModal.reason
-        })
-      });
-      if (!res.ok) throw new Error();
-      setSelectedItem(null);
-      setRejectModal({ isOpen: false, item: null, reason: '' });
-      await Promise.all([fetchPriceLists(), fetchStats()]);
-    } catch (err) { alert('Từ chối thất bại!'); } 
-    finally { setActionLoadingId(null); }
-  };
+    @staticmethod
+    def _extract_services_from_version(db: Session, version: PriceListVersion, price_list: PriceList) -> List[dict]:
+        query = db.query(PriceListDetail).options(joinedload(PriceListDetail.service_item))
 
-  const renderStatusBadge = (status) => {
-    const s = String(status || '').toUpperCase();
-    const style = s === 'APPROVED' ? 'bg-blue-100 text-blue-700 font-bold border border-blue-200' 
-                : s === 'EFFECTIVE' ? 'bg-emerald-100 text-emerald-700 font-bold border border-emerald-200' 
-                : s === 'REJECTED' ? 'bg-rose-100 text-rose-700 font-bold border border-rose-200' 
-                : 'bg-slate-100 text-slate-600';
-    return <span className={`px-2 py-0.5 rounded text-[10px] tracking-wide ${style}`}>{s}</span>;
-  };
+        if version:
+            query = query.filter(PriceListDetail.price_list_version_id == version.id)
+        else:
+            query = query.filter(PriceListDetail.price_list_id == price_list.id)
 
-  return (
-    <div className="space-y-3 font-sans text-slate-700 text-xs">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2">
-        <div className="flex items-center space-x-2">
-          <div className="p-1.5 bg-amber-100 text-amber-700 rounded-lg"><Crown className="w-4 h-4" /></div>
-          <div>
-            <h1 className="text-base font-bold text-slate-800">Phê duyệt Bảng giá - Ban Giám Đốc</h1>
-            <span className="text-[11px] text-slate-400">Cấp phê duyệt cuối (APPROVED &rarr; EFFECTIVE)</span>
-          </div>
-        </div>
-        <div className="flex items-center space-x-2">
-          <button onClick={() => { fetchPriceLists(); fetchStats(); }} className="p-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold flex items-center shadow-xs cursor-pointer">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button className="px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center space-x-1.5 shadow-xs cursor-pointer">
-            <Download className="w-3.5 h-3.5 text-slate-500" /><span>Xuất Báo Cáo</span>
-          </button>
-        </div>
-      </div>
+        services_data = []
+        for d in query.all():
+            srv = d.service_item
+            code = getattr(srv, "service_code", None) or getattr(srv, "code", None) or getattr(d, "service_code", None) or (str(d.service_id) if getattr(d, "service_id", None) else None) or "-"
+            name = getattr(srv, "service_name", None) or getattr(srv, "name", None) or getattr(d, "service_name", None) or getattr(d, "description", None) or "Dịch vụ chuẩn"
+            unit = getattr(d, "unit", None) or getattr(srv, "unit", None) or "Lượt"
+            price = float(d.unit_price) if getattr(d, "unit_price", None) is not None else 0.0
 
-      {/* Thống kê Thẻ */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <div onClick={() => handleStatusFilterChange('APPROVED')} className={`bg-white p-2.5 rounded-lg border flex items-center justify-between cursor-pointer transition ${statusFilter === 'APPROVED' ? 'ring-2 ring-blue-500 border-transparent' : 'border-slate-200 hover:border-blue-300'}`}>
-          <div><p className="text-[10px] font-medium text-slate-500">Chờ Duyệt (APPROVED)</p><p className="text-base font-bold text-blue-600 leading-tight">{stats.approved}</p></div>
-          <ShieldCheck className="w-5 h-5 text-blue-500" />
-        </div>
-        <div onClick={() => handleStatusFilterChange('EFFECTIVE')} className={`bg-white p-2.5 rounded-lg border flex items-center justify-between cursor-pointer transition ${statusFilter === 'EFFECTIVE' ? 'ring-2 ring-emerald-500 border-transparent' : 'border-slate-200 hover:border-emerald-300'}`}>
-          <div><p className="text-[10px] font-medium text-slate-500">Hiệu lực (EFFECTIVE)</p><p className="text-base font-bold text-emerald-600 leading-tight">{stats.effective}</p></div>
-          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-        </div>
-        <div onClick={() => handleStatusFilterChange('REJECTED')} className={`bg-white p-2.5 rounded-lg border flex items-center justify-between cursor-pointer transition ${statusFilter === 'REJECTED' ? 'ring-2 ring-rose-500 border-transparent' : 'border-slate-200 hover:border-rose-300'}`}>
-          <div><p className="text-[10px] font-medium text-slate-500">Đã từ chối (REJECTED)</p><p className="text-base font-bold text-rose-600 leading-tight">{stats.rejected}</p></div>
-          <XCircle className="w-5 h-5 text-rose-500" />
-        </div>
-      </div>
+            services_data.append({
+                "service_code": str(code), "serviceCode": str(code), "code": str(code),
+                "service_name": str(name), "serviceName": str(name), "name": str(name), "title": str(name),
+                "unit": str(unit), "price": price, "unit_price": price, "unitPrice": price
+            })
+        return services_data
 
-      {/* Thanh lọc chuẩn hoá */}
-      <div className="bg-white p-2 rounded-lg border border-slate-200 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
-        {/* Lọc theo Loại Áp Dụng */}
-        <div className="flex items-center space-x-1.5 bg-slate-50 px-2 py-1 rounded border border-slate-200 text-xs">
-          <span className="text-slate-400 text-[11px] font-medium">Loại:</span>
-          <select value={typeFilter} onChange={(e) => handleTypeFilterChange(e.target.value)} className="bg-transparent font-semibold text-slate-700 outline-none cursor-pointer text-xs">
-            <option value="ALL">ALL (Tất cả)</option>
-            <option value="CUSTOMER">CUSTOMER</option>
-            <option value="CONTRACT">CONTRACT</option>
-            <option value="GENERAL">GENERAL</option>
-            <option value="SERVICE_GROUP">SERVICE_GROUP</option>
-          </select>
-        </div>
+    @staticmethod
+    def _build_version_approval_response(db: Session, price_list: PriceList, version: PriceListVersion, message: str) -> ApprovalResponse:
+        price_code = price_list.price_list_code or str(price_list.id)
 
-        {/* Lọc theo Trạng Thái (Tab) */}
-        <div className="bg-slate-100 p-0.5 rounded-md flex items-center space-x-0.5 text-[11px] font-medium text-slate-500">
-          {[
-            { key: 'ALL', label: 'TẤT CẢ' },
-            { key: 'APPROVED', label: 'APPROVED' },
-            { key: 'EFFECTIVE', label: 'EFFECTIVE' },
-            { key: 'REJECTED', label: 'REJECTED' }
-          ].map((tab) => (
-            <button key={tab.key} type="button" onClick={() => handleStatusFilterChange(tab.key)} className={`px-3 py-1 rounded transition cursor-pointer ${statusFilter === tab.key ? 'bg-white text-slate-900 shadow-xs font-bold' : 'hover:text-slate-800'}`}>
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        valid_from_str = version.valid_from.strftime("%d/%m/%Y") if (version and version.valid_from) else None
+        valid_to_str = version.valid_to.strftime("%d/%m/%Y") if (version and version.valid_to) else None
 
-        {/* Ô Tìm kiếm */}
-        <div className="relative flex-1 sm:flex-initial min-w-[160px]">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Tìm mã, tên bảng giá..." className="w-full pl-7 pr-2 py-1 rounded border border-slate-200 text-xs focus:outline-none focus:border-amber-500 bg-white placeholder:text-slate-400" />
-        </div>
-      </div>
+        action_time_val = getattr(version, "updated_at", None) or getattr(version, "created_at", None) or getattr(price_list, "updated_at", None)
+        updated_at_str = action_time_val.strftime("%H:%M %d/%m/%Y") if action_time_val else None
 
-      {/* Bảng Dữ Liệu */}
-      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse whitespace-nowrap">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-500">
-                <th className="py-2.5 px-3">Mã bảng giá</th>
-                <th className="py-2.5 px-3">Tên bảng giá / Đối tượng</th>
-                <th className="py-2.5 px-3">Loại áp dụng</th>
-                <th className="py-2.5 px-3">Phiên bản</th>
-                <th className="py-2.5 px-3">Thời gian hiệu lực</th>
-                <th className="py-2.5 px-3">Trạng thái</th>
-                <th className="py-2.5 px-3">Người cập nhật</th>
-                <th className="py-2.5 px-3 text-center">Hành động</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-              {loading ? (
-                Array.from({ length: 4 }).map((_, idx) => (
-                  <tr key={idx} className="animate-pulse">
-                    <td colSpan={8} className="py-3 px-3"><div className="h-4 bg-slate-100 rounded w-full"></div></td>
-                  </tr>
+        st_raw = getattr(version, "status", "DRAFT") if version else "DRAFT"
+        status_val = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
+
+        stg_raw = getattr(version, "approval_stage", "DRAFT") if version else "DRAFT"
+        stage_val = str(stg_raw.value if hasattr(stg_raw, "value") else stg_raw).strip().upper()
+
+        ver_num = version.version_number if (version and version.version_number) else "1.0"
+        ver_clean = str(ver_num).strip().lstrip("vV")
+        version_str = f"v{ver_clean if ver_clean else '1.0'}"
+
+        scope_raw = getattr(price_list, "scope_type", "GENERAL")
+        target_type = str(scope_raw.value if hasattr(scope_raw, "value") else scope_raw).strip().upper() if scope_raw else "GENERAL"
+
+        if target_type in ["CUSTOMER", "CUSTOMER_SPECIFIC"] and getattr(price_list, "customer_id", None):
+            specific_target = str(price_list.customer_id)
+        elif target_type in ["CONTRACT", "CONTRACT_SPECIFIC"] and getattr(price_list, "contract_id", None):
+            specific_target = str(price_list.contract_id)
+        else:
+            specific_target = str(price_list.scope_id) if getattr(price_list, "scope_id", None) else None
+
+        user_id_to_lookup = version.approved_by if (version and getattr(version, "approved_by", None)) else (version.created_by if version else getattr(price_list, "created_by", None))
+
+        reason = getattr(version, "rejected_reason", None) or getattr(version, "rejection_reason", None) or ""
+
+        return ApprovalResponse(
+            price_list_id=str(price_list.id),
+            price_list_code=price_code,
+            price_code=price_code,
+            price_name=price_list.price_list_name,
+            target_type=target_type,
+            specific_target=specific_target,
+            version=version_str,
+            version_number=version_str,
+            effective_from=valid_from_str,
+            effective_to=valid_to_str,
+            status=status_val,
+            approval_stage=stage_val,
+            rejected_reason=reason,
+            updated_by=ApprovalService._resolve_user_name(db, user_id_to_lookup),
+            updated_at=updated_at_str,
+            message=message,
+            services=ApprovalService._extract_services_from_version(db, version, price_list)
+        )
+
+    @staticmethod
+    def get_approval_list(db: Session, status: Optional[str] = None) -> List[ApprovalResponse]:
+        versions = db.query(PriceListVersion).join(
+            PriceList, PriceList.id == PriceListVersion.price_list_id
+        ).options(
+            joinedload(PriceListVersion.price_list)
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
+        ).order_by(desc(PriceListVersion.created_at)).all()
+
+        clean_status = status.strip().upper() if status and status.strip() else None
+
+        results = []
+        for ver in versions:
+            pl = ver.price_list
+            if not pl:
+                continue
+            res = ApprovalService._build_version_approval_response(db=db, price_list=pl, version=ver, message="Lấy thông tin thành công")
+            if not clean_status or clean_status in ["TẤT CẢ", "ALL"] or res.status.upper() == clean_status:
+                results.append(res)
+        return results
+
+    @staticmethod
+    def get_director_approval_list(db: Session, status: Optional[str] = None) -> List[ApprovalResponse]:
+        versions = db.query(PriceListVersion).join(
+            PriceList, PriceList.id == PriceListVersion.price_list_id
+        ).options(
+            joinedload(PriceListVersion.price_list)
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
+        ).order_by(desc(PriceListVersion.created_at)).all()
+
+        clean_status = status.strip().upper() if status and status.strip() else None
+        ALLOWED_STATUSES = ["APPROVED", "EFFECTIVE", "REJECTED"]
+
+        results = []
+        for ver in versions:
+            pl = ver.price_list
+            if not pl:
+                continue
+            res = ApprovalService._build_version_approval_response(db=db, price_list=pl, version=ver, message="Lấy thông tin thành công")
+            if res.status in ALLOWED_STATUSES:
+                if not clean_status or clean_status in ["TẤT CẢ", "ALL"] or res.status.upper() == clean_status:
+                    results.append(res)
+        return results
+
+    @staticmethod
+    def _find_price_list(db: Session, price_code: str) -> Optional[PriceList]:
+        is_valid_uuid = False
+        try:
+            uuid.UUID(price_code)
+            is_valid_uuid = True
+        except ValueError:
+            pass
+
+        conditions = [PriceList.price_list_code == price_code]
+        if is_valid_uuid:
+            conditions.append(PriceList.id == price_code)
+
+        return db.query(PriceList).options(
+            joinedload(PriceList.versions)
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None), or_(*conditions)
+        ).first()
+
+    @staticmethod
+    def submit_for_approval(db: Session, price_code: str, user_id: Optional[str] = None) -> ApprovalResponse:
+        pl = ApprovalService._find_price_list(db, price_code)
+        if not pl:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
+
+        now_vn = get_current_vn_time()
+        pl.updated_at = now_vn
+        latest_v = ApprovalService._get_latest_version(pl)
+        user_uuid = uuid.UUID(str(user_id)) if user_id else None
+
+        if latest_v and str(latest_v.status).upper() == "REJECTED":
+            curr_ver_str = str(latest_v.version_number or "1.0").strip().lstrip("vV")
+            parts = curr_ver_str.split(".")
+
+            try:
+                major = int(parts[0])
+                minor = int(parts[1]) + 1 if len(parts) > 1 else 1
+            except (ValueError, IndexError):
+                major, minor = 1, 1
+
+            new_ver_num = f"{major}.{minor}"
+
+            active_version = PriceListVersion(
+                id=uuid.uuid4(), price_list_id=pl.id, version_number=new_ver_num,
+                valid_from=latest_v.valid_from, valid_to=latest_v.valid_to,
+                status="SUBMITTED", approval_stage="MANAGER_PENDING",
+                parent_version_id=latest_v.id, created_by=user_uuid, created_at=now_vn
+            )
+            db.add(active_version)
+            db.flush()
+
+            old_details = db.query(PriceListDetail).filter(PriceListDetail.price_list_version_id == latest_v.id).all()
+            for detail in old_details:
+                db.add(PriceListDetail(
+                    id=uuid.uuid4(), price_list_id=pl.id, price_list_version_id=active_version.id,
+                    service_item_id=detail.service_item_id, unit_price=detail.unit_price
                 ))
-              ) : paginatedLists.length > 0 ? (
-                paginatedLists.map((item, index) => {
-                  const displayCode = getItemCode(item);
-                  const fullCode = getFullCode(item);
-                  const name = item.price_name || item.name || 'Bảng giá dịch vụ';
-                  const subTarget = item.specific_target || item.customer_name || 'N/A';
-                  const targetType = getItemType(item);
-                  const effectiveFrom = formatDate(item.effective_from);
-                  const effectiveTo = formatDate(item.effective_to);
-                  const updatedBy = item.updated_by || 'Manager';
-                  const updatedAt = item.updated_at || '-';
-                  const status = getItemStatus(item);
-                  const isActioning = actionLoadingId === fullCode;
 
-                  return (
-                    <tr key={fullCode || index} className="hover:bg-slate-50/80 transition border-b border-slate-100">
-                      {/* Mã ngắn gọn */}
-                      <td className="py-2.5 px-3 font-mono font-bold text-slate-800">
-                        <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200" title={fullCode}>
-                          {displayCode}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 max-w-[220px]">
-                        <div className="font-bold text-slate-800 leading-snug truncate">{name}</div>
-                        <div className="text-[10px] font-mono text-slate-400 truncate leading-none mt-0.5">{subTarget}</div>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">{targetType}</span>
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-slate-500 font-bold">{item.version || 'v1.0'}</td>
-                      <td className="py-2.5 px-3 text-slate-600 font-medium">{`${effectiveFrom} - ${effectiveTo}`}</td>
-                      <td className="py-2.5 px-3">{renderStatusBadge(status)}</td>
-                      <td className="py-2.5 px-3">
-                        <div className="font-semibold text-slate-800 leading-snug">{updatedBy}</div>
-                        <div className="text-[10px] text-slate-400 font-mono leading-none mt-0.5">{updatedAt}</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {isActioning ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-amber-600 mx-auto" />
-                        ) : (
-                          <div className="flex items-center justify-center space-x-1">
-                            <button onClick={() => handleOpenDetail(item)} className="p-1 text-slate-400 hover:text-amber-600 rounded cursor-pointer" title="Xem chi tiết">
-                              <Eye className="w-4 h-4" />
-                            </button>
-                            {status === 'APPROVED' && (
-                              <>
-                                <button onClick={() => handleDirectorApprove(item)} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded cursor-pointer" title="Duyệt Hiệu Lực (EFFECTIVE)">
-                                  <Check className="w-4 h-4 stroke-[3]" />
-                                </button>
-                                <button onClick={() => setRejectModal({ isOpen: true, item, reason: '' })} className="p-1 text-rose-600 hover:bg-rose-50 rounded cursor-pointer" title="Từ chối">
-                                  <X className="w-4 h-4 stroke-[3]" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
-                    <div className="flex flex-col items-center justify-center space-y-1">
-                      <AlertCircle className="w-5 h-5 text-slate-300" />
-                      <span>Không tìm thấy dữ liệu phù hợp với bộ lọc.</span>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        elif latest_v:
+            latest_v.status = "SUBMITTED"
+            latest_v.approval_stage = "MANAGER_PENDING"
+            active_version = latest_v
+        else:
+            active_version = PriceListVersion(
+                id=uuid.uuid4(), price_list_id=pl.id, version_number="1.0",
+                status="SUBMITTED", approval_stage="MANAGER_PENDING",
+                created_by=user_uuid, created_at=now_vn
+            )
+            db.add(active_version)
 
-        {/* Phân trang */}
-        <div className="px-3 py-2 border-t border-slate-100 bg-white flex items-center justify-between text-xs text-slate-500">
-          <div>Hiển thị <strong className="text-slate-800">{paginatedLists.length}</strong> / <strong className="text-slate-800">{filteredLists.length}</strong> bản ghi</div>
-          <div className="flex items-center space-x-1">
-            <button disabled={page <= 1} onClick={() => setPage(prev => Math.max(prev - 1, 1))} className="p-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40 cursor-pointer"><ChevronLeft className="w-3.5 h-3.5" /></button>
-            <span className="px-2 py-0.5 rounded bg-slate-800 text-white font-medium text-[11px]">{page} / {totalPages}</span>
-            <button disabled={page >= totalPages} onClick={() => setPage(prev => Math.min(prev + 1, totalPages))} className="p-1 rounded border border-slate-200 hover:bg-slate-50 disabled:opacity-40 cursor-pointer"><ChevronRight className="w-3.5 h-3.5" /></button>
-          </div>
-        </div>
-      </div>
+        db.commit()
+        db.refresh(pl)
+        return ApprovalService._build_version_approval_response(db=db, price_list=pl, version=active_version, message="Đã gửi phê duyệt bảng giá thành công.")
 
-      {/* Modal chi tiết */}
-      {selectedItem && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-2xl p-4 shadow-2xl space-y-3 max-h-[85vh] flex flex-col border border-slate-100">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <div className="flex items-center space-x-2">
-                <span className="text-[11px] font-mono text-amber-600 font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">{getItemCode(selectedItem)}</span>
-                <h3 className="text-sm font-bold text-slate-900 truncate max-w-[300px]">{selectedItem.price_name || selectedItem.name}</h3>
-                {renderStatusBadge(getItemStatus(selectedItem))}
-              </div>
-              <button onClick={() => setSelectedItem(null)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"><X className="w-4 h-4" /></button>
-            </div>
+    @staticmethod
+    def manager_approve(db: Session, price_code: str, payload: ApprovalActionRequest, manager_id: Optional[str] = None) -> ApprovalResponse:
+        act = payload.action.upper()
+        if act not in ["APPROVE", "REJECT"]:
+            raise HTTPException(status_code=400, detail="Hành động không hợp lệ.")
 
-            {modalLoading ? (
-              <div className="py-8 flex flex-col items-center justify-center space-y-2 text-slate-400"><Loader2 className="w-5 h-5 animate-spin text-amber-600" /><span className="text-xs">Đang tải chi tiết...</span></div>
-            ) : (
-              <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                  <div><span className="block text-slate-400 text-[10px]">Loại đối tượng</span><p className="font-semibold text-slate-800">{getItemType(selectedItem)}</p></div>
-                  <div><span className="block text-slate-400 text-[10px]">Đối tượng áp dụng</span><p className="font-semibold text-slate-800 truncate">{selectedItem.specific_target || 'Tất cả'}</p></div>
-                  <div><span className="block text-slate-400 text-[10px]">Phiên bản</span><p className="font-semibold text-slate-800 font-mono">{selectedItem.version || 'v1.0'}</p></div>
-                  <div className="col-span-2 sm:col-span-3 flex items-center space-x-3 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
-                    <span className="flex items-center space-x-1"><Calendar className="w-3 h-3 text-slate-400" /><span>Hiệu lực từ: {formatDate(selectedItem.effective_from)}</span></span>
-                    <span className="flex items-center space-x-1"><Calendar className="w-3 h-3 text-slate-400" /><span>Đến: {formatDate(selectedItem.effective_to)}</span></span>
-                  </div>
-                </div>
+        pl = ApprovalService._find_price_list(db, price_code)
+        if not pl:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
 
-                {/* Danh sách Dịch vụ trả về từ BE */}
-                {(() => {
-                  const serviceList = selectedItem.services || [];
-                  return (
-                    <div className="space-y-1.5">
-                      <div className="text-xs font-bold text-slate-800">Cấu hình đơn giá ({serviceList.length} dịch vụ)</div>
-                      <div className="border border-slate-200 rounded-lg overflow-hidden">
-                        <table className="w-full text-left text-xs border-collapse">
-                          <thead>
-                            <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 text-[10px]">
-                              <th className="py-1.5 px-2.5">Mã DV</th><th className="py-1.5 px-2.5">Tên dịch vụ</th><th className="py-1.5 px-2.5">Đơn vị</th><th className="py-1.5 px-2.5 text-right">Đơn giá</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 bg-white">
-                            {serviceList.length > 0 ? (
-                              serviceList.map((srv, idx) => (
-                                <tr key={srv.service_code || idx} className="hover:bg-slate-50/80">
-                                  <td className="py-1.5 px-2.5 font-mono text-slate-500">{srv.service_code || '-'}</td>
-                                  <td className="py-1.5 px-2.5 font-medium text-slate-800">{srv.service_name || '-'}</td>
-                                  <td className="py-1.5 px-2.5 text-slate-500">{srv.unit || '-'}</td>
-                                  <td className="py-1.5 px-2.5 text-right font-bold text-slate-900">{Number(srv.unit_price || 0).toLocaleString('vi-VN')} <span className="text-[10px] text-slate-400 font-normal">VND</span></td>
-                                </tr>
-                              ))
-                            ) : (
-                              <tr><td colSpan={4} className="py-4 text-center text-slate-400 text-xs">Không tìm thấy chi tiết đơn giá.</td></tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
+        now_vn = get_current_vn_time()
+        pl.updated_at = now_vn
+        latest_v = ApprovalService._get_latest_version(pl)
+        reason_text = payload.rejected_reason or payload.comment or ""
 
-            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
-              <button onClick={() => setSelectedItem(null)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold cursor-pointer">Đóng</button>
-              {getItemStatus(selectedItem) === 'APPROVED' && (
-                <>
-                  <button onClick={() => setRejectModal({ isOpen: true, item: selectedItem, reason: '' })} className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold cursor-pointer">Từ chối</button>
-                  <button onClick={() => handleDirectorApprove(selectedItem)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold cursor-pointer">Phê duyệt ngay</button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+        try:
+            approved_by_uuid = uuid.UUID(str(manager_id)) if manager_id else None
+        except ValueError:
+            approved_by_uuid = None
 
-      {/* Modal Từ chối */}
-      {rejectModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-sm p-4 shadow-2xl space-y-3 border border-slate-100">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-              <h3 className="text-xs font-bold text-rose-600 flex items-center space-x-1"><AlertCircle className="w-3.5 h-3.5" /><span>Nhập lý do từ chối</span></h3>
-              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-3.5 h-3.5" /></button>
-            </div>
-            <textarea rows={3} value={rejectModal.reason} onChange={(e) => setRejectModal({ ...rejectModal, reason: e.target.value })} placeholder="Lý do gửi lại cấp quản lý..." className="w-full text-xs p-2 border border-slate-200 rounded-lg focus:outline-none focus:border-rose-500 bg-slate-50/50" autoFocus />
-            <div className="flex justify-end space-x-2 pt-1">
-              <button onClick={() => setRejectModal({ isOpen: false, item: null, reason: '' })} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold cursor-pointer">Hủy</button>
-              <button onClick={handleDirectorRejectSubmit} className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold cursor-pointer">Xác nhận từ chối</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        if latest_v:
+            if act == "APPROVE":
+                latest_v.status = "APPROVED"
+                latest_v.approval_stage = "DIRECTOR_PENDING"
+                latest_v.approved_by = approved_by_uuid
+                latest_v.rejected_reason = None
+            else:
+                latest_v.status = "REJECTED"
+                latest_v.approval_stage = "REJECTED"
+                latest_v.rejected_reason = reason_text
+
+        db.commit()
+        db.refresh(pl)
+        msg = "Phê duyệt thành công." if act == "APPROVE" else f"Từ chối thành công. Lý do: {reason_text}"
+        return ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_v, message=msg)
+
+    @staticmethod
+    def director_approve(db: Session, price_code: str, payload: ApprovalActionRequest, director_id: Optional[str] = None) -> ApprovalResponse:
+        act = payload.action.upper()
+        if act not in ["APPROVE", "REJECT"]:
+            raise HTTPException(status_code=400, detail="Hành động không hợp lệ.")
+
+        pl = ApprovalService._find_price_list(db, price_code)
+        if not pl:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
+
+        now_vn = get_current_vn_time()
+        pl.updated_at = now_vn
+        latest_v = ApprovalService._get_latest_version(pl)
+        reason_text = payload.rejected_reason or payload.comment or ""
+
+        try:
+            approved_by_uuid = uuid.UUID(str(director_id)) if director_id else None
+        except ValueError:
+            approved_by_uuid = None
+
+        if latest_v:
+            if act == "APPROVE":
+                for v in pl.versions:
+                    if v.id != latest_v.id and v.status == "EFFECTIVE":
+                        v.status = "SUPERSEDED"
+                        v.approval_stage = "SUPERSEDED"
+
+                latest_v.status = "EFFECTIVE"
+                latest_v.approval_stage = "COMPLETED"
+                latest_v.approved_by = approved_by_uuid
+                latest_v.rejected_reason = None
+            else:
+                latest_v.status = "REJECTED"
+                latest_v.approval_stage = "REJECTED"
+                latest_v.rejected_reason = reason_text
+
+        db.commit()
+        db.refresh(pl)
+        msg = "Phê duyệt thành công." if act == "APPROVE" else f"Từ chối thành công. Lý do: {reason_text}"
+        return ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_v, message=msg)

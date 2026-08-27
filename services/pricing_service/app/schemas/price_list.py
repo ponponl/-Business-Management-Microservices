@@ -13,7 +13,6 @@ class ServiceItemResponse(BaseModel):
     unit: Optional[str] = "Lượt"
     status: str = "ACTIVE"
 
-    # Pydantic v2 dùng model_config thay cho class Config cũ
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
 
