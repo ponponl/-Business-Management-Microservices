@@ -29,6 +29,28 @@ export default function PriceManagementPage() {
 
   const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
 
+  const getUniquePriceLists = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    const map = new Map();
+    arr.forEach((item) => {
+      const code = item.price_list_code || item.price_code || item.id;
+      if (!code) return;
+
+      if (!map.has(code)) {
+        map.set(code, item);
+      } else {
+        const existing = map.get(code);
+        const existingVer = parseFloat((formatVersion(existing) || 'v0').replace(/[^\d.]/g, '')) || 0;
+        const currentVer = parseFloat((formatVersion(item) || 'v0').replace(/[^\d.]/g, '')) || 0;
+
+        if (currentVer > existingVer) {
+          map.set(code, item);
+        }
+      }
+    });
+    return Array.from(map.values());
+  };
+
   const formatVersion = (item) => {
     if (!item) return 'v1.0';
 
@@ -103,9 +125,10 @@ export default function PriceManagementPage() {
     if (!token) return;
     setLoading(true);
 
+    const fetchPageSize = 100;
     const params = new URLSearchParams({
       page: page.toString(),
-      page_size: pageSize.toString(),
+      page_size: fetchPageSize.toString(),
     });
 
     if (activeStatusTab !== 'Tất cả') params.append('status', activeStatusTab);
@@ -125,10 +148,11 @@ export default function PriceManagementPage() {
       })
       .then((data) => {
         const listData = Array.isArray(data) ? data : (data.items || []);
-        const total = Array.isArray(data) ? data.length : (data.total || listData.length);
+        const uniqueListData = getUniquePriceLists(listData);
 
-        setPriceLists(listData);
-        setTotalItems(total);
+        setPriceLists(uniqueListData.slice(0, pageSize));
+        setTotalItems(uniqueListData.length);
+
         if (data.available_customers) {
           setAvailableCustomers(data.available_customers);
         }

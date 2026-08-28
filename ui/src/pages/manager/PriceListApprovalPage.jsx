@@ -103,6 +103,17 @@ export default function PriceListApprovalPage({ user }) {
       const data = await res.json();
       let rawList = Array.isArray(data) ? data : (data.items || data.data || []);
 
+      // Lọc loại bỏ trùng mã
+      const seenCodes = new Set();
+      rawList = rawList.filter(item => {
+        const code = getItemCode(item);
+        if (!code || seenCodes.has(code)) {
+          return false;
+        }
+        seenCodes.add(code);
+        return true;
+      });
+
       if (selectedType !== 'Tất cả') {
         rawList = rawList.filter(item => {
           const targetType = item.target_type || item.targetType || '';

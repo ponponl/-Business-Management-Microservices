@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -8,10 +8,8 @@ from app.schemas.price_list import (
     PriceListCreate,
     PriceListPaginatedResponse,
     PriceListStatsResponse,
-    ServiceItemResponse,  
 )
 from app.services.price_list_service import PriceListService
-from app.models.pricing import ServiceItem
 
 router = APIRouter()
 
@@ -48,17 +46,14 @@ def get_price_lists(
     )
 
 
-# --- ROUTE NÀY NẰM TRƯỚC ROUTE /{price_code} LÀ CHÍNH XÁC ---
-@router.get("/services", response_model=List[ServiceItemResponse])  # <-- Gắn response_model
+@router.get("/services", response_model=List[Dict[str, Any]])
 def get_services_from_db(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Lấy danh sách các dịch vụ (ServiceItem) đang ACTIVE từ PostgreSQL"""
+    """Lấy danh sách các dịch vụ (ServiceItem) đang ACTIVE từ PostgreSQL kèm đơn giá mẫu"""
     try:
-        # Lấy danh sách dịch vụ có trạng thái ACTIVE
-        services = db.query(ServiceItem).filter(ServiceItem.status == "ACTIVE").all()
-        return services
+        return PriceListService.get_all_service_items(db)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -68,12 +63,11 @@ def get_services_from_db(
 
 @router.get("/{price_code}")
 def get_price_list_detail(
-    price_code: str,
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(get_current_user),
+    price_code: str, 
+    version_id: Optional[str] = None, 
+    db: Session = Depends(get_db)
 ):
-    """Lấy thông tin chi tiết của 1 bảng giá"""
-    return PriceListService.get_detail_by_code(db=db, price_code=price_code)
+    return PriceListService.get_detail_by_code(db, price_code, version_id=version_id)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -112,4 +106,19 @@ def update_price_list(
         price_code=price_code,
         payload=payload,
         current_user=current_user,
+    )
+
+
+@router.delete("/{price_code}/services/{service_code}")
+def delete_service_from_price_list(
+    price_code: str,
+    service_code: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_roles(["STAFF", "MANAGER", "ADMIN"])),
+):
+    """Xóa một dịch vụ ra khỏi bảng giá"""
+    return PriceListService.delete_service_item(
+        db=db, 
+        price_code=price_code, 
+        service_identifier=service_code
     )
