@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 
 const PRICING_SERVICES = [
     { code: 'SRV-20ft-IN', name: 'Bốc xếp container 20ft (Hàng nhập)', unit: 'Container' },
@@ -10,6 +10,9 @@ const PRICING_SERVICES = [
 
 export default function RecordVolumeForm({ onCancel, onSubmit }) {
     const [selectedUnit, setSelectedUnit] = useState('');
+    
+    // Sinh mã ngẫu nhiên chống Double Submit, mã này sẽ không đổi trong suốt vòng đời của component
+    const idempotencyKey = useRef(crypto.randomUUID());
 
     const handleServiceChange = (e) => {
         const serviceCode = e.target.value;
