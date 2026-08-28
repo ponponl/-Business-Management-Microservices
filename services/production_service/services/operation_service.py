@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from models.operation import OperationVolume, OperationPeriod, VolumeAuditLog
+from models.operation import OperationVolume, OperationPeriod, VolumeAuditLog, OperationOutboxEvent
 from models.cache import ContractCache
 from schemas.operation import VolumeCreate, VolumeUpdate
 from producers.event_producer import publish_volume_recorded
@@ -49,9 +49,30 @@ class OperationService:
             actor_id=user_id
         )
         db.add(audit)
-        db.commit()
         
-        await publish_volume_recorded(new_volume.id, new_volume.period_key)
+        # Thêm Outbox Event vào chung Transaction
+        event_payload = {
+            "volume_id": new_volume.id,
+            "period_key": new_volume.period_key
+        }
+        outbox_event = OperationOutboxEvent(
+            event_type="VOLUME_RECORDED",
+            payload=json.dumps(event_payload),
+            status="PENDING"
+        )
+        db.add(outbox_event)
+        
+        db.commit()
+        db.refresh(outbox_event)
+        
+        try:
+            await publish_volume_recorded(new_volume.id, new_volume.period_key)
+            outbox_event.status = "PUBLISHED"
+            db.commit()
+        except Exception as e:
+            # Nếu Kafka lỗi, outbox_event vẫn lưu trạng thái PENDING để có thể retry sau
+            pass
+            
         return new_volume
         
     @staticmethod
@@ -92,9 +113,29 @@ class OperationService:
             actor_id=user_id
         )
         db.add(audit)
-        db.commit()
         
-        await publish_volume_recorded(volume.id, volume.period_key)
+        # Thêm Outbox Event vào chung Transaction
+        event_payload = {
+            "volume_id": volume.id,
+            "period_key": volume.period_key
+        }
+        outbox_event = OperationOutboxEvent(
+            event_type="VOLUME_RECORDED",
+            payload=json.dumps(event_payload),
+            status="PENDING"
+        )
+        db.add(outbox_event)
+        
+        db.commit()
+        db.refresh(outbox_event)
+        
+        try:
+            await publish_volume_recorded(volume.id, volume.period_key)
+            outbox_event.status = "PUBLISHED"
+            db.commit()
+        except Exception as e:
+            pass
+            
         return volume
 
     @staticmethod

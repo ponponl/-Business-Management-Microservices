@@ -5,6 +5,7 @@ from api.operation import router as operation_router
 from api.report import router as report_router
 from core.kafka import kafka_producer
 from consumers.cache_consumer import start_consumer
+from tasks.outbox_relay import start_outbox_relay
 
 Base.metadata.create_all(bind=engine)
 
@@ -17,6 +18,7 @@ app.include_router(report_router, prefix="/api/v1/reports", tags=["Reports"])
 async def startup_event():
     await kafka_producer.start()
     asyncio.create_task(start_consumer())
+    asyncio.create_task(start_outbox_relay(interval_seconds=60))
 
 @app.on_event("shutdown")
 async def shutdown_event():

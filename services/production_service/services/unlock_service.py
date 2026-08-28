@@ -1,8 +1,9 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
-from models.operation import OperationPeriod, UnlockPeriodRequest, OperationVolume
+from models.operation import OperationPeriod, UnlockPeriodRequest, OperationVolume, OperationOutboxEvent
 from schemas.operation import UnlockRequestCreate, UnlockApprove
 from producers.event_producer import publish_period_unlocked
+import json
 from datetime import datetime
 
 class UnlockService:
@@ -39,14 +40,34 @@ class UnlockService:
         
         if approve_in.approved:
             req.status = "APPROVED"
+            outbox_event = None
             if period:
                 period.status = "OPEN"
                 period.locked_at = None
                 period.locked_by = None
                 db.query(OperationVolume).filter(OperationVolume.period_key == period.period_key).update({"is_locked": False})
+                
+                # Thêm Outbox Event vào chung Transaction
+                event_payload = {
+                    "period_key": period.period_key
+                }
+                outbox_event = OperationOutboxEvent(
+                    event_type="VOLUME_PERIOD_UNLOCKED",
+                    payload=json.dumps(event_payload),
+                    status="PENDING"
+                )
+                db.add(outbox_event)
+                
             db.commit()
-            if period:
-                await publish_period_unlocked(period.period_key)
+            
+            if period and outbox_event:
+                db.refresh(outbox_event)
+                try:
+                    await publish_period_unlocked(period.period_key)
+                    outbox_event.status = "PUBLISHED"
+                    db.commit()
+                except Exception as e:
+                    pass
         else:
             req.status = "REJECTED"
             req.reject_reason = approve_in.reject_reason

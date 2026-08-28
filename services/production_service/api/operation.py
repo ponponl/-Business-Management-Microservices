@@ -7,10 +7,11 @@ from schemas.operation import VolumeCreate, VolumeUpdate, VolumeResponse, Unlock
 from services.operation_service import OperationService
 from services.period_service import PeriodService
 from services.unlock_service import UnlockService
+from core.idempotency import check_idempotency
 
 router = APIRouter()
 
-@router.post("/volumes", response_model=VolumeResponse)
+@router.post("/volumes", response_model=VolumeResponse, dependencies=[Depends(check_idempotency)])
 async def create_volume(volume_in: VolumeCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER"]))):
     return await OperationService.create_volume(db, volume_in, user["sub"])
 
@@ -30,7 +31,7 @@ def get_audit_logs(volume_id: int, db: Session = Depends(get_db), user: dict = D
 async def lock_period(period_key: str, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_MANAGER"]))):
     return await PeriodService.lock_period(db, period_key, user["sub"])
 
-@router.post("/periods/{period_key}/unlock-request", response_model=UnlockRequestResponse)
+@router.post("/periods/{period_key}/unlock-request", response_model=UnlockRequestResponse, dependencies=[Depends(check_idempotency)])
 def request_unlock(period_key: str, request_in: UnlockRequestCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_MANAGER"]))):
     return UnlockService.create_request(db, period_key, request_in, user["sub"])
 

@@ -50,3 +50,13 @@ class VolumeAuditLog(Base):
     new_data = Column(String, nullable=True) # JSON string
     actor_id = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())
+
+# Bảng Outbox Event để đảm bảo không mất event khi Kafka lỗi
+class OperationOutboxEvent(Base):
+    __tablename__ = "operation_outbox_events"
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String)
+    payload = Column(String) # Lưu dạng JSON string
+    status = Column(String, default="PENDING") # PENDING, PUBLISHED, FAILED
+    created_at = Column(DateTime, server_default=func.now())
+
