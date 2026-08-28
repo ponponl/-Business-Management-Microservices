@@ -37,7 +37,7 @@ class UnlockApprove(BaseModel):
 
 
 # OUTPUT (BỘ LỌC / RESPONSE)
-# Dùng để lọc dữ liệu trước khi trả về Frontend
+# Dùng để lọc dữ liệu trước khi trả về Frontend/ SERVICE khác
 
 
 class VolumeResponse(VolumeBase):
@@ -58,4 +58,19 @@ class UnlockRequestResponse(BaseModel):
     approved_at: Optional[datetime] = None
     reject_reason: Optional[str] = None
     created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# Trả qua Payment Service
+class BillingSyncResponse(BaseModel):
+    id: int
+    customer_id: int
+    contract_id: int
+    service_code: str
+    volume_date: datetime
+    period_key: str
+    quantity: float
+    unit: str
+    is_locked: bool
+    period_status: str
+    
     model_config = ConfigDict(from_attributes=True)

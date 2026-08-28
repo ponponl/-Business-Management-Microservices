@@ -108,6 +108,44 @@ class OperationService:
             query = query.filter(OperationVolume.period_key == period_key)
         return query.all()
 
+    # Lấy dữ liệu cho Payment Service
+    @staticmethod
+    def get_billing_volumes(
+        db: Session, 
+        customer_id: int = None, 
+        contract_id: int = None, 
+        period_start: str = None, 
+        period_end: str = None, 
+        service_code: str = None
+    ):
+        query = db.query(
+            OperationVolume.id,
+            OperationVolume.customer_id,
+            OperationVolume.contract_id,
+            OperationVolume.service_code,
+            OperationVolume.volume_date,
+            OperationVolume.period_key,
+            OperationVolume.quantity,
+            OperationVolume.unit,
+            OperationVolume.is_locked,
+            OperationPeriod.status.label("period_status")
+        ).join(
+            OperationPeriod, OperationVolume.period_key == OperationPeriod.period_key
+        )
+
+        if customer_id:
+            query = query.filter(OperationVolume.customer_id == customer_id)
+        if contract_id:
+            query = query.filter(OperationVolume.contract_id == contract_id)
+        if service_code:
+            query = query.filter(OperationVolume.service_code == service_code)
+        if period_start:
+            query = query.filter(OperationVolume.period_key >= period_start)
+        if period_end:
+            query = query.filter(OperationVolume.period_key <= period_end)
+            
+        return query.all()
+
     @staticmethod
     def get_audit_logs(db: Session, volume_id: int):
         return db.query(VolumeAuditLog).filter(VolumeAuditLog.volume_id == volume_id).all()
