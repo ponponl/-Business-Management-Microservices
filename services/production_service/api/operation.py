@@ -42,8 +42,8 @@ async def approve_unlock(request_id: int, approve_in: UnlockApprove, db: Session
 # Lấy dữ liệu cho Payment Service
 @router.get("/internal/volumes/billing-sync", response_model=List[BillingSyncResponse])
 def get_billing_volumes(
-    customer_id: int = None, 
-    contract_id: int = None, 
+    customer_id: str = None, 
+    contract_id: str = None, 
     period_start: str = None, 
     period_end: str = None, 
     service_code: str = None, 
