@@ -28,10 +28,10 @@ const formatDate = (dateString, includeTime = false) => {
     if (includeTime) {
       const hours = String(date.getHours()).padStart(2, "0");
       const minutes = String(date.getMinutes()).padStart(2, "0");
-      return `${day}/${month}/${year} ${hours}:${minutes}`;
+      return `${day}-${month}-${year} ${hours}:${minutes}`;
     }
 
-    return `${day}/${month}/${year}`;
+    return `${year}-${month}-${day}`;
   } catch (error) {
     return dateString;
   }
@@ -39,41 +39,56 @@ const formatDate = (dateString, includeTime = false) => {
 
 export const PriceListHistoryDetail = ({
   priceListId: propPriceListId,
+  priceListCode: propPriceListCode,
   user,
   onBack,
   onNavigateToChangeLogs,
   onNavigateToUsageLogs,
+  onCreateNewVersion,
 }) => {
   const navigate = useNavigate();
   const params = useParams();
 
-  const priceListId = propPriceListId || params.priceListId || params.id;
+  const priceListIdentifier =
+    propPriceListCode ||
+    propPriceListId ||
+    params.priceListCode ||
+    params.priceListId ||
+    params.id;
 
   const [versions, setVersions] = useState([]);
   const [selectedVersionId, setSelectedVersionId] = useState(null);
   const [selectedVersionsForCompare, setSelectedVersionsForCompare] = useState([]);
 
-  const [activeTab, setActiveTab] = useState("details"); // 'details' | 'changes' | 'usage'
+  const [activeTab, setActiveTab] = useState("changes"); // 'details' | 'changes' | 'usage'
 
   const [versionDetail, setVersionDetail] = useState(null);
   const [changeLogs, setChangeLogs] = useState([]);
+  const [hasUnreadChanges, setHasUnreadChanges] = useState(false);
   const [usageLogs, setUsageLogs] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  const selectedVersion = versions.find(
+    (v) => (v.id || v.version_id) === selectedVersionId
+  );
+
+  const isCreateVersionAllowed =
+    (selectedVersion?.status || "").toUpperCase() === "EFFECTIVE";
+
   const handleBack = () => {
     if (onBack) return onBack();
-    if (user?.role && priceListId) {
+    if (user?.role && priceListIdentifier) {
       const rolePrefix = user.role.toLowerCase();
-      navigate(`/${rolePrefix}/price-lists/${priceListId}`);
+      navigate(`/${rolePrefix}/price-lists/${priceListIdentifier}`);
     } else {
       navigate(-1);
     }
   };
 
   useEffect(() => {
-    if (!priceListId) return;
+    if (!priceListIdentifier) return;
 
-    fetch(`${API_BASE_URL}/price-lists/${priceListId}/versions`)
+    fetch(`${API_BASE_URL}/price-lists/${priceListIdentifier}/versions`)
       .then((res) => {
         if (!res.ok) throw new Error("Network response was not ok");
         return res.json();
@@ -91,7 +106,7 @@ export const PriceListHistoryDetail = ({
         console.error("Error fetching version history:", err);
         setVersions([]);
       });
-  }, [priceListId]);
+  }, [priceListIdentifier]);
 
   useEffect(() => {
     if (!selectedVersionId) return;
@@ -109,6 +124,9 @@ export const PriceListHistoryDetail = ({
         .then((data) => {
           const logs = Array.isArray(data) ? data : data?.data || [];
           setChangeLogs(logs);
+          if (logs.length > 0 && activeTab !== "changes") {
+            setHasUnreadChanges(true);
+          }
         })
         .catch((err) => console.error("Error fetching change logs:", err))
         .finally(() => setLoading(false));
@@ -134,6 +152,16 @@ export const PriceListHistoryDetail = ({
     }
   };
 
+  const handleCreateNewVersionClick = () => {
+    if (!isCreateVersionAllowed) return;
+
+    if (onCreateNewVersion) {
+      onCreateNewVersion(selectedVersion);
+    } else {
+      console.log("Tạo phiên bản mới từ version:", selectedVersionId);
+    }
+  };
+
   const renderStatusBadge = (status) => {
     const s = (status || "").toUpperCase();
 
@@ -152,7 +180,7 @@ export const PriceListHistoryDetail = ({
 
     return (
       <span
-        className={`px-2.5 py-0.5 rounded-md border text-[10px] font-bold tracking-wide uppercase inline-block ${currentStyle}`}
+        className={`px-2.5 py-0.5 rounded border text-[10px] font-bold tracking-wide uppercase inline-block ${currentStyle}`}
       >
         {s}
       </span>
@@ -161,7 +189,7 @@ export const PriceListHistoryDetail = ({
 
   return (
     <div className="p-8 bg-[#F8FAFC] min-h-screen font-sans text-slate-700">
-      {/* --- Top Header Action Bar --- */}
+      {}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <button
@@ -172,7 +200,7 @@ export const PriceListHistoryDetail = ({
           </button>
           <div>
             <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-              Xem lịch sử và chi tiết phiên bản
+              Xem lịch sử và chi tiết bảng giá
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">
               Thông tin chi tiết cấu hình định mức đơn giá dịch vụ áp dụng.
@@ -181,15 +209,29 @@ export const PriceListHistoryDetail = ({
         </div>
 
         <div className="flex items-center gap-3">
-          <button className="flex items-center gap-1.5 px-4 py-2 bg-[#508D83] hover:bg-[#43776E] text-white font-medium rounded-lg text-sm shadow-sm transition">
+          <button
+            disabled={!isCreateVersionAllowed}
+            onClick={handleCreateNewVersionClick}
+            title={
+              !isCreateVersionAllowed
+                ? "Chỉ có thể tạo phiên bản mới từ phiên bản đang áp dụng (EFFECTIVE)"
+                : "Tạo phiên bản mới từ bản ghi này"
+            }
+            className={`flex items-center gap-1.5 px-4 py-2 font-medium rounded-lg text-sm transition ${
+              isCreateVersionAllowed
+                ? "bg-[#508D83] hover:bg-[#43776E] text-white shadow-sm cursor-pointer opacity-100"
+                : "bg-[#508D83]/70 text-white cursor-not-allowed opacity-80"
+            }`}
+          >
             <Plus size={16} /> Tạo phiên bản mới
           </button>
+
           <button
             disabled={selectedVersionsForCompare.length !== 2}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-medium text-sm transition border ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-medium text-sm transition ${
               selectedVersionsForCompare.length === 2
-                ? "bg-white text-slate-700 border-slate-300 shadow-sm cursor-pointer hover:bg-slate-50"
-                : "bg-[#8CA2A0] text-white border-transparent cursor-not-allowed opacity-80"
+                ? "bg-white text-slate-700 border border-slate-300 shadow-sm cursor-pointer hover:bg-slate-50"
+                : "bg-[#7A9E9F] text-white cursor-not-allowed opacity-90"
             }`}
           >
             <RefreshCw size={15} /> So sánh ({selectedVersionsForCompare.length}/2)
@@ -218,17 +260,15 @@ export const PriceListHistoryDetail = ({
                 return (
                   <div
                     key={currentId || v.version_number}
-                    // Bấm vào bất cứ vị trí nào trên Card để xem chi tiết
                     onClick={() => setSelectedVersionId(currentId)}
                     className={`p-4 rounded-xl border cursor-pointer transition relative ${
                       isSelected
-                        ? "border-[#508D83] bg-[#F0FDF4]/30 ring-2 ring-[#508D83]"
+                        ? "border-[#508D83] bg-white ring-1 ring-[#508D83]"
                         : "border-slate-200/80 bg-white hover:border-slate-300"
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-3">
-                        {/* Checkbox ngắt lan truyền event để không ảnh hưởng đến card click */}
                         <input
                           type="checkbox"
                           checked={isChecked}
@@ -246,14 +286,14 @@ export const PriceListHistoryDetail = ({
                       {renderStatusBadge(v.status)}
                     </div>
 
-                    <div className="text-xs text-slate-400 pl-7 flex items-center gap-1">
+                    <div className="text-xs text-slate-400 pl-7 flex items-center gap-3">
                       <span>
                         Hiệu lực từ:{" "}
                         <strong className="font-semibold text-slate-600">
                           {formatDate(v.valid_from)}
                         </strong>
                       </span>
-                      <span className="ml-2">
+                      <span>
                         Đến:{" "}
                         <strong className="font-semibold text-slate-600">
                           {formatDate(v.valid_to)}
@@ -286,14 +326,20 @@ export const PriceListHistoryDetail = ({
               Đơn giá chi tiết
             </button>
             <button
-              onClick={() => setActiveTab("changes")}
-              className={`pb-3 text-sm font-semibold border-b-2 transition ${
+              onClick={() => {
+                setActiveTab("changes");
+                setHasUnreadChanges(false);
+              }}
+              className={`pb-3 text-sm font-semibold border-b-2 transition relative ${
                 activeTab === "changes"
                   ? "border-[#508D83] text-[#508D83]"
                   : "border-transparent text-slate-400 hover:text-slate-600"
               }`}
             >
               Nhật ký thay đổi
+              {hasUnreadChanges && changeLogs.length > 0 && (
+                <span className="absolute top-0 -right-2 w-2 h-2 bg-pink-500 rounded-full animate-pulse"></span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab("usage")}
@@ -317,7 +363,6 @@ export const PriceListHistoryDetail = ({
                 </div>
               ) : versionDetail ? (
                 <div className="space-y-6">
-                  {/* Block 1: Thông tin chung */}
                   <div>
                     <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
                       <span className="w-1 h-4 bg-[#508D83] rounded-sm"></span>
@@ -381,7 +426,6 @@ export const PriceListHistoryDetail = ({
                     </div>
                   </div>
 
-                  {/* Block 2: Cấu hình đơn giá */}
                   <div>
                     <h3 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
                       <span className="w-1 h-4 bg-[#508D83] rounded-sm"></span>
@@ -434,47 +478,57 @@ export const PriceListHistoryDetail = ({
                 </div>
               ))}
 
-            {/* === TAB 2: NHẬT KÝ THAY ĐỔI === */}
+            {/* === TAB 2: NHẬT KÝ THAY ĐỔI (Timeline UI) === */}
             {activeTab === "changes" &&
               (loading ? (
                 <div className="py-12 text-center text-slate-400 text-sm">
                   Đang tải nhật ký thay đổi...
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="relative pl-6 space-y-6 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-100">
                   {changeLogs.length > 0 ? (
-                    <div className="border border-slate-200/80 rounded-xl overflow-hidden">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-[#F8FAFC] border-b border-slate-200/80 text-slate-600 font-bold">
-                          <tr>
-                            <th className="py-3 px-4">Thời gian</th>
-                            <th className="py-3 px-4">Người thực hiện</th>
-                            <th className="py-3 px-4">Thao tác</th>
-                            <th className="py-3 px-4">Chi tiết thay đổi</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {changeLogs.map((log, index) => (
-                            <tr key={log.id || index}>
-                              <td className="py-3 px-4 text-xs text-slate-500">
-                                {formatDate(log.created_at || log.timestamp, true)}
-                              </td>
-                              <td className="py-3 px-4 font-semibold text-slate-700">
-                                {log.performed_by || log.user_name}
-                              </td>
-                              <td className="py-3 px-4">
-                                <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded font-medium">
-                                  {log.action}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 text-xs text-slate-600">
-                                {log.description || log.details}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    changeLogs.map((log, index) => (
+                      <div key={log.id || index} className="relative">
+                        <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#508D83] ring-4 ring-white"></div>
+
+                        <div className="border border-slate-200/80 rounded-2xl p-5 bg-white shadow-sm">
+                          <div className="flex items-center justify-between mb-4">
+                            <span className="px-3 py-1 bg-[#EAF5F3] text-[#3B6E66] font-semibold text-xs rounded-lg inline-block">
+                              {log.entity_name || log.field_name || "Tên bảng giá"}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {formatDate(log.changed_at || log.created_at, true)}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <p className="text-xs text-slate-400 mb-1">Giá trị cũ:</p>
+                              <p className="text-sm font-semibold text-slate-600 line-through">
+                                {log.old_value || "---"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-400 mb-1">Giá trị mới:</p>
+                              <p className="text-sm font-bold text-[#3B6E66]">
+                                {log.new_value || "---"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="bg-[#F8FAFC] rounded-xl p-3 text-xs text-slate-600 mb-3">
+                            <strong>Lý do:</strong> {log.change_reason || "Cập nhật thông tin phiên bản"}
+                          </div>
+
+                          <div className="text-right text-[11px] text-slate-400">
+                            Thực hiện:{" "}
+                            <span className="font-semibold text-slate-700">
+                              {log.changed_by_name || log.performed_by || "Nguyễn Văn A"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
                   ) : (
                     <div className="py-12 text-center">
                       <p className="text-slate-400 text-sm mb-3">
@@ -519,16 +573,16 @@ export const PriceListHistoryDetail = ({
                           {usageLogs.map((log, index) => (
                             <tr key={log.id || index}>
                               <td className="py-3 px-4 font-mono text-xs font-semibold text-[#508D83]">
-                                {log.payment_board_code || log.code}
+                                {log.payment_board_id || log.payment_board_code || log.code}
                               </td>
                               <td className="py-3 px-4 text-slate-700">
-                                {log.customer_name || log.target}
+                                {log.service_name || log.customer_name || "Dịch vụ cảng"}
                               </td>
                               <td className="py-3 px-4 text-xs text-slate-500">
                                 {formatDate(log.applied_at || log.date, true)}
                               </td>
                               <td className="py-3 px-4 text-right font-bold text-slate-900">
-                                {log.total_amount?.toLocaleString("vi-VN")}{" "}
+                                {(log.total_amount || 0).toLocaleString("vi-VN")}{" "}
                                 <span className="text-[10px] text-slate-400">VND</span>
                               </td>
                             </tr>

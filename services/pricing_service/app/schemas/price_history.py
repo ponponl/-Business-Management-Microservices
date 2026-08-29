@@ -1,7 +1,7 @@
 from datetime import date, datetime
-from typing import Optional, List
-from pydantic import BaseModel
+from typing import List, Optional
 from uuid import UUID
+from pydantic import BaseModel
 
 
 # --- Item Sidebar: Lịch sử phiên bản ---
@@ -12,6 +12,9 @@ class VersionHistoryItem(BaseModel):
     valid_from: date
     valid_to: Optional[date] = None
 
+    class Config:
+        from_attributes = True
+
 
 # --- Tab 1: Đơn giá chi tiết ---
 class PriceDetailItem(BaseModel):
@@ -20,6 +23,9 @@ class PriceDetailItem(BaseModel):
     service_name: str
     unit: Optional[str] = None
     unit_price: float
+
+    class Config:
+        from_attributes = True
 
 
 class VersionDetailResponse(BaseModel):
@@ -35,6 +41,9 @@ class VersionDetailResponse(BaseModel):
     valid_to: Optional[date] = None
     items: List[PriceDetailItem] = []
 
+    class Config:
+        from_attributes = True
+
 
 # --- Tab 2: Nhật ký thay đổi ---
 class ChangeHistoryItem(BaseModel):
@@ -46,14 +55,21 @@ class ChangeHistoryItem(BaseModel):
     new_value: Optional[str] = None
     change_reason: Optional[str] = None
     changed_by: Optional[UUID] = None
+    changed_by_name: Optional[str] = None  # Đã JOIN với UserCache
     changed_at: datetime
 
+    class Config:
+        from_attributes = True
 
-# --- Tab 3: Lịch sử áp dụng (Khớp với Payment Service Schema) ---
+
+# --- Tab 3: Lịch sử áp dụng ---
 class UsageLogItem(BaseModel):
     id: UUID
-    payment_board_id: str  
+    payment_board_id: str
     service_item_id: Optional[UUID] = None
     service_code: Optional[str] = None
     service_name: Optional[str] = None
     applied_at: datetime
+
+    class Config:
+        from_attributes = True

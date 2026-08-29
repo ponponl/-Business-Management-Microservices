@@ -1,8 +1,8 @@
-from typing import List, Union
+from typing import List
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import cast, String
 
 from app.models.pricing import (
     PriceList,
@@ -11,6 +11,7 @@ from app.models.pricing import (
     ServiceItem,
     PriceChangeHistory,
     PriceListUsageLog,
+    UserCache,
 )
 from app.schemas.price_history import (
     VersionHistoryItem,
@@ -26,29 +27,26 @@ class PriceHistoryService:
     @staticmethod
     def get_version_history_list(
         db: Session, 
-        price_list_identifier: str  # Chấp nhận cả UUID lẫn Mã string như 'PL-2026-515'
+        price_list_identifier: str  
     ) -> List[VersionHistoryItem]:
-        """Lấy danh sách các phiên bản ở Cột bên trái (Sidebar)."""
+        """Lấy danh sách các phiên bản theo mã Bảng giá."""
         
-        # 1. Tìm PriceList theo UUID hoặc Price List Code
-        price_list_query = db.query(PriceList)
-        
-        # Kiểm tra nếu tham số truyền vào là chuỗi UUID chuẩn
-        is_valid_uuid = False
-        try:
-            uuid_obj = UUID(price_list_identifier)
-            is_valid_uuid = True
-        except ValueError:
-            is_valid_uuid = False
+        price_list = (
+            db.query(PriceList)
+            .filter(PriceList.price_list_code == price_list_identifier)
+            .first()
+        )
 
-        if is_valid_uuid:
-            price_list = price_list_query.filter(
-                or_(PriceList.id == uuid_obj, PriceList.price_list_code == price_list_identifier)
-            ).first()
-        else:
-            price_list = price_list_query.filter(
-                PriceList.price_list_code == price_list_identifier
-            ).first()
+        if not price_list:
+            try:
+                uuid_obj = UUID(price_list_identifier)
+                price_list = (
+                    db.query(PriceList)
+                    .filter(PriceList.id == uuid_obj)
+                    .first()
+                )
+            except ValueError:
+                pass
 
         if not price_list:
             raise HTTPException(
@@ -56,7 +54,6 @@ class PriceHistoryService:
                 detail=f"Không tìm thấy bảng giá với mã hoặc ID: {price_list_identifier}"
             )
 
-        # 2. Query phiên bản bằng ID chuẩn vừa tìm được
         versions = (
             db.query(PriceListVersion)
             .filter(PriceListVersion.price_list_id == price_list.id)
@@ -118,13 +115,18 @@ class PriceHistoryService:
 
     @staticmethod
     def get_change_logs(db: Session, version_id: UUID) -> List[ChangeHistoryItem]:
-        """Tab 2: Nhật ký thay đổi của phiên bản."""
+        """Tab 2: Nhật ký thay đổi của phiên bản (LEFT JOIN với UserCache để hiển thị full_name)."""
         logs = (
-            db.query(PriceChangeHistory)
+            db.query(PriceChangeHistory, UserCache.full_name)
+            .outerjoin(
+                UserCache,
+                cast(PriceChangeHistory.changed_by, String) == UserCache.user_id
+            )
             .filter(PriceChangeHistory.price_list_version_id == version_id)
             .order_by(PriceChangeHistory.changed_at.desc())
             .all()
         )
+
         return [
             ChangeHistoryItem(
                 id=log.id,
@@ -135,9 +137,10 @@ class PriceHistoryService:
                 new_value=log.new_value,
                 change_reason=log.change_reason,
                 changed_by=log.changed_by,
+                changed_by_name=full_name or "Hệ thống",
                 changed_at=log.changed_at,
             )
-            for log in logs
+            for log, full_name in logs
         ]
 
     @staticmethod
@@ -150,6 +153,7 @@ class PriceHistoryService:
             .order_by(PriceListUsageLog.applied_at.desc())
             .all()
         )
+
         return [
             UsageLogItem(
                 id=log.id,
@@ -159,5 +163,5 @@ class PriceHistoryService:
                 service_name=srv.service_name if srv else None,
                 applied_at=log.applied_at,
             )
-            for log in logs
+            for log, srv in logs
         ]

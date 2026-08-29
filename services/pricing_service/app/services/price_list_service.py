@@ -260,7 +260,27 @@ class PriceListService:
         auth_token: Optional[str] = None
     ) -> Dict[str, Any]:
         try:
-            query = db.query(PriceList, PriceListVersion).join(PriceListVersion, PriceList.id == PriceListVersion.price_list_id)
+            # Subquery lọc ra phiên bản mới nhất theo created_at của từng PriceList
+            subquery = (
+                db.query(
+                    PriceListVersion.price_list_id,
+                    func.max(PriceListVersion.created_at).label("max_created")
+                )
+                .group_by(PriceListVersion.price_list_id)
+                .subquery()
+            )
+
+            # Query kết hợp để chỉ lấy đúng 1 dòng phiên bản mới nhất cho mỗi bảng giá
+            query = (
+                db.query(PriceList, PriceListVersion)
+                .join(PriceListVersion, PriceList.id == PriceListVersion.price_list_id)
+                .join(
+                    subquery,
+                    (PriceListVersion.price_list_id == subquery.c.price_list_id) &
+                    (PriceListVersion.created_at == subquery.c.max_created)
+                )
+            )
+
             if status_filter and status_filter != "Tất cả":
                 query = query.filter(PriceListVersion.status.ilike(status_filter.strip()))
             if apply_type and apply_type != "Tất cả":
@@ -269,12 +289,22 @@ class PriceListService:
                 query = query.filter(PriceList.price_list_name.ilike(f"%{customer.strip()}%"))
             if search and search.strip():
                 sterm = f"%{search.strip()}%"
-                query = query.filter(or_(PriceList.price_list_code.ilike(sterm), PriceList.price_list_name.ilike(sterm), PriceList.scope_id.ilike(sterm)))
+                query = query.filter(
+                    or_(
+                        PriceList.price_list_code.ilike(sterm),
+                        PriceList.price_list_name.ilike(sterm),
+                        PriceList.scope_id.ilike(sterm)
+                    )
+                )
 
             total_count = query.count()
             records = query.order_by(desc(PriceListVersion.created_at)).offset((page - 1) * page_size).limit(page_size).all()
 
-            user_ids = {str(getattr(pl, "created_by", None) or getattr(ver, "created_by", None)).strip() for pl, ver in records if (getattr(pl, "created_by", None) or getattr(ver, "created_by", None))}
+            user_ids = {
+                str(getattr(pl, "created_by", None) or getattr(ver, "created_by", None)).strip() 
+                for pl, ver in records 
+                if (getattr(pl, "created_by", None) or getattr(ver, "created_by", None))
+            }
             users_map = PriceListService._get_users_map_from_cache(db, user_ids)
 
             items = []
@@ -312,7 +342,15 @@ class PriceListService:
 
             customers = ["Tất cả"] + [c[0] for c in db.query(PriceList.price_list_name).filter(PriceList.price_list_name.isnot(None)).distinct().all() if c[0]]
             types = ["Tất cả", "CUSTOMER", "CONTRACT", "GENERAL", "SERVICE_GROUP", "SERVICE_TYPE"]
-            return {"items": items, "total": total_count, "page": page, "page_size": page_size, "available_types": types, "available_customers": customers}
+            
+            return {
+                "items": items,
+                "total": total_count,
+                "page": page,
+                "page_size": page_size,
+                "available_types": types,
+                "available_customers": customers
+            }
 
         except Exception as e:
             db.rollback()
@@ -381,7 +419,6 @@ class PriceListService:
         ]
 
         current_ver_status = str(ver.status or "DRAFT").upper()
-        # Trả về lý do từ chối chuẩn xác bất kể field lưu trong DB là rejected_reason hay rejection_reason
         reason = getattr(ver, "rejected_reason", None) or getattr(ver, "rejection_reason", None) or ""
         scope_id = str(getattr(pl, "scope_id", None) or getattr(pl, "contract_id", None) or getattr(pl, "customer_id", None) or "")
 
