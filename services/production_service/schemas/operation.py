@@ -63,8 +63,8 @@ class UnlockRequestResponse(BaseModel):
 # Trả qua Payment Service
 class BillingSyncResponse(BaseModel):
     id: int
-    customer_id: int
-    contract_id: int
+    customer_id: str
+    contract_id: str
     service_code: str
     volume_date: datetime
     period_key: str

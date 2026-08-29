@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 async def start_consumer():
     consumer = AIOKafkaConsumer(
         "contract.events",
-        "customer.events",
         bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
         value_deserializer=lambda m: json.loads(m.decode('utf-8'))
     )
@@ -56,17 +55,7 @@ def handle_event(topic, event_data):
                         if hasattr(contract, key) and value is not None:
                             setattr(contract, key, value)
                 db.commit()
-        elif topic == "customer.events":
-            if event_data.get("event_name") == "CUSTOMER_UPDATED":
-                customer = db.query(CustomerCache).filter(CustomerCache.code == event_data["code"]).first()
-                if not customer:
-                    customer = CustomerCache(**event_data)
-                    db.add(customer)
-                else:
-                    for key, value in event_data.items():
-                        if hasattr(customer, key):
-                            setattr(customer, key, value)
-                db.commit()
+        # customer.events is removed as it's not published by contract_service
     except Exception as e:
         logger.error(f"Error handling event: {e}")
     finally:
