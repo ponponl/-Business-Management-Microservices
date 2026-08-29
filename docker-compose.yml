@@ -173,8 +173,12 @@ services:
     build:
       context: ./services/contract_service
     container_name: contract-service
+    volumes:
+      - ./services/contract_service:/app
     environment:
       - DATABASE_URL=postgresql://admin:password123@postgres-contract:5432/db_contract
+      - JWT_SECRET=super_secret_jwt_key
+      - JWT_ALGORITHM=HS256
       - REDIS_URL=redis://redis:6379/0
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     ports:

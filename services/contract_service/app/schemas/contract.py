@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -18,6 +18,7 @@ class CreateContractRequest(BaseModel):
     )
 
     payment_terms: str | None = None
+
     service_terms: str | None = None
 
     @model_validator(mode="after")
@@ -40,6 +41,7 @@ class UpdateContractRequest(BaseModel):
     )
 
     payment_terms: str | None = None
+
     service_terms: str | None = None
 
     row_version: int = Field(
@@ -69,7 +71,7 @@ class ContractVersionResponse(BaseModel):
     service_terms: str | None
 
     created_by: UUID
-    created_at: str
+    created_at: datetime
     change_reason: str | None
 
     model_config = {
@@ -78,17 +80,57 @@ class ContractVersionResponse(BaseModel):
 
 class ContractResponse(BaseModel):
     contract_id: UUID
+    contract_number: str
     customer_id: UUID
 
     current_version: int
     status: str
     row_version: int
 
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
 
     current_version_detail: ContractVersionResponse | None = None
 
     model_config = {
         "from_attributes": True
     }
+    
+class ContractListItem(BaseModel):
+    contract_id: UUID
+    contract_number: str
+    customer_id: UUID
+    
+    current_version: int
+    status: str
+    row_version: int
+    
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+    
+class ContractListResponse(BaseModel):
+    items: list[ContractListItem]
+    
+    total: int
+    skip: int
+    limit: int
+    
+class RenewContractRequest(BaseModel):
+    new_effective_to: date
+    reason: str
+    
+class CancelContractRequest(BaseModel):
+    reason: str
+    
+class StartReviewRequest(BaseModel):
+    approver_id: UUID
+    
+class ApprovalActionRequest(BaseModel):
+    comment: str | None = Field(
+        default=None,
+        max_length=2000,
+    )

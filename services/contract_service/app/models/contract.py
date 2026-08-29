@@ -16,6 +16,13 @@ class Contract(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
+    
+    contract_number = Column(
+        String(50),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
 
     customer_id = Column(
         UUID(as_uuid=True),

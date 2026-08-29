@@ -10,7 +10,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
 
 from app.db.session import Base
 
@@ -67,5 +66,10 @@ class OutboxEvent(Base):
 
     published_at = Column(
         DateTime(timezone=True),
+        nullable=True,
+    )
+    
+    last_error = Column(
+        Text,
         nullable=True,
     )
