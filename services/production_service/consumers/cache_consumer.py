@@ -35,7 +35,7 @@ def handle_event(topic, event_data):
                 
                 if not contract_number:
                     logger.warning(f"No contract_number in payload: {event_data}")
-                    continue
+                    return
                     
                 contract = db.query(ContractCache).filter(ContractCache.contract_number == contract_number).first()
                 
