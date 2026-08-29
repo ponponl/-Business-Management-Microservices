@@ -15,8 +15,8 @@ class OperationPeriod(Base):
 class OperationVolume(Base):
     __tablename__ = "operation_volumes"
     id = Column(Integer, primary_key=True, index=True)
-    customer_id = Column(Integer, index=True)
-    contract_id = Column(Integer, index=True)
+    customer_id = Column(String, index=True)
+    contract_id = Column(String, index=True)
     service_code = Column(String)
     volume_date = Column(DateTime)
     period_key = Column(String, ForeignKey("operation_periods.period_key"))

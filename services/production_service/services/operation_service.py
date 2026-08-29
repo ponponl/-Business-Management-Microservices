@@ -13,16 +13,24 @@ class OperationService:
         if volume_in.quantity <= 0:
             raise HTTPException(status_code=400, detail="Quantity must be > 0")
 
-        contract = db.query(ContractCache).filter(ContractCache.id == volume_in.contract_id).first()
+        # Tìm contract trong danh bạ cache bằng contract_number
+        contract = db.query(ContractCache).filter(ContractCache.contract_number == volume_in.contract_id).first()
         if not contract:
             raise HTTPException(status_code=404, detail="Contract not found in cache")
             
+        if contract.status != "ACTIVE":
+            raise HTTPException(status_code=400, detail="Contract is not active")
+            
+        if contract.customer_id != volume_in.customer_id:
+            raise HTTPException(status_code=400, detail="Contract does not belong to this customer")
+            
         vol_date = volume_in.volume_date.replace(tzinfo=None)
-        start_date = contract.start_date.replace(tzinfo=None)
-        end_date = contract.end_date.replace(tzinfo=None)
-        
-        if not (start_date <= vol_date <= end_date):
-            raise HTTPException(status_code=400, detail="Volume date is outside contract validity period")
+        if contract.start_date and contract.end_date:
+            start_date = contract.start_date.replace(tzinfo=None)
+            end_date = contract.end_date.replace(tzinfo=None)
+            
+            if not (start_date <= vol_date <= end_date):
+                raise HTTPException(status_code=400, detail="Volume date is outside contract validity period")
 
         period = db.query(OperationPeriod).filter(OperationPeriod.period_key == volume_in.period_key).first()
         if period and period.status == "LOCKED":
