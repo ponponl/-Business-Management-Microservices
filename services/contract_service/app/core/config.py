@@ -4,13 +4,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Contract Service"
 
-    DATABASE_URL: str
+    # Database
+    DATABASE_URL: str = (
+        "postgresql://admin:password123@postgres-contract:5432/db_contract"
+    )
 
-    REDIS_URL: str
+    # Redis
+    REDIS_URL: str = "redis://redis-cache:6379/0"
+    REDIS_HOST: str = "redis-cache"
+    REDIS_PORT: int = 6379
 
-    KAFKA_BOOTSTRAP_SERVERS: str
+    # Kafka
+    KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
+    KAFKA_CONTRACT_TOPIC: str = "contract.events"
 
-    JWT_SECRET: str
+    # JWT Authentication
+    JWT_SECRET: str = "your_jwt_secret_key"
     JWT_ALGORITHM: str = "HS256"
 
     model_config = SettingsConfigDict(

@@ -21,18 +21,21 @@ class ContractStateMachine:
             "cancel": ContractStatus.CANCELLED,
         },
 
-        ContractStatus.REVISION_REQUESTED: {
-            "submit": ContractStatus.SUBMITTED,
-        },
-
         ContractStatus.SUBMITTED: {
             "start_review": ContractStatus.UNDER_REVIEW,
+            "cancel": ContractStatus.CANCELLED,
+        },
+
+        ContractStatus.REVISION_REQUESTED: {
+            "submit": ContractStatus.SUBMITTED,
+            "cancel": ContractStatus.CANCELLED,
         },
 
         ContractStatus.UNDER_REVIEW: {
             "approve": ContractStatus.APPROVED,
             "reject": ContractStatus.REJECTED,
-            "request_revision": ContractStatus.REVISION_REQUESTED,
+            "request_revision":
+                ContractStatus.REVISION_REQUESTED,
         },
 
         ContractStatus.APPROVED: {
@@ -40,7 +43,6 @@ class ContractStateMachine:
         },
 
         ContractStatus.ACTIVE: {
-            "cancel": ContractStatus.CANCELLED,
             "expire": ContractStatus.EXPIRED,
         },
     }
@@ -51,7 +53,10 @@ class ContractStateMachine:
         current_status: ContractStatus,
         action: str,
     ) -> bool:
-        return action in cls.TRANSITIONS.get(current_status, {})
+        return action in cls.TRANSITIONS.get(
+            current_status,
+            {},
+        )
 
     @classmethod
     def transition(
@@ -59,9 +64,16 @@ class ContractStateMachine:
         current_status: ContractStatus,
         action: str,
     ) -> ContractStatus:
-        if not cls.can_transition(current_status, action):
+
+        if not cls.can_transition(
+            current_status,
+            action,
+        ):
             raise ValueError(
-                f"Invalid transition: {current_status.value} -> {action}"
+                f"Invalid transition: "
+                f"{current_status.value} -> {action}"
             )
 
-        return cls.TRANSITIONS[current_status][action]
+        return cls.TRANSITIONS[
+            current_status
+        ][action]

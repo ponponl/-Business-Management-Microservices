@@ -12,10 +12,26 @@ class CustomerRepository:
         db: Session,
         customer_id: UUID,
     ) -> Customer | None:
+
         return (
             db.query(Customer)
             .filter(
                 Customer.customer_id == customer_id
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_by_code(
+        db: Session,
+        customer_code: str,
+    ) -> Customer | None:
+
+        return (
+            db.query(Customer)
+            .filter(
+                Customer.customer_code
+                == customer_code
             )
             .first()
         )
