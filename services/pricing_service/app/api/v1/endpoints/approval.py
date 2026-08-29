@@ -1,14 +1,16 @@
-from typing import Optional, List
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import CurrentUser, get_current_user  
+from app.api.deps import CurrentUser, get_current_user
 from app.db.session import get_db
 from app.schemas.approval import ApprovalActionRequest, ApprovalResponse
 from app.services.approval_service import ApprovalService
 
 router = APIRouter()
 
+
+# 1. CÁC API THỐNG KÊ (STATS)
 
 @router.get("/approval/stats")
 def get_approval_stats(
@@ -28,6 +30,8 @@ def get_director_approval_stats(
     return ApprovalService.get_director_approval_stats(db)
 
 
+# 2. CÁC API LẤY DANH SÁCH BẢNG GIÁ
+
 @router.get("/director-list", response_model=List[ApprovalResponse])
 def get_director_approval_list(
     status: Optional[str] = Query(None, description="Lọc theo trạng thái: APPROVED, EFFECTIVE, REJECTED"),
@@ -38,7 +42,6 @@ def get_director_approval_list(
     return ApprovalService.get_director_approval_list(db=db, status=status)
 
 
-# 2. API LẤY DANH SÁCH CHUNG
 @router.get("", response_model=List[ApprovalResponse])
 def get_approval_list(
     status: Optional[str] = Query(None, description="Lọc theo trạng thái: SUBMITTED, APPROVED, EFFECTIVE, REJECTED"),
@@ -50,6 +53,31 @@ def get_approval_list(
 
 
 # 3. CÁC ROUTE XỬ LÝ THEO {price_code}
+
+@router.get("/{price_code}/versions")
+def get_price_list_versions(
+    price_code: str,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    API lấy tất cả lịch sử các phiên bản của 1 bảng giá 
+    (Phục vụ dropdown chọn xem lại lịch sử các version v1.0, v1.1 cũ bị REJECTED)
+    """
+    return ApprovalService.get_price_list_versions(db=db, price_code=price_code)
+
+
+@router.get("/{price_code}", response_model=ApprovalResponse)
+def get_approval_detail(
+    price_code: str,
+    version: Optional[str] = Query(None, description="Phiên bản cụ thể, ví dụ: v1.0, 1.0, v1.1"),
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """API lấy chi tiết bảng giá theo mã và phiên bản cụ thể (Tránh xem nhầm version mới hơn)"""
+    return ApprovalService.get_approval_detail(db=db, price_code=price_code, version_str=version)
+
+
 @router.post("/{price_code}/submit", response_model=ApprovalResponse)
 def submit_price_list(
     price_code: str,
