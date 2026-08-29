@@ -30,13 +30,30 @@ def handle_event(topic, event_data):
     try:
         if topic == "contract.events":
             if event_data.get("event_name") in ["CONTRACT_CREATED", "CONTRACT_UPDATED", "CONTRACT_APPROVED"]:
-                contract = db.query(ContractCache).filter(ContractCache.contract_number == event_data["contract_number"]).first()
+                payload = event_data.get("payload", {})
+                contract_number = payload.get("contract_number")
+                
+                if not contract_number:
+                    logger.warning(f"No contract_number in payload: {event_data}")
+                    continue
+                    
+                contract = db.query(ContractCache).filter(ContractCache.contract_number == contract_number).first()
+                
+                # Transform data from payload to match ContractCache columns
+                cache_data = {
+                    "contract_number": contract_number,
+                    "customer_id": str(payload.get("customer_id")) if payload.get("customer_id") else None,
+                    "start_date": payload.get("effective_from"),
+                    "end_date": payload.get("effective_to"),
+                    "status": payload.get("status")
+                }
+                
                 if not contract:
-                    contract = ContractCache(**event_data)
+                    contract = ContractCache(**cache_data)
                     db.add(contract)
                 else:
-                    for key, value in event_data.items():
-                        if hasattr(contract, key):
+                    for key, value in cache_data.items():
+                        if hasattr(contract, key) and value is not None:
                             setattr(contract, key, value)
                 db.commit()
         elif topic == "customer.events":
