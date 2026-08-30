@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from models.operation import OperationVolume, OperationPeriod, VolumeAuditLog
+from models.operation import OperationVolume, OperationPeriod, VolumeAuditLog, OperationOutboxEvent
 from models.cache import ContractCache
 from schemas.operation import VolumeCreate, VolumeUpdate
 from producers.event_producer import publish_volume_recorded
@@ -13,16 +13,24 @@ class OperationService:
         if volume_in.quantity <= 0:
             raise HTTPException(status_code=400, detail="Quantity must be > 0")
 
-        contract = db.query(ContractCache).filter(ContractCache.id == volume_in.contract_id).first()
+        # Tìm contract trong danh bạ cache bằng contract_number
+        contract = db.query(ContractCache).filter(ContractCache.contract_number == volume_in.contract_id).first()
         if not contract:
             raise HTTPException(status_code=404, detail="Contract not found in cache")
             
+        if contract.status != "ACTIVE":
+            raise HTTPException(status_code=400, detail="Contract is not active")
+            
+        if contract.customer_id != volume_in.customer_id:
+            raise HTTPException(status_code=400, detail="Contract does not belong to this customer")
+            
         vol_date = volume_in.volume_date.replace(tzinfo=None)
-        start_date = contract.start_date.replace(tzinfo=None)
-        end_date = contract.end_date.replace(tzinfo=None)
-        
-        if not (start_date <= vol_date <= end_date):
-            raise HTTPException(status_code=400, detail="Volume date is outside contract validity period")
+        if contract.start_date and contract.end_date:
+            start_date = contract.start_date.replace(tzinfo=None)
+            end_date = contract.end_date.replace(tzinfo=None)
+            
+            if not (start_date <= vol_date <= end_date):
+                raise HTTPException(status_code=400, detail="Volume date is outside contract validity period")
 
         period = db.query(OperationPeriod).filter(OperationPeriod.period_key == volume_in.period_key).first()
         if period and period.status == "LOCKED":
@@ -49,9 +57,30 @@ class OperationService:
             actor_id=user_id
         )
         db.add(audit)
-        db.commit()
         
-        await publish_volume_recorded(new_volume.id, new_volume.period_key)
+        # Thêm Outbox Event vào chung Transaction
+        event_payload = {
+            "volume_id": new_volume.id,
+            "period_key": new_volume.period_key
+        }
+        outbox_event = OperationOutboxEvent(
+            event_type="VOLUME_RECORDED",
+            payload=json.dumps(event_payload),
+            status="PENDING"
+        )
+        db.add(outbox_event)
+        
+        db.commit()
+        db.refresh(outbox_event)
+        
+        try:
+            await publish_volume_recorded(new_volume.id, new_volume.period_key)
+            outbox_event.status = "PUBLISHED"
+            db.commit()
+        except Exception as e:
+            # Nếu Kafka lỗi, outbox_event vẫn lưu trạng thái PENDING để có thể retry sau
+            pass
+            
         return new_volume
         
     @staticmethod
@@ -92,9 +121,29 @@ class OperationService:
             actor_id=user_id
         )
         db.add(audit)
-        db.commit()
         
-        await publish_volume_recorded(volume.id, volume.period_key)
+        # Thêm Outbox Event vào chung Transaction
+        event_payload = {
+            "volume_id": volume.id,
+            "period_key": volume.period_key
+        }
+        outbox_event = OperationOutboxEvent(
+            event_type="VOLUME_RECORDED",
+            payload=json.dumps(event_payload),
+            status="PENDING"
+        )
+        db.add(outbox_event)
+        
+        db.commit()
+        db.refresh(outbox_event)
+        
+        try:
+            await publish_volume_recorded(volume.id, volume.period_key)
+            outbox_event.status = "PUBLISHED"
+            db.commit()
+        except Exception as e:
+            pass
+            
         return volume
 
     @staticmethod
@@ -106,6 +155,44 @@ class OperationService:
             query = query.filter(OperationVolume.contract_id == contract_id)
         if period_key:
             query = query.filter(OperationVolume.period_key == period_key)
+        return query.all()
+
+    # Lấy dữ liệu cho Payment Service
+    @staticmethod
+    def get_billing_volumes(
+        db: Session, 
+        customer_id: int = None, 
+        contract_id: int = None, 
+        period_start: str = None, 
+        period_end: str = None, 
+        service_code: str = None
+    ):
+        query = db.query(
+            OperationVolume.id,
+            OperationVolume.customer_id,
+            OperationVolume.contract_id,
+            OperationVolume.service_code,
+            OperationVolume.volume_date,
+            OperationVolume.period_key,
+            OperationVolume.quantity,
+            OperationVolume.unit,
+            OperationVolume.is_locked,
+            OperationPeriod.status.label("period_status")
+        ).join(
+            OperationPeriod, OperationVolume.period_key == OperationPeriod.period_key
+        )
+
+        if customer_id:
+            query = query.filter(OperationVolume.customer_id == customer_id)
+        if contract_id:
+            query = query.filter(OperationVolume.contract_id == contract_id)
+        if service_code:
+            query = query.filter(OperationVolume.service_code == service_code)
+        if period_start:
+            query = query.filter(OperationVolume.period_key >= period_start)
+        if period_end:
+            query = query.filter(OperationVolume.period_key <= period_end)
+            
         return query.all()
 
     @staticmethod

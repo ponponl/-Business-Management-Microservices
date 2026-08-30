@@ -1,0 +1,2 @@
+from app.repositories.customer_repository import CustomerRepository
+from app.repositories.contract_repository import ContractRepository

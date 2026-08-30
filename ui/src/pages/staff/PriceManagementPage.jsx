@@ -125,10 +125,11 @@ export default function PriceManagementPage() {
       })
       .then((data) => {
         const listData = Array.isArray(data) ? data : (data.items || []);
-        const total = Array.isArray(data) ? data.length : (data.total || listData.length);
+        const total = data.total || data.totalItems || data.count || listData.length;
 
         setPriceLists(listData);
         setTotalItems(total);
+
         if (data.available_customers) {
           setAvailableCustomers(data.available_customers);
         }
@@ -167,7 +168,7 @@ export default function PriceManagementPage() {
     }
   };
 
-  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
   return (
     <div className="space-y-4 text-slate-700 font-sans p-4">

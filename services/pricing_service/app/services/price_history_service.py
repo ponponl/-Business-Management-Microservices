@@ -1,8 +1,9 @@
-from typing import List, Union
+import re
+from typing import List, Dict, Set
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import func
 
 from app.models.pricing import (
     PriceList,
@@ -11,6 +12,7 @@ from app.models.pricing import (
     ServiceItem,
     PriceChangeHistory,
     PriceListUsageLog,
+    UserCache,
 )
 from app.schemas.price_history import (
     VersionHistoryItem,
@@ -24,31 +26,43 @@ from app.schemas.price_history import (
 class PriceHistoryService:
 
     @staticmethod
+    def _get_users_map(db: Session, user_ids: Set[str]) -> Dict[str, str]:
+        """Hàm hỗ trợ lấy danh sách tên hiển thị của User từ Cache một cách an toàn."""
+        if not user_ids:
+            return {}
+        clean_ids = [str(uid).strip().lower() for uid in user_ids if uid]
+        try:
+            cached = db.query(UserCache).filter(func.lower(UserCache.user_id).in_(clean_ids)).all()
+            return {
+                str(u.user_id).strip().lower(): (getattr(u, "full_name", None) or getattr(u, "username", None) or str(u.user_id))
+                for u in cached
+            }
+        except Exception:
+            return {}
+
+    @staticmethod
     def get_version_history_list(
         db: Session, 
-        price_list_identifier: str  # Chấp nhận cả UUID lẫn Mã string như 'PL-2026-515'
+        price_list_identifier: str  
     ) -> List[VersionHistoryItem]:
-        """Lấy danh sách các phiên bản ở Cột bên trái (Sidebar)."""
+        """Lấy danh sách các phiên bản theo mã Bảng giá hoặc ID Bảng giá."""
         
-        # 1. Tìm PriceList theo UUID hoặc Price List Code
-        price_list_query = db.query(PriceList)
-        
-        # Kiểm tra nếu tham số truyền vào là chuỗi UUID chuẩn
-        is_valid_uuid = False
-        try:
-            uuid_obj = UUID(price_list_identifier)
-            is_valid_uuid = True
-        except ValueError:
-            is_valid_uuid = False
+        price_list = (
+            db.query(PriceList)
+            .filter(PriceList.price_list_code == price_list_identifier)
+            .first()
+        )
 
-        if is_valid_uuid:
-            price_list = price_list_query.filter(
-                or_(PriceList.id == uuid_obj, PriceList.price_list_code == price_list_identifier)
-            ).first()
-        else:
-            price_list = price_list_query.filter(
-                PriceList.price_list_code == price_list_identifier
-            ).first()
+        if not price_list:
+            try:
+                uuid_obj = UUID(price_list_identifier)
+                price_list = (
+                    db.query(PriceList)
+                    .filter(PriceList.id == uuid_obj)
+                    .first()
+                )
+            except ValueError:
+                pass
 
         if not price_list:
             raise HTTPException(
@@ -56,7 +70,6 @@ class PriceHistoryService:
                 detail=f"Không tìm thấy bảng giá với mã hoặc ID: {price_list_identifier}"
             )
 
-        # 2. Query phiên bản bằng ID chuẩn vừa tìm được
         versions = (
             db.query(PriceListVersion)
             .filter(PriceListVersion.price_list_id == price_list.id)
@@ -83,6 +96,8 @@ class PriceHistoryService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Phiên bản không tồn tại.")
 
         price_list = db.query(PriceList).filter(PriceList.id == version.price_list_id).first()
+        if not price_list:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bảng giá chứa phiên bản này không tồn tại.")
 
         details = (
             db.query(PriceListDetail, ServiceItem)
@@ -97,7 +112,7 @@ class PriceHistoryService:
                 service_code=srv.service_code,
                 service_name=srv.service_name,
                 unit=srv.unit,
-                unit_price=float(dt.unit_price),
+                unit_price=float(dt.unit_price or 0.0),
             )
             for dt, srv in details
         ]
@@ -118,27 +133,46 @@ class PriceHistoryService:
 
     @staticmethod
     def get_change_logs(db: Session, version_id: UUID) -> List[ChangeHistoryItem]:
-        """Tab 2: Nhật ký thay đổi của phiên bản."""
+        """Tab 2: Nhật ký thay đổi của phiên bản (Lấy tên hiển thị từ UserCache)."""
         logs = (
             db.query(PriceChangeHistory)
             .filter(PriceChangeHistory.price_list_version_id == version_id)
             .order_by(PriceChangeHistory.changed_at.desc())
             .all()
         )
-        return [
-            ChangeHistoryItem(
-                id=log.id,
-                entity_type=log.entity_type,
-                entity_name=log.entity_name,
-                field_name=log.field_name,
-                old_value=log.old_value,
-                new_value=log.new_value,
-                change_reason=log.change_reason,
-                changed_by=log.changed_by,
-                changed_at=log.changed_at,
+
+        user_ids = {str(log.changed_by).strip() for log in logs if log.changed_by}
+        users_map = PriceHistoryService._get_users_map(db, user_ids)
+
+        result = []
+        for log in logs:
+            cid = str(log.changed_by or "").strip().lower()
+            name_from_cache = users_map.get(cid)
+            
+            # Fallback hiển thị tên hợp lý
+            if name_from_cache:
+                display_name = name_from_cache
+            elif re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", cid) or not cid:
+                display_name = "Hệ thống"
+            else:
+                display_name = str(log.changed_by)
+
+            result.append(
+                ChangeHistoryItem(
+                    id=log.id,
+                    entity_type=log.entity_type,
+                    entity_name=log.entity_name,
+                    field_name=log.field_name,
+                    old_value=log.old_value,
+                    new_value=log.new_value,
+                    change_reason=log.change_reason,
+                    changed_by=log.changed_by,
+                    changed_by_name=display_name,
+                    changed_at=log.changed_at,
+                )
             )
-            for log in logs
-        ]
+
+        return result
 
     @staticmethod
     def get_usage_logs(db: Session, version_id: UUID) -> List[UsageLogItem]:
@@ -150,6 +184,7 @@ class PriceHistoryService:
             .order_by(PriceListUsageLog.applied_at.desc())
             .all()
         )
+
         return [
             UsageLogItem(
                 id=log.id,
@@ -159,5 +194,5 @@ class PriceHistoryService:
                 service_name=srv.service_name if srv else None,
                 applied_at=log.applied_at,
             )
-            for log in logs
+            for log, srv in logs
         ]

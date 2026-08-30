@@ -1,18 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Loader2, AlertCircle, Plus, Trash2, Send, Check, AlertTriangle } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, Clock, Loader2, AlertCircle, Plus, Trash2, Send, Check, AlertTriangle, History } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 const APPROVAL_BASE_URL = 'http://localhost:8082/api/v1/approvals';
-const SERVICES_API_URL = 'http://localhost:8082/api/v1/price-lists/services';
 
 export default function PriceListDetailPage() {
-  const { id } = useParams();
+  const { id } = useParams(); 
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  const versionParam = searchParams.get('version_id') || searchParams.get('version');
+  
   const navigate = useNavigate();
-
   const token = localStorage.getItem('token');
 
   const [priceDetail, setPriceDetail] = useState(null);
+  const [versionsList, setVersionsList] = useState([]);
   const [availableServices, setAvailableServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -22,24 +25,21 @@ export default function PriceListDetailPage() {
   const [showUpdateSuccessModal, setShowUpdateSuccessModal] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
-  // Hàm tính toán tự động tăng Minor Version (1.0 -> 1.1, 1.9 -> 2.0)
-  const incrementVersion = (currentVersion) => {
-    if (!currentVersion) return '1.0';
-    const cleanVer = String(currentVersion).toLowerCase().replace('v', '').trim();
-    const parts = cleanVer.split('.');
-    
-    if (parts.length < 2) return `${cleanVer}.1`;
+  const [serviceToDeleteIndex, setServiceToDeleteIndex] = useState(null);
 
-    let major = parseInt(parts[0], 10) || 1;
-    let minor = parseInt(parts[1], 10) || 0;
-
-    minor += 1;
-    if (minor >= 10) {
-      major += 1;
-      minor = 0;
+  const formatDateForInput = (dateStr) => {
+    if (!dateStr) return '';
+    const str = String(dateStr).trim();
+    if (str.includes('T')) {
+      return str.split('T')[0];
     }
-
-    return `${major}.${minor}`;
+    if (str.includes('/')) {
+      const parts = str.split('/');
+      if (parts.length === 3) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+    return str;
   };
 
   const formatNumberWithDots = (val) => {
@@ -55,8 +55,9 @@ export default function PriceListDetailPage() {
     return rawNumber ? Number(rawNumber) : 0;
   };
 
+  // 1. Lấy danh sách dịch vụ có sẵn & Danh sách các phiên bản
   useEffect(() => {
-    fetch(SERVICES_API_URL, {
+    fetch(`${API_BASE_URL}/services`, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -70,42 +71,96 @@ export default function PriceListDetailPage() {
         setAvailableServices(Array.isArray(data) ? data : data.content || []);
       })
       .catch((err) => console.error('Lỗi lấy danh sách dịch vụ:', err));
-  }, [token]);
 
-  useEffect(() => {
+    if (id) {
+      fetch(`${APPROVAL_BASE_URL}/${id}/versions`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+        .then((res) => res.ok ? res.json() : [])
+        .then((data) => {
+          if (Array.isArray(data)) {
+            setVersionsList(data);
+          }
+        })
+        .catch((err) => console.error('Lỗi lấy danh sách phiên bản:', err));
+    }
+  }, [id, token]);
+
+  // 2. Lấy chi tiết bảng giá theo price_code và version
+  const fetchDetail = () => {
     if (!id) return;
-
     setLoading(true);
     setError(null);
 
-    fetch(`${API_BASE_URL}/${id}`, {
+    const queryParams = versionParam 
+      ? `?version_id=${encodeURIComponent(versionParam)}&version=${encodeURIComponent(versionParam)}` 
+      : '';
+
+    const requestUrl = `${API_BASE_URL}/${id}${queryParams}`;
+    const fallbackUrl = `${APPROVAL_BASE_URL}/${id}${queryParams}`;
+
+    fetch(requestUrl, {
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
     })
       .then((res) => {
+        if (!res.ok && res.status === 404) {
+          return fetch(fallbackUrl, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          }).then((fallbackRes) => {
+            if (!fallbackRes.ok) {
+              throw new Error(`Không thể lấy thông tin chi tiết (Mã lỗi: ${fallbackRes.status})`);
+            }
+            return fallbackRes.json();
+          });
+        }
         if (!res.ok) {
           throw new Error(`Không thể lấy thông tin chi tiết (Mã lỗi: ${res.status})`);
         }
         return res.json();
       })
       .then((data) => {
+        const latestVerObj = data.latest_version || data.current_version || data.latestVersion || {};
+        
+        const rawFrom = data.effectiveFrom || data.effective_from || data.validFrom || data.valid_to || data.valid_from || latestVerObj.valid_from || '';
+        const rawTo = data.effectiveTo || data.effective_to || data.validTo || data.valid_to || latestVerObj.valid_to || '';
+
+        const rawStatus = data.status || latestVerObj.status || data.version_status || 'DRAFT';
+        const rawVersion = data.version || data.version_number || latestVerObj.version_number || '1.0';
+
+        const rawReason = 
+          data.rejectReason || 
+          data.rejectionReason || 
+          data.rejectedReason || 
+          data.rejected_reason || 
+          data.rejection_reason || 
+          latestVerObj.rejected_reason || 
+          latestVerObj.rejection_reason || 
+          latestVerObj.rejectReason || '';
+
         setPriceDetail({
-          priceCode: data.priceCode || data.id || id,
-          priceName: data.priceName || '',
-          targetType: data.targetType || data.scopeType || 'CUSTOMER',
-          specificTarget: data.specificTarget || data.scopeId || '',
-          effectiveFrom: data.effectiveFrom || data.validFrom || '',
-          effectiveTo: data.effectiveTo || data.validTo || '',
-          version: data.version || '1.0',
-          status: (data.status || 'DRAFT').toUpperCase(),
-          rejectionReason: data.rejectReason || data.rejectionReason || data.rejectionNote || '',
-          services: (data.services || []).map((srv) => ({
-            serviceCode: srv.serviceCode || srv.code || '',
-            serviceName: srv.serviceName || srv.name || '',
+          priceCode: data.priceCode || data.price_code || data.priceListCode || data.id || id,
+          priceName: data.priceName || data.price_name || '',
+          targetType: data.targetType || data.target_type || data.scopeType || data.scope_type || 'CUSTOMER',
+          specificTarget: data.specificTarget || data.specific_target || data.scopeId || data.scope_id || '',
+          effectiveFrom: formatDateForInput(rawFrom),
+          effectiveTo: formatDateForInput(rawTo),
+          version: String(rawVersion).startsWith('v') ? rawVersion : `v${rawVersion}`,
+          status: String(rawStatus).toUpperCase(),
+          rejectionReason: rawReason,
+          services: (data.services || latestVerObj.services || []).map((srv) => ({
+            serviceCode: srv.serviceCode || srv.service_code || srv.code || '',
+            serviceName: srv.serviceName || srv.service_name || srv.name || '',
             unit: srv.unit || '',
-            price: srv.price || 0,
+            price: srv.price || srv.unit_price || srv.unitPrice || 0,
           })),
         });
         setLoading(false);
@@ -115,15 +170,30 @@ export default function PriceListDetailPage() {
         setError(err.message);
         setLoading(false);
       });
-  }, [id, token]);
+  };
 
-  const canEdit = priceDetail?.status === 'DRAFT' || priceDetail?.status === 'REJECTED';
+  useEffect(() => {
+    fetchDetail();
+  }, [id, versionParam, token]);
+
+  // Nếu đang hiển thị modal thông báo thành công thì tạm khóa thao tác chỉnh sửa/gửi
+  const isSubmittedSuccess = showSuccessModal || showUpdateSuccessModal;
+  const canEdit = (priceDetail?.status === 'DRAFT' || priceDetail?.status === 'REJECTED') && !isSubmittedSuccess;
 
   const handleInputChange = (field, value) => {
     setPriceDetail((prev) => ({
       ...prev,
       [field]: value,
     }));
+  };
+
+  const handleVersionSelectChange = (e) => {
+    const selectedVer = e.target.value;
+    if (selectedVer) {
+      setSearchParams({ version: selectedVer, version_id: selectedVer });
+    } else {
+      setSearchParams({});
+    }
   };
 
   const handleSelectServiceChange = (index, selectedCode) => {
@@ -171,16 +241,27 @@ export default function PriceListDetailPage() {
     }));
   };
 
-  const handleRemoveService = (index) => {
-    setPriceDetail((prev) => ({
-      ...prev,
-      services: prev.services.filter((_, i) => i !== index),
-    }));
+  // Mở modal xác nhận xóa
+  const handleRemoveServiceClick = (index) => {
+    setServiceToDeleteIndex(index);
+  };
+
+  // Thực thi xóa sau khi xác nhận trong Modal
+  const confirmRemoveService = () => {
+    if (serviceToDeleteIndex !== null) {
+      setPriceDetail((prev) => ({
+        ...prev,
+        services: prev.services.filter((_, i) => i !== serviceToDeleteIndex),
+      }));
+      setServiceToDeleteIndex(null);
+    }
   };
 
   const handleSaveUpdate = async () => {
     setSaving(true);
     try {
+      const targetStatus = priceDetail.status === 'REJECTED' ? 'DRAFT' : priceDetail.status;
+
       const payload = {
         price_code: priceDetail.priceCode,
         price_name: priceDetail.priceName,
@@ -188,7 +269,7 @@ export default function PriceListDetailPage() {
         specific_target: priceDetail.specificTarget,
         effective_from: priceDetail.effectiveFrom,
         effective_to: priceDetail.effectiveTo,
-        status: priceDetail.status,
+        status: targetStatus,
         version: priceDetail.version,
         services: (priceDetail.services || []).map((s) => ({
           service_code: s.serviceCode || '',
@@ -198,7 +279,7 @@ export default function PriceListDetailPage() {
         })),
       };
 
-      const response = await fetch(`${API_BASE_URL}/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/${priceDetail.priceCode}`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -220,6 +301,12 @@ export default function PriceListDetailPage() {
         throw new Error(errorMessage);
       }
 
+      if (versionParam) {
+        navigate(`/staff/price-lists/${id}`, { replace: true });
+      } else {
+        fetchDetail();
+      }
+
       setShowUpdateSuccessModal(true);
     } catch (err) {
       alert(`Cập nhật thất bại:\n${err.message}`);
@@ -231,18 +318,29 @@ export default function PriceListDetailPage() {
   const handleSubmitApproval = async () => {
     setSubmitting(true);
     try {
-      // Tự động tăng phiên bản nếu trước đó bản ghi bị từ chối
-      const newVersion = priceDetail.status === 'REJECTED' 
-        ? incrementVersion(priceDetail.version) 
-        : priceDetail.version;
+      const payload = {
+        price_code: priceDetail.priceCode,
+        price_name: priceDetail.priceName,
+        target_type: priceDetail.targetType,
+        specific_target: priceDetail.specificTarget,
+        effective_from: priceDetail.effectiveFrom,
+        effective_to: priceDetail.effectiveTo,
+        status: 'SUBMITTED',
+        services: (priceDetail.services || []).map((s) => ({
+          service_code: s.serviceCode || '',
+          service_name: s.serviceName || '',
+          unit: s.unit || '',
+          price: Number(s.price) || 0,
+        })),
+      };
 
-      const response = await fetch(`${APPROVAL_BASE_URL}/${priceDetail.priceCode}/submit`, {
-        method: 'POST',
+      const response = await fetch(`${API_BASE_URL}/${priceDetail.priceCode}`, {
+        method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ version: newVersion }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -258,15 +356,19 @@ export default function PriceListDetailPage() {
         throw new Error(errorMessage);
       }
 
-      // Cập nhật state local: Trạng thái SUBMITTED, phiên bản mới & xóa lý do từ chối
-      setPriceDetail((prev) => ({ 
-        ...prev, 
-        status: 'SUBMITTED', 
-        version: newVersion,
-        rejectionReason: '' 
+      // Cập nhật trạng thái ngay lập tức về SUBMITTED để disable form và làm mờ các nút hành động
+      setPriceDetail((prev) => ({
+        ...prev,
+        status: 'SUBMITTED',
       }));
-      
+
       setShowSuccessModal(true);
+
+      if (versionParam) {
+        navigate(`/staff/price-lists/${id}`, { replace: true });
+      } else {
+        fetchDetail();
+      }
     } catch (err) {
       alert(`Gửi phê duyệt thất bại:\n${err.message}`);
     } finally {
@@ -278,8 +380,9 @@ export default function PriceListDetailPage() {
     switch (status) {
       case 'SUBMITTED':
         return <span className="px-2.5 py-0.5 rounded bg-sky-100/70 text-sky-700 text-[10px] font-bold tracking-wide">SUBMITTED</span>;
-      case 'EFFECTIVE':
       case 'APPROVED':
+        return <span className="px-2.5 py-0.5 rounded bg-blue-100/70 text-blue-700 text-[10px] font-bold tracking-wide">APPROVED</span>;
+      case 'EFFECTIVE':
         return <span className="px-2.5 py-0.5 rounded bg-emerald-100/70 text-emerald-700 text-[10px] font-bold tracking-wide">EFFECTIVE</span>;
       case 'DRAFT':
         return <span className="px-2.5 py-0.5 rounded bg-amber-100/70 text-amber-700 text-[10px] font-bold tracking-wide">DRAFT</span>;
@@ -317,6 +420,7 @@ export default function PriceListDetailPage() {
 
   return (
     <div className="space-y-5 text-slate-700 font-sans max-w-7xl mx-auto pb-10 relative">
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-start space-x-4">
           <button
@@ -334,26 +438,43 @@ export default function PriceListDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
-            Phiên bản: {priceDetail.version}
-          </span>
+        <div className="flex items-center space-x-3">
+          {/* Dropdown chọn nhanh phiên bản */}
+          {versionsList.length > 0 && (
+            <div className="flex items-center space-x-1.5">
+              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <select
+                value={priceDetail.version}
+                onChange={handleVersionSelectChange}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 font-mono text-xs font-semibold focus:outline-none cursor-pointer hover:bg-slate-100 transition"
+              >
+                {versionsList.map((v) => (
+                  <option key={v.id || v.version} value={v.version}>
+                    Phiên bản: {v.version} ({v.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {renderStatusBadge(priceDetail.status)}
         </div>
       </div>
 
+      {/* REJECTED BANNER */}
       {priceDetail.status === 'REJECTED' && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4 flex items-start space-x-3 shadow-xs animate-in fade-in">
-          <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+        <div className="bg-rose-50/80 border border-rose-200 text-rose-800 rounded-xl p-4 flex items-start space-x-3 shadow-xs">
+          <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
           <div className="space-y-1 text-xs">
             <h4 className="font-bold text-rose-900 text-sm">Bảng giá này đã bị từ chối phê duyệt!</h4>
-            <p className="text-[11px] text-rose-600 pt-0.5">
-              * Vui lòng chỉnh sửa lại các thông tin tương ứng bên dưới và nhấn <b>"Gửi phê duyệt"</b> lại.
+            <p className="text-[11px] text-rose-600">
+              * Vui lòng chỉnh sửa lại các thông tin tương ứng bên dưới và nhấn <b className="text-rose-700">"Gửi phê duyệt"</b> lại.
             </p>
           </div>
         </div>
       )}
 
+      {/* MAIN FORM */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-6 space-y-7">
         <div className="space-y-4">
           <h2 className="text-sm font-bold text-slate-800 flex items-center space-x-2">
@@ -398,6 +519,8 @@ export default function PriceListDetailPage() {
                   <option value="CUSTOMER">Khách hàng (CUSTOMER)</option>
                   <option value="PARTNER">Đối tác (PARTNER)</option>
                   <option value="TIER">Hạng hội viên (TIER)</option>
+                  <option value="CONTRACT">Hợp đồng (CONTRACT)</option>
+                  <option value="GENERAL">Chung (GENERAL)</option>
                 </select>
               ) : (
                 <input
@@ -455,12 +578,12 @@ export default function PriceListDetailPage() {
             </div>
 
             {priceDetail.status === 'REJECTED' && (
-              <div className="md:col-span-3">
+              <div className="md:col-span-3 pt-1">
                 <label className="block text-rose-700 font-medium mb-1.5">Lý do từ chối từ Ban quản lý</label>
                 <textarea
                   rows={2}
                   readOnly
-                  value={priceDetail.rejectionReason || 'Chưa ghi nhận lý do từ chối cụ thể.'}
+                  value={priceDetail.rejectionReason || 'Chưa ghi nhận lý do cụ thể.'}
                   className="w-full px-3 py-2 rounded-lg border border-rose-200 bg-rose-50/50 text-rose-900 font-medium text-xs focus:outline-none cursor-default resize-none"
                 />
               </div>
@@ -468,6 +591,7 @@ export default function PriceListDetailPage() {
           </div>
         </div>
 
+        {/* SERVICES LIST */}
         <div className="space-y-4 pt-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-800 flex items-center space-x-2">
@@ -574,7 +698,7 @@ export default function PriceListDetailPage() {
                         <td className="py-2.5 px-4 text-center">
                           <button
                             type="button"
-                            onClick={() => handleRemoveService(index)}
+                            onClick={() => handleRemoveServiceClick(index)}
                             className="p-1 text-slate-400 hover:text-rose-600 transition cursor-pointer"
                             title="Xóa dịch vụ"
                           >
@@ -597,20 +721,22 @@ export default function PriceListDetailPage() {
         </div>
       </div>
 
+      {/* ACTIONS BAR */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-end space-x-3">
+        {/* Nút Xem phiên bản khác */}
+        <button
+          onClick={() => navigate(`/staff/price-lists/${id}/versions`)}
+          className="px-4 py-2 rounded-lg border border-[#2b727d]/40 bg-[#f4fbf9] text-[#2b727d] hover:bg-[#e6f4f1] text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+        >
+          <History className="w-3.5 h-3.5" />
+          <span>Xem phiên bản khác</span>
+        </button>
+
         <button
           onClick={() => navigate('/staff/price-lists')}
           className="px-5 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
         >
           Đóng
-        </button>
-
-        <button
-          onClick={() => navigate(`/staff/price-lists/${priceDetail.priceCode}/versions`)}
-          className="px-4 py-2 rounded-lg bg-white border border-[#2b727d] text-[#2b727d] hover:bg-[#2b727d]/5 text-xs font-semibold flex items-center space-x-1.5 cursor-pointer transition"
-        >
-          <Clock className="w-3.5 h-3.5" />
-          <span>Xem phiên bản khác</span>
         </button>
 
         <button
@@ -644,6 +770,40 @@ export default function PriceListDetailPage() {
         </button>
       </div>
 
+      {/* MODAL XÁC NHẬN XÓA DỊCH VỤ */}
+      {serviceToDeleteIndex !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs transition-opacity animate-in fade-in">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4 border border-slate-100">
+            <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-slate-800">Xác nhận xóa dịch vụ</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Bạn có chắc chắn muốn xóa dịch vụ này khỏi bảng giá không? Hành động này chưa thể hoàn tất cho đến khi bạn lưu bảng giá.
+              </p>
+            </div>
+
+            <div className="pt-2 flex items-center space-x-3">
+              <button
+                onClick={() => setServiceToDeleteIndex(null)}
+                className="w-1/2 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-lg transition cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={confirmRemoveService}
+                className="w-1/2 py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs rounded-lg transition shadow-xs cursor-pointer"
+              >
+                Xóa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL UPDATE SUCCESS */}
       {showUpdateSuccessModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs transition-opacity animate-in fade-in">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-center space-y-6 border border-slate-100">
@@ -652,11 +812,9 @@ export default function PriceListDetailPage() {
             </div>
 
             <div className="space-y-3">
-              <h3 className="text-xl font-bold text-slate-900">
-                Cập nhật thành công !
-              </h3>
+              <h3 className="text-xl font-bold text-slate-900">Lưu thành công !</h3>
               <p className="text-sm text-slate-500 leading-relaxed px-4">
-                Mọi thay đổi về định mức đơn giá và thời gian hiệu lực đã được lưu vào hệ thống
+                Mọi thay đổi về định mức đơn giá và thời gian hiệu lực đã được cập nhật thành công.
               </p>
             </div>
 
@@ -672,6 +830,7 @@ export default function PriceListDetailPage() {
         </div>
       )}
 
+      {/* MODAL SUBMIT SUCCESS */}
       {showSuccessModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs transition-opacity animate-in fade-in">
           <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl text-center space-y-5 border border-slate-100">
@@ -680,20 +839,24 @@ export default function PriceListDetailPage() {
             </div>
 
             <div className="space-y-2">
-              <h3 className="text-xl font-bold text-slate-800">
-                Gửi phê duyệt thành công!
-              </h3>
+              <h3 className="text-xl font-bold text-slate-800">Gửi phê duyệt thành công!</h3>
               <p className="text-xs text-slate-500 leading-relaxed px-2">
-                Hệ thống đã gửi dữ liệu bảng giá <span className="font-bold text-slate-700">{priceDetail.priceCode}</span> (Phiên bản: <span className="font-bold text-[#2b727d]">{priceDetail.version}</span>) đến ban điều hành xem xét duyệt bản ghi.
+                Phiên bản mới với trạng thái <span className="font-bold text-[#2b727d]">SUBMITTED</span> đã được tạo. Bạn có thể ra ngoài danh sách để kiểm tra.
               </p>
             </div>
 
-            <div className="pt-2">
+            <div className="pt-2 flex items-center space-x-3">
               <button
                 onClick={() => setShowSuccessModal(false)}
-                className="w-full py-2.5 px-4 bg-[#2b727d] hover:bg-[#235d67] text-white font-semibold text-xs rounded-lg transition shadow-xs cursor-pointer"
+                className="w-1/2 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-lg transition cursor-pointer"
               >
-                Xác nhận
+                Ở lại trang này
+              </button>
+              <button
+                onClick={() => navigate('/staff/price-lists')}
+                className="w-1/2 py-2.5 px-3 bg-[#2b727d] hover:bg-[#235d67] text-white font-semibold text-xs rounded-lg transition shadow-xs cursor-pointer"
+              >
+                Xem danh sách ngoài
               </button>
             </div>
           </div>
