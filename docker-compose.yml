@@ -111,6 +111,11 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     networks:
       - microservices-net
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
 
   # Dashboard Web quản lý Kafka trực quan (Truy cập: http://localhost:8086)
   kafka-ui:
@@ -143,9 +148,12 @@ services:
     ports:
       - "8081:8000"
     depends_on:
-      - postgres-auth
-      - redis
-      - kafka
+      postgres-auth:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     networks:
       - microservices-net
 
@@ -162,9 +170,12 @@ services:
     ports:
       - "8082:8000"
     depends_on:
-      - postgres-pricing
-      - redis
-      - kafka
+      postgres-pricing:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     networks:
       - microservices-net
 
@@ -184,9 +195,12 @@ services:
     ports:
       - "8083:8000"
     depends_on:
-      - postgres-contract
-      - redis
-      - kafka
+      postgres-contract:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy  # Đợi Kafka báo Healthy mới chạy
     networks:
       - microservices-net
 
@@ -202,9 +216,12 @@ services:
     ports:
       - "8084:8000"
     depends_on:
-      - postgres-production
-      - redis
-      - kafka
+      postgres-production:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     networks:
       - microservices-net
 
@@ -220,9 +237,12 @@ services:
     ports:
       - "8085:8000"
     depends_on:
-      - postgres-payment
-      - redis
-      - kafka
+      postgres-payment:
+        condition: service_started
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     networks:
       - microservices-net
 
