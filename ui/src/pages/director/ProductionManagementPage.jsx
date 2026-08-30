@@ -8,7 +8,9 @@ export default function ProductionManagementDirectorPage({ user }) {
 
     // Mock data for initial UI check
     const mockVolumes = [
-        { id: 'VOL-1001', customerName: 'Công ty XNK Bình Dương', date: '2026-08-25', serviceName: 'Xếp dỡ Container 20feet', quantity: 50, unit: 'Cont', status: 'LOCKED', handler: 'Nguyễn Văn A' },
+        { id: 'VOL-1001', contractId: 'HD-2024-001', date: '2026-08-25', serviceName: 'Bốc xếp container 20ft (Hàng nhập)', quantity: 50, unit: 'Container', status: 'LOCKED', handler: 'Nguyễn Văn A' },
+        { id: 'VOL-1002', contractId: 'HD-2024-002', date: '2026-08-26', serviceName: 'Lưu kho bãi tổng hợp', quantity: 120.5, unit: 'Ngày/Tấn', status: 'UNLOCKED', handler: 'Nguyễn Văn B' },
+        { id: 'VOL-1003', contractId: 'HD-2024-003', date: '2026-08-26', serviceName: 'Khai thác bến bãi hạ tải', quantity: 15, unit: 'Lượt xe', status: 'PENDING', handler: 'Nguyễn Văn B' }
     ];
 
     const mockRequests = [

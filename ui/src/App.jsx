@@ -22,6 +22,8 @@ import ProductionManagementDirectorPage from './pages/director/ProductionManagem
 // Quản lý thanh toán
 import PaymentManagementPage from './pages/staff/PaymentManagementPage.jsx';
 
+import ContractManagementStaffPage from './pages/staff/ContractManagementPage.jsx';
+
 const EmptyPage = () => <div className="w-full min-h-[400px] bg-transparent" />;
 
 const IndexRedirect = ({ user }) => {
@@ -82,7 +84,7 @@ export default function App() {
           <Route path="/staff/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
 
           {/* SERVICE KHÁC */}
-          <Route path="/staff/contracts" element={<EmptyPage />} />
+          <Route path="/staff/contracts" element={<ContractManagementStaffPage user={user} />} />
           <Route path="/staff/volumes" element={<ProductionManagementStaffPage user={user} />} />
           <Route path="/staff/payments" element={<PaymentManagementPage user={user} />} />
         </Route>

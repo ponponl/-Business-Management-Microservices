@@ -107,6 +107,9 @@ class ContractListItem(BaseModel):
     
     created_at: datetime
     updated_at: datetime
+    
+    effective_to: date | None = None
+    contract_value: Decimal | None = None
 
     model_config = {
         "from_attributes": True

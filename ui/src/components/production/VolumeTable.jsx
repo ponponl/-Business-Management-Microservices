@@ -17,7 +17,7 @@ export default function VolumeTable({ volumes = [] }) {
             <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-white">
                 <div className="flex items-center space-x-3">
                     <select className="border border-slate-300 rounded-md text-sm px-3 py-2 bg-white text-slate-700 outline-none focus:border-primary">
-                        <option value="">Khách hàng: Tất cả</option>
+                        <option value="">Hợp đồng: Tất cả</option>
                     </select>
                     <select className="border border-slate-300 rounded-md text-sm px-3 py-2 bg-white text-slate-700 outline-none focus:border-primary">
                         <option value="">Tháng: Tất cả</option>
@@ -49,7 +49,7 @@ export default function VolumeTable({ volumes = [] }) {
                     <thead>
                         <tr className="bg-white text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
                             <th className="px-6 py-4 font-semibold">Mã ID</th>
-                            <th className="px-6 py-4 font-semibold">Khách hàng</th>
+                            <th className="px-6 py-4 font-semibold">Hợp đồng</th>
                             <th className="px-6 py-4 font-semibold">Ngày VH</th>
                             <th className="px-6 py-4 font-semibold">Dịch vụ</th>
                             <th className="px-6 py-4 font-semibold text-right">Sản lượng</th>
@@ -62,7 +62,7 @@ export default function VolumeTable({ volumes = [] }) {
                         {volumes.length > 0 ? volumes.map((v) => (
                             <tr key={v.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4 font-medium text-slate-700">{v.id}</td>
-                                <td className="px-6 py-4">{v.customerName}</td>
+                                <td className="px-6 py-4 font-semibold text-slate-600">{v.contractId}</td>
                                 <td className="px-6 py-4 text-slate-500">{v.date}</td>
                                 <td className="px-6 py-4">{v.serviceName}</td>
                                 <td className="px-6 py-4 text-right font-semibold text-primary">{v.quantity} {v.unit}</td>

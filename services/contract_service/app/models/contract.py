@@ -79,3 +79,17 @@ class Contract(Base):
         back_populates="contract",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def effective_to(self):
+        for version in self.versions:
+            if version.version_no == self.current_version:
+                return version.effective_to
+        return None
+
+    @property
+    def contract_value(self):
+        for version in self.versions:
+            if version.version_no == self.current_version:
+                return version.contract_value
+        return None

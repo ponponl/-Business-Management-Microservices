@@ -35,3 +35,13 @@ class CustomerRepository:
             )
             .first()
         )
+
+    @staticmethod
+    def get_all(
+        db: Session,
+        status: str | None = None,
+    ) -> list[Customer]:
+        query = db.query(Customer)
+        if status:
+            query = query.filter(Customer.status == status)
+        return query.all()
