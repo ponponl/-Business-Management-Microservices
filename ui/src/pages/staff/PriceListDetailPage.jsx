@@ -4,6 +4,7 @@ import { ArrowLeft, Clock, Loader2, AlertCircle, Plus, Trash2, Send, Check, Aler
 
 const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 const APPROVAL_BASE_URL = 'http://localhost:8082/api/v1/approvals';
+const CONTRACT_SERVICE_URL = 'http://localhost:8083';
 
 export default function PriceListDetailPage() {
   const { id } = useParams(); 
@@ -17,6 +18,7 @@ export default function PriceListDetailPage() {
   const [priceDetail, setPriceDetail] = useState(null);
   const [versionsList, setVersionsList] = useState([]);
   const [availableServices, setAvailableServices] = useState([]);
+  const [targetOptions, setTargetOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -88,6 +90,79 @@ export default function PriceListDetailPage() {
         .catch((err) => console.error('Lỗi lấy danh sách phiên bản:', err));
     }
   }, [id, token]);
+
+  // Lấy danh sách đối tượng áp dụng (Khách hàng / Hợp đồng)
+  useEffect(() => {
+    if (!priceDetail?.targetType || priceDetail.targetType === 'GENERAL') {
+      setTargetOptions([]);
+      return;
+    }
+
+    const fetchTargets = async () => {
+      try {
+        const endpoint = `${CONTRACT_SERVICE_URL}/api/v1/contracts`;
+
+        const response = await fetch(endpoint, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) return;
+
+        const resData = await response.json();
+        let list = [];
+        if (Array.isArray(resData)) list = resData;
+        else if (Array.isArray(resData?.data)) list = resData.data;
+        else if (Array.isArray(resData?.content)) list = resData.content;
+        else if (Array.isArray(resData?.items)) list = resData.items;
+
+        const formatted = list.map((item) => {
+          if (priceDetail.targetType === 'CUSTOMER') {
+            return {
+              id: item.customer_id || item.customerId || item.id,
+              code: item.customer_code || item.customerCode || '',
+              name: item.customer_name || item.customerName || item.full_name || item.name || ''
+            };
+          } else {
+            return {
+              id: item.contract_id || item.id,
+              code: item.contract_number || item.code || '',
+              name: item.contract_name || item.title || item.customer_name || ''
+            };
+          }
+        });
+
+        const uniqueTargets = formatted.filter(
+          (item, index, self) => index === self.findIndex((t) => t.id === item.id)
+        );
+
+        setTargetOptions(uniqueTargets);
+      } catch (error) {
+        console.error('Lỗi khi nạp danh sách đối tượng:', error);
+      }
+    };
+
+    fetchTargets();
+  }, [priceDetail?.targetType, token]);
+
+  const getTargetDisplayName = (targetType, specificTarget, targetOptions) => {
+    if (targetType === 'GENERAL' || !specificTarget) {
+      return 'Áp dụng cho tất cả (Chung)';
+    }
+
+    const found = targetOptions.find(
+      (item) => String(item.id) === String(specificTarget)
+    );
+
+    if (found) {
+      return found.code ? `${found.code} - ${found.name}` : found.name;
+    }
+
+    return specificTarget;
+  };
 
   // 2. Lấy chi tiết bảng giá theo price_code và version
   const fetchDetail = () => {
@@ -534,17 +609,38 @@ export default function PriceListDetailPage() {
 
             <div>
               <label className="block text-slate-600 font-medium mb-1.5">Đối tượng áp dụng cụ thể *</label>
-              <input
-                type="text"
-                value={priceDetail.specificTarget}
-                onChange={(e) => handleInputChange('specificTarget', e.target.value)}
-                readOnly={!canEdit}
-                className={`w-full px-3 py-2 rounded-lg border border-slate-200 font-medium transition-all focus:outline-none ${
-                  canEdit
-                    ? 'bg-white text-slate-800 focus:border-[#2b727d] focus:ring-2 focus:ring-[#2b727d]/10'
-                    : 'bg-slate-50 text-slate-800 cursor-default'
-                }`}
-              />
+              {canEdit ? (
+                priceDetail.targetType === 'GENERAL' ? (
+                  <input
+                    type="text"
+                    disabled
+                    value="Áp dụng cho tất cả (Chung)"
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-400 italic focus:outline-none cursor-default"
+                  />
+                ) : (
+                  <select
+                    value={priceDetail.specificTarget}
+                    onChange={(e) => handleInputChange('specificTarget', e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-slate-200 font-medium bg-white text-slate-800 focus:outline-none focus:border-[#2b727d] focus:ring-2 focus:ring-[#2b727d]/10 transition-all cursor-pointer"
+                  >
+                    <option value="">
+                      -- Chọn {priceDetail.targetType === 'CUSTOMER' ? 'Khách hàng' : 'Hợp đồng'} --
+                    </option>
+                    {targetOptions.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.code ? `${opt.code} - ${opt.name}` : opt.name || opt.id}
+                      </option>
+                    ))}
+                  </select>
+                )
+              ) : (
+                <input
+                  type="text"
+                  value={getTargetDisplayName(priceDetail.targetType, priceDetail.specificTarget, targetOptions)}
+                  readOnly
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-800 font-medium focus:outline-none cursor-default"
+                />
+              )}
             </div>
 
             <div>

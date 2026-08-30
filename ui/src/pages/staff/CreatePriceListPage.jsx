@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, Trash2, Check, Loader2, AlertCircle } from 'lucide-rea
 import { useNavigate } from 'react-router-dom';
 
 const BACKEND_BASE_URL = 'http://localhost:8082';
+const CONTRACT_SERVICE_URL = 'http://localhost:8083';
 
 export default function CreatePriceListPage() {
   const navigate = useNavigate();
@@ -12,6 +13,9 @@ export default function CreatePriceListPage() {
   const [isLoadingServices, setIsLoadingServices] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState({});
+
+  const [targetOptions, setTargetOptions] = useState([]);
+  const [isLoadingTargets, setIsLoadingTargets] = useState(false);
 
   const [modalConfig, setModalConfig] = useState({
     isOpen: false,
@@ -33,7 +37,67 @@ export default function CreatePriceListPage() {
 
   const [services, setServices] = useState([]);
 
-  // Hàm ép kiểu và lấy giá trị đơn giá chuẩn từ đối tượng Dịch Vụ
+  useEffect(() => {
+    setFormData((prev) => ({ ...prev, specificTarget: '' }));
+    setTargetOptions([]);
+
+    if (formData.targetType === 'GENERAL') {
+      return;
+    }
+
+    const fetchTargets = async () => {
+      try {
+        setIsLoadingTargets(true);
+        const endpoint = `${CONTRACT_SERVICE_URL}/api/v1/contracts`;
+
+        const response = await fetch(endpoint, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) return;
+
+        const resData = await response.json();
+        let list = [];
+        if (Array.isArray(resData)) list = resData;
+        else if (Array.isArray(resData?.data)) list = resData.data;
+        else if (Array.isArray(resData?.content)) list = resData.content;
+        else if (Array.isArray(resData?.items)) list = resData.items;
+
+        const formatted = list.map((item) => {
+          if (formData.targetType === 'CUSTOMER') {
+            return {
+              id: item.customer_id || item.customerId || item.id,
+              code: item.customer_code || item.customerCode || '',
+              name: item.customer_name || item.customerName || item.full_name || item.name || ''
+            };
+          } else {
+            return {
+              id: item.contract_id || item.id,
+              code: item.contract_number || item.code || '',
+              name: item.contract_name || item.title || item.customer_name || ''
+            };
+          }
+        });
+
+        const uniqueTargets = formatted.filter(
+          (item, index, self) => index === self.findIndex((t) => t.id === item.id)
+        );
+
+        setTargetOptions(uniqueTargets);
+      } catch (error) {
+        console.error('Lỗi khi nạp danh sách đối tượng:', error);
+      } finally {
+        setIsLoadingTargets(false);
+      }
+    };
+
+    fetchTargets();
+  }, [formData.targetType, token]);
+
   const extractPrice = (item) => {
     if (!item) return 0;
     const rawPrice = item.price ?? item.unit_price ?? item.unitPrice ?? item.standardPrice ?? item.base_price ?? 0;
@@ -49,7 +113,6 @@ export default function CreatePriceListPage() {
   const parseCurrency = (value) =>
     parseFloat(String(value).replace(/\./g, '').replace(/,/g, '')) || 0;
 
-  // Khởi tạo dòng mặc định linh hoạt
   const createRowFromOption = (opt) => {
     const sId = opt?.id || opt?.service_item_id || opt?.serviceItemId || null;
     const sName = opt?.service_name || opt?.serviceName || opt?.name || opt?.title || '';
@@ -150,7 +213,6 @@ export default function CreatePriceListPage() {
     setServices((prev) => prev.filter((srv) => srv.id !== id));
   };
 
-  // Xử lý thay đổi khi người dùng chọn dịch vụ từ dropdown SELECT
   const handleSelectServiceOption = (rowId, selectedId) => {
     const selected = serviceOptions.find((opt) => {
       const optId = opt.id || opt.service_item_id || opt.serviceItemId;
@@ -231,7 +293,6 @@ export default function CreatePriceListPage() {
     status: statusType,
     version: formData.version,
     services: services.map((s) => ({
-      // Đảm bảo gửi chuẩn cả 2 chuẩn đặt tên Snake/Camel case
       serviceItemId: s.serviceItemId,
       service_item_id: s.serviceItemId,
       serviceCode: s.serviceCode,
@@ -400,19 +461,37 @@ export default function CreatePriceListPage() {
                 <option value="CUSTOMER">Khách hàng (CUSTOMER)</option>
                 <option value="CONTRACT">Hợp đồng (CONTRACT)</option>
                 <option value="GENERAL">Chung (GENERAL)</option>
-                <option value="SERVICE_GROUP">Nhóm dịch vụ (SERVICE_GROUP)</option>
               </select>
             </div>
 
             <div>
               <label className="block text-slate-600 font-medium mb-1.5">Đối tượng áp dụng cụ thể</label>
-              <input
-                type="text"
-                placeholder="Nhập mã khách hàng hoặc mã hợp đồng..."
-                value={formData.specificTarget}
-                onChange={(e) => setFormData({ ...formData, specificTarget: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:border-sky-500 bg-white placeholder:text-slate-400"
-              />
+              {formData.targetType === 'GENERAL' ? (
+                <input
+                  type="text"
+                  disabled
+                  value="Áp dụng cho tất cả (Chung)"
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-400 italic focus:outline-none"
+                />
+              ) : (
+                <select
+                  value={formData.specificTarget}
+                  onChange={(e) => setFormData({ ...formData, specificTarget: e.target.value })}
+                  disabled={isLoadingTargets}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 focus:outline-none focus:border-sky-500 bg-white cursor-pointer text-slate-700 font-medium"
+                >
+                  <option value="">
+                    {isLoadingTargets
+                      ? 'Đang tải danh sách...'
+                      : `-- Chọn ${formData.targetType === 'CUSTOMER' ? 'Khách hàng' : 'Hợp đồng'} --`}
+                  </option>
+                  {targetOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.code ? `${opt.code} - ${opt.name}` : opt.name || opt.id}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>
@@ -522,7 +601,6 @@ export default function CreatePriceListPage() {
                     return (
                       <tr key={service.id} className={`transition ${isRowInvalid ? 'bg-rose-50/30' : 'hover:bg-slate-50/50'}`}>
                         <td className="py-2.5 px-4">
-                          {/* SỬA LỖI: Thay thế input datalist bằng Select chuẩn để luôn giữ serviceItemId */}
                           <select
                             value={service.serviceItemId || ''}
                             onChange={(e) => handleSelectServiceOption(service.id, e.target.value)}

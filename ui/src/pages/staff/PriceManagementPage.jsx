@@ -310,7 +310,7 @@ export default function PriceManagementPage() {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/50 text-[11px] font-semibold text-slate-500">
                 <th className="py-3 px-4">Mã bảng giá</th>
-                <th className="py-3 px-4">Tên bảng giá / Đối tượng</th>
+                <th className="py-3 px-4">Tên bảng giá</th>
                 <th className="py-3 px-4">Loại áp dụng</th>
                 <th className="py-3 px-4">Phiên bản</th>
                 <th className="py-3 px-4">Thời gian hiệu lực</th>
@@ -333,8 +333,7 @@ export default function PriceManagementPage() {
                 priceLists.map((item, index) => {
                   const itemCode = item.price_list_code || item.price_code || item.id;
                   const itemName = item.price_name || item.name || 'Bảng giá dịch vụ';
-                  const itemType = item.target_type || item.type || 'GENERAL';
-                  const itemCustomer = item.specific_target || item.contractId || '-';
+                  const itemType = item.target_type || item.targetType || item.type || 'GENERAL';
 
                   const effectiveFrom = item.effective_from || item.valid_from;
                   const effectiveTo = item.effective_to || item.valid_to;
@@ -350,7 +349,6 @@ export default function PriceManagementPage() {
                       <td className="py-3 px-4 font-semibold text-slate-900">{itemCode}</td>
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-800">{itemName}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{itemCustomer}</div>
                       </td>
                       <td className="py-3 px-4">
                         <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">

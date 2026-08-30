@@ -187,6 +187,58 @@ export const PriceListHistoryDetail = ({
     );
   };
 
+  /* Helper render nhãn đối tượng áp dụng (Khách hàng / Hợp đồng) */
+  const renderScopeLabelAndValue = (detail) => {
+    if (!detail) return { label: "Đối tượng áp dụng cụ thể *", value: "" };
+
+    const type = (detail.scope_type || "").toUpperCase();
+    let label = "Đối tượng áp dụng cụ thể *";
+    let value = detail.scope_name || detail.scope_id || detail.scope_type || "";
+
+    if (type === "CUSTOMER" || detail.customer_code || detail.customer_name) {
+      label = "Khách hàng áp dụng *";
+      value = detail.customer_name 
+        ? `${detail.customer_name} (${detail.customer_code || detail.scope_id})` 
+        : detail.customer_code || value;
+    } else if (type === "CONTRACT" || detail.contract_code || detail.contract_name) {
+      label = "Số hợp đồng áp dụng *";
+      value = detail.contract_code || detail.contract_name || value;
+    }
+
+    return { label, value };
+  };
+
+  /* Helper render badge trạng thái ở Tab Lịch sử áp dụng */
+  const renderUsageStatusBadge = (status) => {
+    const s = (status || "").toUpperCase();
+    if (s.includes("SETTLED") || s.includes("ĐÃ QUYẾT TOÁN")) {
+      return (
+        <span className="px-2.5 py-0.5 rounded bg-[#E6F4EA] text-[#137333] text-xs font-semibold">
+          Đã quyết toán
+        </span>
+      );
+    }
+    if (s.includes("PENDING") || s.includes("CHỜ QUYẾT TOÁN")) {
+      return (
+        <span className="px-2.5 py-0.5 rounded bg-[#FEF7E0] text-[#B06000] text-xs font-semibold">
+          Chờ quyết toán
+        </span>
+      );
+    }
+    if (s.includes("OLD") || s.includes("GỐC CŨ")) {
+      return (
+        <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-xs font-semibold">
+          Hóa đơn gốc cũ
+        </span>
+      );
+    }
+    return (
+      <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-xs font-semibold">
+        {status || "Khác"}
+      </span>
+    );
+  };
+
   return (
     <div className="p-8 bg-[#F8FAFC] min-h-screen font-sans text-slate-700">
       {}
@@ -314,43 +366,52 @@ export const PriceListHistoryDetail = ({
         {/* --- Cột Phải: Nội dung chi tiết các Tabs --- */}
         <div className="col-span-12 lg:col-span-8 bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
           {/* Header Tabs Navigation */}
-          <div className="flex border-b border-slate-100 px-6 pt-4 gap-8">
-            <button
-              onClick={() => setActiveTab("details")}
-              className={`pb-3 text-sm font-semibold border-b-2 transition ${
-                activeTab === "details"
-                  ? "border-[#508D83] text-[#508D83]"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Đơn giá chi tiết
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab("changes");
-                setHasUnreadChanges(false);
-              }}
-              className={`pb-3 text-sm font-semibold border-b-2 transition relative ${
-                activeTab === "changes"
-                  ? "border-[#508D83] text-[#508D83]"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Nhật ký thay đổi
-              {hasUnreadChanges && changeLogs.length > 0 && (
-                <span className="absolute top-0 -right-2 w-2 h-2 bg-pink-500 rounded-full animate-pulse"></span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("usage")}
-              className={`pb-3 text-sm font-semibold border-b-2 transition ${
-                activeTab === "usage"
-                  ? "border-[#508D83] text-[#508D83]"
-                  : "border-transparent text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Lịch sử áp dụng
-            </button>
+          <div className="flex items-center justify-between border-b border-slate-100 px-6 pt-4">
+            <div className="flex gap-8">
+              <button
+                onClick={() => setActiveTab("details")}
+                className={`pb-3 text-sm font-semibold border-b-2 transition ${
+                  activeTab === "details"
+                    ? "border-[#508D83] text-[#508D83]"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                Đơn giá chi tiết
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab("changes");
+                  setHasUnreadChanges(false);
+                }}
+                className={`pb-3 text-sm font-semibold border-b-2 transition relative ${
+                  activeTab === "changes"
+                    ? "border-[#508D83] text-[#508D83]"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                Nhật ký thay đổi
+                {hasUnreadChanges && changeLogs.length > 0 && (
+                  <span className="absolute top-0 -right-2 w-2 h-2 bg-pink-500 rounded-full animate-pulse"></span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveTab("usage")}
+                className={`pb-3 text-sm font-semibold border-b-2 transition ${
+                  activeTab === "usage"
+                    ? "border-[#508D83] text-[#508D83]"
+                    : "border-transparent text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                Lịch sử áp dụng
+              </button>
+            </div>
+
+            {/* Hiển thị số lượt áp dụng khi chọn tab usage */}
+            {activeTab === "usage" && (
+              <div className="pb-3 text-xs text-slate-400">
+                Hiển thị: <strong className="text-slate-700">{usageLogs.length} lượt áp dụng</strong>
+              </div>
+            )}
           </div>
 
           {/* Body Content */}
@@ -392,19 +453,23 @@ export const PriceListHistoryDetail = ({
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-semibold text-slate-500 mb-1.5">
-                          Đối tượng áp dụng cụ thể *
-                        </label>
-                        <input
-                          type="text"
-                          readOnly
-                          value={
-                            versionDetail.scope_id ||
-                            versionDetail.scope_type ||
-                            ""
-                          }
-                          className="w-full px-3.5 py-2.5 bg-[#F8FAFC] border border-slate-200/80 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none"
-                        />
+                        {/* Render tự động linh hoạt Mã khách hàng hoặc Mã hợp đồng */}
+                        {(() => {
+                          const { label, value } = renderScopeLabelAndValue(versionDetail);
+                          return (
+                            <>
+                              <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                                {label}
+                              </label>
+                              <input
+                                type="text"
+                                readOnly
+                                value={value}
+                                className="w-full px-3.5 py-2.5 bg-[#F8FAFC] border border-slate-200/80 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none"
+                              />
+                            </>
+                          );
+                        })()}
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-500 mb-1.5">
@@ -550,46 +615,67 @@ export const PriceListHistoryDetail = ({
                 </div>
               ))}
 
-            {/* === TAB 3: LỊCH SỬ ÁP DỤNG === */}
+            {/* === TAB 3: LỊCH SỬ ÁP DỤNG (Cập nhật giao diện Timeline dạng Card) === */}
             {activeTab === "usage" &&
               (loading ? (
                 <div className="py-12 text-center text-slate-400 text-sm">
                   Đang tải lịch sử áp dụng...
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="relative pl-6 space-y-6 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-100">
                   {usageLogs.length > 0 ? (
-                    <div className="border border-slate-200/80 rounded-xl overflow-hidden">
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-[#F8FAFC] border-b border-slate-200/80 text-slate-600 font-bold">
-                          <tr>
-                            <th className="py-3 px-4">Mã bảng thanh toán</th>
-                            <th className="py-3 px-4">Khách hàng / Đối tượng</th>
-                            <th className="py-3 px-4">Ngày áp dụng</th>
-                            <th className="py-3 px-4 text-right">Tổng tiền</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {usageLogs.map((log, index) => (
-                            <tr key={log.id || index}>
-                              <td className="py-3 px-4 font-mono text-xs font-semibold text-[#508D83]">
-                                {log.payment_board_id || log.payment_board_code || log.code}
-                              </td>
-                              <td className="py-3 px-4 text-slate-700">
-                                {log.service_name || log.customer_name || "Dịch vụ cảng"}
-                              </td>
-                              <td className="py-3 px-4 text-xs text-slate-500">
-                                {formatDate(log.applied_at || log.date, true)}
-                              </td>
-                              <td className="py-3 px-4 text-right font-bold text-slate-900">
-                                {(log.total_amount || 0).toLocaleString("vi-VN")}{" "}
-                                <span className="text-[10px] text-slate-400">VND</span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    usageLogs.map((log, index) => (
+                      <div key={log.id || index} className="relative">
+                        <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#508D83] ring-4 ring-white"></div>
+
+                        <div className="border border-slate-200/80 rounded-2xl p-5 bg-white shadow-sm">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                              <span className="px-3 py-1 bg-slate-100 text-slate-700 font-bold text-xs rounded-lg inline-block">
+                                {log.payment_board_code || log.payment_board_id || log.code || "BSTATEMENT-2026-000"}
+                              </span>
+                              {renderUsageStatusBadge(log.status || "Đã quyết toán")}
+                            </div>
+                            <span className="text-xs text-slate-400">
+                              {formatDate(log.applied_at || log.created_at || log.date, true)}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                              <p className="text-xs text-slate-400 mb-1">Khách hàng áp dụng</p>
+                              <p className="text-sm font-bold text-slate-800">
+                                {log.customer_name || log.customer_code || "---"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-400 mb-1">Số hợp đồng liên kết</p>
+                              <p className="text-sm font-bold text-slate-800">
+                                {log.contract_code || log.contract_number || "---"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-end justify-between pt-2 border-t border-slate-50">
+                            <div>
+                              <p className="text-xs text-slate-400 mb-1">
+                                {log.amount_type_label || "Giá trị quyết toán"}
+                              </p>
+                              <p className="text-lg font-bold text-slate-900">
+                                {(log.total_amount || log.amount || 0).toLocaleString("vi-VN")}{" "}
+                                <span className="text-xs font-normal text-slate-400">VND</span>
+                              </p>
+                            </div>
+                            <div className="text-right text-xs text-slate-400">
+                              {log.performed_by_label || "Người thực hiện quyết toán:"}{" "}
+                              <span className="font-semibold text-slate-700 block mt-0.5">
+                                {log.performed_by || log.created_by || "Trần Văn B (Kế toán bãi)"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))
                   ) : (
                     <div className="py-12 text-center">
                       <p className="text-slate-400 text-sm mb-3">
