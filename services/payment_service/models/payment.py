@@ -44,19 +44,6 @@ class PaymentDetail(Base):
     statement = relationship("PaymentBoard", back_populates="items")
 
 
-class PaymentAuditLog(Base):
-    __tablename__ = "payment_status_histories"
-
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    payment_board_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False)
-    action = Column(String(50), nullable=False)
-    from_status = Column(String(30), nullable=True)
-    status = Column(String(30), nullable=False)
-    actor_id = Column(String(36), nullable=False)
-    note = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-
 class PaymentOutboxEvent(Base):
     __tablename__ = "payment_outbox_event"
 

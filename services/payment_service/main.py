@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from models.database import Base, SessionLocal, engine, get_db, initialize_database
 from models.payment import (
-    PaymentAuditLog,
     PaymentBoard,
     PaymentDetail,
     PaymentIdempotencyKey,
@@ -30,17 +29,6 @@ from utils.calculations import calculate_totals
 
 initialize_database()
 outbox_publisher = OutboxPublisher()
-
-
-def add_audit(db: Session, statement: PaymentBoard, actor_id: str, action: str, from_status: str | None, note: str | None):
-    db.add(PaymentAuditLog(
-        payment_board_id=statement.id,
-        action=action,
-        from_status=from_status,
-        status=statement.status,
-        actor_id=actor_id,
-        note=note,
-    ))
 
 
 def add_event(db: Session, event_type: str, statement: PaymentBoard):
@@ -167,7 +155,6 @@ def create_payment(payload: PaymentBoardInput, request: Request, db: Session = D
     statement = create_board(payload, items, code, request.headers.get("X-User", "STAFF"))
     db.add(statement)
     db.flush()
-    add_audit(db, statement, request.headers.get("X-User", "STAFF"), "CREATE", None, None)
     if key:
         db.add(PaymentIdempotencyKey(key=key, statement_id=statement.id))
     db.commit()
@@ -202,7 +189,6 @@ def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request
     statement.items = make_items(items)
     statement.status = "CALCULATED"
     statement.sub_total, statement.tax_amount, statement.total_amount = calculate_totals(statement)
-    add_audit(db, statement, request.headers.get("X-User", "STAFF"), "UPDATE", previous_status, None)
     db.commit()
     db.refresh(statement)
     return serialize(statement)
@@ -238,7 +224,6 @@ def change_status(payment_id: str, next_status: str, payload: ActionInput, db: S
             step.status = "COMPLETED" if next_status == "APPROVED" else "REJECTED"
             workflow.status = "COMPLETED"
     statement.status = final_status
-    add_audit(db, statement, actor, next_status, previous_status, payload.comment)
     add_event(db, f"payment.{next_status.lower()}", statement)
     if next_status == "SUBMITTED":
         create_workflow(db, statement, assignees or [])
@@ -278,9 +263,7 @@ def send_sign(payment_id: str, request: Request, db: Session = Depends(get_db)):
     statement = db.get(PaymentBoard, payment_id)
     if not statement or statement.status not in {"APPROVED", "SIGN_FAILED", "SIGN_CANCELLED"}:
         raise HTTPException(409, "Chỉ bảng thanh toán đã duyệt mới được gửi ký")
-    previous_status = statement.status
     statement.status = "SIGNING"
-    add_audit(db, statement, request.headers.get("X-User", "STAFF"), "SEND_SIGN", previous_status, None)
     add_event(db, "payment.sign_requested", statement)
     db.commit()
     db.refresh(statement)
@@ -292,9 +275,7 @@ def sign_callback(payment_id: str, success: bool = True, db: Session = Depends(g
     statement = db.get(PaymentBoard, payment_id)
     if not statement or statement.status != "SIGNING":
         raise HTTPException(409, "Phiên ký không hợp lệ")
-    previous_status = statement.status
     statement.status = "SIGNED" if success else "SIGN_FAILED"
-    add_audit(db, statement, "E_SIGN_SERVICE", "SIGN_CALLBACK", previous_status, None)
     add_event(db, "payment.signed" if success else "payment.sign_failed", statement)
     db.commit()
     db.refresh(statement)
@@ -308,9 +289,7 @@ def issue_payment(payment_id: str, request: Request, db: Session = Depends(get_d
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
     if statement.status != "SIGNED":
         raise HTTPException(409, "Chỉ bảng thanh toán đã ký mới được phát hành")
-    previous_status = statement.status
     statement.status = "ISSUED"
-    add_audit(db, statement, request.headers.get("X-User", "STAFF"), "ISSUE", previous_status, None)
     add_event(db, "payment.issued", statement)
     db.commit()
     db.refresh(statement)
@@ -322,9 +301,7 @@ def cancel_sign(payment_id: str, request: Request, db: Session = Depends(get_db)
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement or statement.status != "SIGNING":
         raise HTTPException(409, "Chỉ phiên ký đang xử lý mới được hủy")
-    previous_status = statement.status
     statement.status = "SIGN_CANCELLED"
-    add_audit(db, statement, request.headers.get("X-User", "STAFF"), "CANCEL_SIGN", previous_status, None)
     add_event(db, "payment.sign_cancelled", statement)
     db.commit()
     db.refresh(statement)
@@ -357,16 +334,9 @@ def create_adjustment(payment_id: str, payload: PaymentBoardInput, request: Requ
     statement = create_board(payload, items, code, request.headers.get("X-User", "STAFF"), original.id)
     db.add(statement)
     db.flush()
-    add_audit(db, statement, request.headers.get("X-User", "STAFF"), "CREATE_ADJUSTMENT", None, f"reference_id={original.id}")
     db.commit()
     db.refresh(statement)
     return serialize(statement)
-
-
-@app.get("/api/payments/{payment_id}/history")
-def payment_history(payment_id: str, db: Session = Depends(get_db)):
-    rows = db.scalars(select(PaymentAuditLog).where(PaymentAuditLog.payment_board_id == payment_id).order_by(PaymentAuditLog.created_at)).all()
-    return [{"id": row.id, "action": row.action, "fromStatus": row.from_status, "status": row.status, "actorId": row.actor_id, "note": row.note, "createdAt": row.created_at.isoformat()} for row in rows]
 
 
 @app.get("/api/payments/outbox/pending")
