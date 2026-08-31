@@ -1,22 +1,56 @@
-import React, { useState, useRef } from 'react';
-
-const PRICING_SERVICES = [
-    { code: 'SRV-20ft-IN', name: 'Bốc xếp container 20ft (Hàng nhập)', unit: 'Container' },
-    { code: 'SRV-40ft-OUT', name: 'Bốc xếp container 40ft (Hàng xuất)', unit: 'Container' },
-    { code: 'SRV-WH-GEN', name: 'Lưu kho bãi tổng hợp', unit: 'Ngày/Tấn' },
-    { code: 'SRV-PORT-OP', name: 'Khai thác bến bãi hạ tải', unit: 'Lượt xe' },
-    { code: 'SRV-CUST-CLR', name: 'Khai báo hải quan trọn gói', unit: 'Tờ khai' },
-];
+import React, { useState, useRef, useEffect } from 'react';
 
 export default function RecordVolumeForm({ onCancel, onSubmit }) {
     const [selectedUnit, setSelectedUnit] = useState('');
+    const [contracts, setContracts] = useState([]);
+    const [services, setServices] = useState([]);
+    const [loading, setLoading] = useState(true);
     
     // Sinh mã ngẫu nhiên chống Double Submit, mã này sẽ không đổi trong suốt vòng đời của component
     const idempotencyKey = useRef(crypto.randomUUID());
 
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                const token = localStorage.getItem('token') || '';
+                const headers = {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                };
+
+                // Production service runs on 8084 on host
+                const [contractsRes, servicesRes] = await Promise.all([
+                    fetch('http://localhost:8084/api/v1/contracts', { headers }),
+                    fetch('http://localhost:8084/api/v1/services', { headers })
+                ]);
+                
+                if (contractsRes.ok) {
+                    const data = await contractsRes.json();
+                    setContracts(data);
+                }
+                
+                if (servicesRes.ok) {
+                    const data = await servicesRes.json();
+                    // map to code, name, unit based on pricing service response structure
+                    // Assuming pricing service returns { service_code, service_name, default_unit }
+                    setServices(data.map(s => ({
+                        code: s.service_code || s.code,
+                        name: s.service_name || s.name,
+                        unit: s.default_unit || s.unit || 'Tự động'
+                    })));
+                }
+            } catch (error) {
+                console.error("Error fetching data:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchData();
+    }, []);
+
     const handleServiceChange = (e) => {
         const serviceCode = e.target.value;
-        const srv = PRICING_SERVICES.find(s => s.code === serviceCode);
+        const srv = services.find(s => s.code === serviceCode);
         setSelectedUnit(srv ? srv.unit : '');
     };
 
@@ -46,18 +80,20 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                     <div className="col-span-2 space-y-6">
                         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
                             <h3 className="text-base font-bold text-slate-800 mb-4 border-b pb-2">Thông tin chung</h3>
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-slate-700 mb-2">Khách hàng <span className="text-red-500">*</span></label>
-                                <select required className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
-                                    <option value="">-- Chọn Khách hàng --</option>
-                                    <option value="C001">Công ty XNK Bình Dương</option>
-                                </select>
-                            </div>
+
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">Hợp đồng dịch vụ <span className="text-red-500">*</span></label>
                                 <select required className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
                                     <option value="">-- Chọn Hợp đồng --</option>
-                                    <option value="HĐ001">HĐ Vận tải biển 2024</option>
+                                    {loading ? (
+                                        <option value="" disabled>Đang tải...</option>
+                                    ) : (
+                                        contracts.map(c => (
+                                            <option key={c.contract_number} value={c.contract_number}>
+                                                {c.contract_number}
+                                            </option>
+                                        ))
+                                    )}
                                 </select>
                             </div>
                         </div>
@@ -68,9 +104,13 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                                 <label className="block text-sm font-medium text-slate-700 mb-2">Hạng mục Dịch vụ áp dụng <span className="text-red-500">*</span></label>
                                 <select required onChange={handleServiceChange} className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
                                     <option value="">-- Chọn Dịch vụ --</option>
-                                    {PRICING_SERVICES.map(srv => (
-                                        <option key={srv.code} value={srv.code}>{srv.name} ({srv.code})</option>
-                                    ))}
+                                    {loading ? (
+                                        <option value="" disabled>Đang tải...</option>
+                                    ) : (
+                                        services.map(srv => (
+                                            <option key={srv.code} value={srv.code}>{srv.name} ({srv.code})</option>
+                                        ))
+                                    )}
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-4">

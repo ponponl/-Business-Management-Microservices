@@ -6,7 +6,6 @@ from typing import Optional
 # BASE (Class gốc dùng chung)
 
 class VolumeBase(BaseModel):
-    customer_id: str
     contract_id: str
     service_code: str
     volume_date: datetime
@@ -15,11 +14,13 @@ class VolumeBase(BaseModel):
     unit: str
 
 
+
 # INPUT (COMPARE / KIỂM TRA ĐẦU VÀO)
 # Dùng để kiểm tra dữ liệu Frontend gửi lên
 
 class VolumeCreate(VolumeBase):
     pass
+
 
 class VolumeUpdate(BaseModel):
     quantity: float
@@ -63,7 +64,6 @@ class UnlockRequestResponse(BaseModel):
 # Trả qua Payment Service
 class BillingSyncResponse(BaseModel):
     id: int
-    customer_id: str
     contract_id: str
     service_code: str
     volume_date: datetime

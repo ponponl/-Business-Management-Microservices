@@ -6,16 +6,10 @@ import PeriodTable from '../../components/production/PeriodTable';
 export default function ProductionManagementManagerPage({ user }) {
     const [currentView, setCurrentView] = useState('list'); // 'list' | 'periods'
 
-    // Mock data for initial UI check
-    const mockVolumes = [
-        { id: 'VOL-1001', customerName: 'Công ty XNK Bình Dương', date: '2026-08-25', serviceName: 'Xếp dỡ Container 20feet', quantity: 50, unit: 'Cont', status: 'LOCKED', handler: 'Nguyễn Văn A' },
-        { id: 'VOL-1002', customerName: 'Công ty Thủy Hải Sản ĐN', date: '2026-08-26', serviceName: 'Lưu kho lạnh', quantity: 120.5, unit: 'Tấn', status: 'UNLOCKED', handler: 'Nguyễn Văn B' }
-    ];
+    // Data initialized as empty array for actual API fetching later
+    const mockVolumes = [];
 
-    const mockPeriods = [
-        { id: 'P07', month: '07/2026', status: 'LOCKED' },
-        { id: 'P08', month: '08/2026', status: 'UNLOCKED' }
-    ];
+    const mockPeriods = [];
 
     const handleSwitchView = (view) => setCurrentView(view);
 
@@ -38,10 +32,10 @@ export default function ProductionManagementManagerPage({ user }) {
 
                     {/* Summary Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                        <StatCard title="Tổng bản ghi" value="2" icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
-                        <StatCard title="Sản lượng Container" value="50" icon="fa-solid fa-box" colorClass="bg-amber-50 text-amber-500" />
-                        <StatCard title="Sản lượng Hàng rời" value="120.5" icon="fa-solid fa-weight-hanging" colorClass="bg-green-50 text-green-500" />
-                        <StatCard title="Kỳ đã khóa" value="1" icon="fa-solid fa-lock" colorClass="bg-red-50 text-red-500" />
+                        <StatCard title="Tổng bản ghi" value="0" icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
+                        <StatCard title="Sản lượng Container" value="0" icon="fa-solid fa-box" colorClass="bg-amber-50 text-amber-500" />
+                        <StatCard title="Sản lượng Hàng rời" value="0" icon="fa-solid fa-weight-hanging" colorClass="bg-green-50 text-green-500" />
+                        <StatCard title="Kỳ đã khóa" value="0" icon="fa-solid fa-lock" colorClass="bg-red-50 text-red-500" />
                     </div>
 
                     {/* Table */}

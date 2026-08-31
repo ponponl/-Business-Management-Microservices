@@ -1,6 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 export default function VolumeTable({ volumes = [] }) {
+    const [filterStatus, setFilterStatus] = useState('ALL');
+
+    const filteredVolumes = volumes.filter(v => {
+        if (filterStatus === 'LOCKED') return v.status === 'LOCKED';
+        if (filterStatus === 'UNLOCKED') return v.status !== 'LOCKED'; // DRAFT, PENDING, UNLOCKED considered as Chưa khóa
+        return true;
+    });
+
     const getStatusBadge = (status) => {
         switch(status) {
             case 'LOCKED': return <span className="px-2 py-1 text-xs font-semibold rounded-md badge-locked">Đã khóa</span>;
@@ -17,7 +25,7 @@ export default function VolumeTable({ volumes = [] }) {
             <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-white">
                 <div className="flex items-center space-x-3">
                     <select className="border border-slate-300 rounded-md text-sm px-3 py-2 bg-white text-slate-700 outline-none focus:border-primary">
-                        <option value="">Khách hàng: Tất cả</option>
+                        <option value="">Hợp đồng: Tất cả</option>
                     </select>
                     <select className="border border-slate-300 rounded-md text-sm px-3 py-2 bg-white text-slate-700 outline-none focus:border-primary">
                         <option value="">Tháng: Tất cả</option>
@@ -25,9 +33,24 @@ export default function VolumeTable({ volumes = [] }) {
                     
                     {/* Status Chips */}
                     <div className="flex bg-slate-50 border border-slate-200 rounded-md overflow-hidden p-1 space-x-1 ml-2">
-                        <button className="px-3 py-1.5 text-xs font-medium rounded bg-white shadow-sm border border-slate-200 text-teal-700">Tất cả</button>
-                        <button className="px-3 py-1.5 text-xs font-medium rounded text-slate-500 hover:bg-slate-100">Đã khóa</button>
-                        <button className="px-3 py-1.5 text-xs font-medium rounded text-slate-500 hover:bg-slate-100">Chưa khóa</button>
+                        <button 
+                            onClick={() => setFilterStatus('ALL')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded border ${filterStatus === 'ALL' ? 'bg-white shadow-sm border-slate-200 text-teal-700' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+                        >
+                            Tất cả
+                        </button>
+                        <button 
+                            onClick={() => setFilterStatus('LOCKED')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded border ${filterStatus === 'LOCKED' ? 'bg-white shadow-sm border-slate-200 text-teal-700' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+                        >
+                            Đã khóa
+                        </button>
+                        <button 
+                            onClick={() => setFilterStatus('UNLOCKED')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded border ${filterStatus === 'UNLOCKED' ? 'bg-white shadow-sm border-slate-200 text-teal-700' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+                        >
+                            Chưa khóa
+                        </button>
                     </div>
                 </div>
                 
@@ -49,7 +72,7 @@ export default function VolumeTable({ volumes = [] }) {
                     <thead>
                         <tr className="bg-white text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
                             <th className="px-6 py-4 font-semibold">Mã ID</th>
-                            <th className="px-6 py-4 font-semibold">Khách hàng</th>
+                            <th className="px-6 py-4 font-semibold">Hợp đồng</th>
                             <th className="px-6 py-4 font-semibold">Ngày VH</th>
                             <th className="px-6 py-4 font-semibold">Dịch vụ</th>
                             <th className="px-6 py-4 font-semibold text-right">Sản lượng</th>
@@ -59,10 +82,10 @@ export default function VolumeTable({ volumes = [] }) {
                         </tr>
                     </thead>
                     <tbody className="text-sm">
-                        {volumes.length > 0 ? volumes.map((v) => (
+                        {filteredVolumes.length > 0 ? filteredVolumes.map((v) => (
                             <tr key={v.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4 font-medium text-slate-700">{v.id}</td>
-                                <td className="px-6 py-4">{v.customerName}</td>
+                                <td className="px-6 py-4 font-semibold text-slate-600">{v.contractId}</td>
                                 <td className="px-6 py-4 text-slate-500">{v.date}</td>
                                 <td className="px-6 py-4">{v.serviceName}</td>
                                 <td className="px-6 py-4 text-right font-semibold text-primary">{v.quantity} {v.unit}</td>
@@ -87,7 +110,7 @@ export default function VolumeTable({ volumes = [] }) {
             
             {/* Pagination */}
             <div className="p-4 border-t border-slate-200 flex items-center justify-between text-sm text-slate-500 bg-white">
-                <div>Hiển thị {volumes.length} bản ghi</div>
+                <div>Hiển thị {filteredVolumes.length} bản ghi</div>
                 <div className="flex space-x-1">
                     <button className="w-8 h-8 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-50"><i className="fa-solid fa-chevron-left text-xs"></i></button>
                     <button className="w-8 h-8 rounded bg-sidebar text-white flex items-center justify-center font-medium">1</button>

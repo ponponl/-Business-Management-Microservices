@@ -1,12 +1,12 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
-class CustomerCacheSchema(BaseModel):
-    id: int
-    code: str
-    name: str
-    status: str
-    model_config = ConfigDict(from_attributes=True)
+# class CustomerCacheSchema(BaseModel):
+#     id: int
+#     code: str
+#     name: str
+#     status: str
+#     model_config = ConfigDict(from_attributes=True)
 
 class ContractCacheSchema(BaseModel):
     id: int

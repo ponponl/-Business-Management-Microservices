@@ -6,15 +6,10 @@ import UnlockRequestTable from '../../components/production/UnlockRequestTable';
 export default function ProductionManagementDirectorPage({ user }) {
     const [currentView, setCurrentView] = useState('list'); // 'list' | 'approvals'
 
-    // Mock data for initial UI check
-    const mockVolumes = [
-        { id: 'VOL-1001', customerName: 'Công ty XNK Bình Dương', date: '2026-08-25', serviceName: 'Xếp dỡ Container 20feet', quantity: 50, unit: 'Cont', status: 'LOCKED', handler: 'Nguyễn Văn A' },
-    ];
+    // Data initialized as empty array for actual API fetching later
+    const mockVolumes = [];
 
-    const mockRequests = [
-        { id: 'REQ-1', month: '07/2026', requester: 'Nguyễn Văn A (Staff)', reason: 'Khách hàng điều chỉnh lại số lượng container xuất tàu 20/07.' },
-        { id: 'REQ-2', month: '06/2026', requester: 'Lê Thị C (Staff)', reason: 'Sai sót nhập liệu cân băng tải ngày 15/06.' }
-    ];
+    const mockRequests = [];
 
     const handleSwitchView = (view) => setCurrentView(view);
 
@@ -37,10 +32,10 @@ export default function ProductionManagementDirectorPage({ user }) {
 
                     {/* Summary Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                        <StatCard title="Tổng bản ghi" value="1" icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
-                        <StatCard title="Sản lượng Container" value="50" icon="fa-solid fa-box" colorClass="bg-amber-50 text-amber-500" />
+                        <StatCard title="Tổng bản ghi" value="0" icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
+                        <StatCard title="Sản lượng Container" value="0" icon="fa-solid fa-box" colorClass="bg-amber-50 text-amber-500" />
                         <StatCard title="Sản lượng Hàng rời" value="0" icon="fa-solid fa-weight-hanging" colorClass="bg-green-50 text-green-500" />
-                        <StatCard title="Yêu cầu chờ duyệt" value={mockRequests.length} icon="fa-solid fa-bell" colorClass="bg-amber-50 text-amber-500" />
+                        <StatCard title="Yêu cầu chờ duyệt" value="0" icon="fa-solid fa-bell" colorClass="bg-amber-50 text-amber-500" />
                     </div>
 
                     {/* Table */}

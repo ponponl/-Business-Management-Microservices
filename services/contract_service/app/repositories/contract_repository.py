@@ -99,7 +99,8 @@ class ContractRepository:
         limit: int = 20,
     ) -> list[Contract]:
 
-        query = db.query(Contract)
+        from sqlalchemy.orm import selectinload
+        query = db.query(Contract).options(selectinload(Contract.versions))
 
         if customer_id is not None:
             query = query.filter(
