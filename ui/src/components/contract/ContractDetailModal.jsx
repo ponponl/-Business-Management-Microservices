@@ -5,6 +5,21 @@ export default function ContractDetailModal({ detail, customers, onClose }) {
 
     const customer = customers.find(c => c.customer_id === detail.customer_id) || {};
 
+    const formatDateValue = (value) => {
+        if (!value) return 'N/A';
+
+        const normalized = typeof value === 'string' ? value.split('T')[0] : value;
+        const match = /^\d{4}-\d{2}-\d{2}$/.exec(String(normalized));
+
+        if (!match) {
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString('vi-VN');
+        }
+
+        const [year, month, day] = normalized.split('-');
+        return `${day}/${month}/${year}`;
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -37,12 +52,16 @@ export default function ContractDetailModal({ detail, customers, onClose }) {
                                     </span>
                                 </div>
                                 <div className="flex">
+                                    <span className="w-1/3 text-slate-500">Ngày tạo:</span>
+                                    <span className="w-2/3 text-slate-800">{formatDateValue(detail.created_at)}</span>
+                                </div>
+                                <div className="flex">
                                     <span className="w-1/3 text-slate-500">Hiệu lực từ:</span>
-                                    <span className="w-2/3 text-slate-800">{detail.current_version_detail?.effective_from}</span>
+                                    <span className="w-2/3 text-slate-800">{formatDateValue(detail.current_version_detail?.effective_from)}</span>
                                 </div>
                                 <div className="flex">
                                     <span className="w-1/3 text-slate-500">Hiệu lực đến:</span>
-                                    <span className="w-2/3 text-slate-800">{detail.current_version_detail?.effective_to}</span>
+                                    <span className="w-2/3 text-slate-800">{formatDateValue(detail.current_version_detail?.effective_to)}</span>
                                 </div>
                             </div>
                         </div>

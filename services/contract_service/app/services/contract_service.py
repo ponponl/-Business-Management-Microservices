@@ -220,7 +220,28 @@ class ContractService:
             )
         )
 
-        return contracts, total
+        serialized = []
+        for contract in contracts:
+            version = ContractRepository.get_current_version(
+                db,
+                contract,
+            )
+
+            serialized.append({
+                "contract_id": contract.contract_id,
+                "contract_number": contract.contract_number,
+                "customer_id": contract.customer_id,
+                "current_version": contract.current_version,
+                "status": contract.status,
+                "row_version": contract.row_version,
+                "created_at": contract.created_at,
+                "updated_at": contract.updated_at,
+                "effective_from": version.effective_from if version else None,
+                "effective_to": version.effective_to if version else None,
+                "contract_value": version.contract_value if version else None,
+            })
+
+        return serialized, total
 
     # =========================================================
     # UPDATE CONTRACT
@@ -1072,3 +1093,146 @@ class ContractService:
         except Exception:
             db.rollback()
             raise
+        
+    # Validate contract for payment
+    @staticmethod
+    def validate_for_payment(
+        db: Session,
+        contract_id: UUID,
+        customer_id: UUID,
+        billing_period_start: date,
+        billing_period_end: date,
+    ):
+        """
+        Validate whether a contract is eligible
+        for creating a payment board.
+
+        This method is READ-ONLY.
+        It does not modify Contract state,
+        create Audit, Version, or Outbox events.
+        """
+
+        # =====================================================
+        # 1. Validate billing period
+        # =====================================================
+
+        if billing_period_end < billing_period_start:
+            return {
+                "valid": False,
+                "reason_code": "INVALID_BILLING_PERIOD",
+                "message": (
+                    "Kỳ thanh toán kết thúc "
+                    "không được trước ngày bắt đầu."
+                ),
+            }
+
+        # =====================================================
+        # 2. Find Contract
+        # =====================================================
+
+        contract = ContractRepository.get_by_id(
+            db,
+            contract_id,
+        )
+
+        if contract is None:
+            return {
+                "valid": False,
+                "reason_code": "CONTRACT_NOT_FOUND",
+                "message": "Không tìm thấy hợp đồng.",
+            }
+
+        # =====================================================
+        # 3. Validate customer
+        # =====================================================
+
+        if contract.customer_id != customer_id:
+            return {
+                "valid": False,
+                "reason_code": "CUSTOMER_CONTRACT_MISMATCH",
+                "message": (
+                    "Khách hàng không thuộc hợp đồng."
+                ),
+            }
+
+        # =====================================================
+        # 4. Contract must be ACTIVE
+        # =====================================================
+
+        if contract.status != ContractStatus.ACTIVE.value:
+            return {
+                "valid": False,
+                "reason_code": "CONTRACT_NOT_ACTIVE",
+                "message": (
+                    "Hợp đồng không ở trạng thái ACTIVE."
+                ),
+            }
+
+        # =====================================================
+        # 5. Get current contract version
+        # =====================================================
+
+        current_version = (
+            ContractRepository.get_current_version(
+                db,
+                contract,
+            )
+        )
+
+        if current_version is None:
+            return {
+                "valid": False,
+                "reason_code": "CURRENT_VERSION_NOT_FOUND",
+                "message": (
+                    "Không tìm thấy phiên bản hiện hành "
+                    "của hợp đồng."
+                ),
+            }
+
+        # =====================================================
+        # 6. Validate billing period against
+        #    contract validity period
+        # =====================================================
+
+        if (
+            billing_period_start
+            < current_version.effective_from
+            or
+            billing_period_end
+            > current_version.effective_to
+        ):
+            return {
+                "valid": False,
+                "reason_code": "BILLING_PERIOD_OUT_OF_RANGE",
+                "message": (
+                    "Kỳ thanh toán nằm ngoài "
+                    "thời gian hiệu lực của hợp đồng."
+                ),
+            }
+
+        # =====================================================
+        # 7. Valid
+        # =====================================================
+
+        return {
+            "valid": True,
+            "contract_id": contract.contract_id,
+            "contract_number": (
+                contract.contract_number
+            ),
+            "customer_id": contract.customer_id,
+            "status": contract.status,
+            "current_version": (
+                contract.current_version
+            ),
+            "effective_from": (
+                current_version.effective_from
+            ),
+            "effective_to": (
+                current_version.effective_to
+            ),
+            "reason_code": None,
+            "message": (
+                "Hợp đồng hợp lệ cho kỳ thanh toán."
+            ),
+        }

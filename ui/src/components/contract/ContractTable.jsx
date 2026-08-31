@@ -8,6 +8,38 @@ export default function ContractTable({
     onSubmit, 
     onCancel 
 }) {
+    const formatDateForDisplay = (value) => {
+        if (value === null || value === undefined || value === '') return 'N/A';
+
+        const asString = String(value).trim();
+        if (!asString) return 'N/A';
+
+        const dateOnly = asString.includes('T') ? asString.split('T')[0] : asString;
+        const match = /^\d{4}-\d{2}-\d{2}$/.exec(dateOnly);
+
+        if (match) {
+            const [year, month, day] = dateOnly.split('-');
+            return `${day}/${month}/${year}`;
+        }
+
+        const parsed = new Date(asString);
+        if (Number.isNaN(parsed.getTime())) {
+            return asString;
+        }
+
+        return parsed.toLocaleDateString('vi-VN');
+    };
+
+    const formatDateRange = (from, to) => {
+        const rawFrom = from ?? '';
+        const rawTo = to ?? '';
+
+        if (!rawFrom && !rawTo) return 'N/A';
+        if (!rawFrom || !rawTo) return formatDateForDisplay(rawFrom || rawTo);
+
+        return `${formatDateForDisplay(rawFrom)} - ${formatDateForDisplay(rawTo)}`;
+    };
+
     const getCustomerName = (customerId) => {
         const customer = customers.find(c => c.customer_id === customerId);
         return customer ? customer.company_name : customerId;
@@ -43,8 +75,7 @@ export default function ContractTable({
                         <tr className="bg-white text-slate-500 text-[11px] uppercase tracking-wider border-b border-slate-200">
                             <th className="px-6 py-4 font-semibold">Số hợp đồng</th>
                             <th className="px-6 py-4 font-semibold">Khách hàng</th>
-                            <th className="px-6 py-4 font-semibold">Ngày tạo</th>
-                            <th className="px-6 py-4 font-semibold">Ngày kết thúc</th>
+                            <th className="px-6 py-4 font-semibold">Thời gian hiệu lực</th>
                             <th className="px-6 py-4 font-semibold text-right">Giá trị hợp đồng</th>
                             <th className="px-6 py-4 font-semibold text-center">Trạng thái</th>
                             <th className="px-6 py-4 font-semibold text-right">Hành động</th>
@@ -59,10 +90,12 @@ export default function ContractTable({
                                         <span>{getCustomerName(c.customer_id)}</span>
                                     </div>
                                 </td>
-                                <td className="px-6 py-4 text-slate-500">{c.created_at ? new Date(c.created_at).toLocaleDateString('vi-VN') : 'N/A'}</td>
-                                {/* contract_service returns effective_to in detail, but ContractListItem only has created_at, updated_at */}
-                                {/* Wait, ContractListItem doesn't have effective_to. We might need to fetch detail or show N/A for now. Let's just put N/A if it's missing */}
-                                <td className="px-6 py-4 text-slate-500">{c.effective_to ? new Date(c.effective_to).toLocaleDateString('vi-VN') : 'N/A'}</td>
+                                <td className="px-6 py-4 text-slate-500">
+                                    {formatDateRange(
+                                        c.effective_from ?? c.effectiveFrom ?? c.date_from ?? c.dateFrom ?? c.valid_from ?? c.validFrom ?? c.current_version_detail?.effective_from,
+                                        c.effective_to ?? c.effectiveTo ?? c.date_to ?? c.dateTo ?? c.valid_to ?? c.validTo ?? c.current_version_detail?.effective_to
+                                    )}
+                                </td>
                                 <td className="px-6 py-4 text-right font-semibold text-slate-700">
                                     {c.contract_value ? new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(c.contract_value) : 'N/A'}
                                 </td>
