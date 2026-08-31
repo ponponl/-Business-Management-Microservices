@@ -18,11 +18,8 @@ class OperationService:
         if not contract:
             raise HTTPException(status_code=404, detail="Contract not found in cache")
             
-        if contract.status != "ACTIVE":
-            raise HTTPException(status_code=400, detail="Contract is not active")
-            
-        if contract.customer_id != volume_in.customer_id:
-            raise HTTPException(status_code=400, detail="Contract does not belong to this customer")
+        if contract.status != "APPROVED":
+            raise HTTPException(status_code=400, detail="Contract is not approved")
             
         vol_date = volume_in.volume_date.replace(tzinfo=None)
         if contract.start_date and contract.end_date:
@@ -147,10 +144,8 @@ class OperationService:
         return volume
 
     @staticmethod
-    def get_volumes(db: Session, customer_id: int = None, contract_id: int = None, period_key: str = None):
+    def get_volumes(db: Session, contract_id: str = None, period_key: str = None):
         query = db.query(OperationVolume)
-        if customer_id:
-            query = query.filter(OperationVolume.customer_id == customer_id)
         if contract_id:
             query = query.filter(OperationVolume.contract_id == contract_id)
         if period_key:
@@ -161,15 +156,13 @@ class OperationService:
     @staticmethod
     def get_billing_volumes(
         db: Session, 
-        customer_id: int = None, 
-        contract_id: int = None, 
+        contract_id: str = None, 
         period_start: str = None, 
         period_end: str = None, 
         service_code: str = None
     ):
         query = db.query(
             OperationVolume.id,
-            OperationVolume.customer_id,
             OperationVolume.contract_id,
             OperationVolume.service_code,
             OperationVolume.volume_date,
@@ -182,8 +175,6 @@ class OperationService:
             OperationPeriod, OperationVolume.period_key == OperationPeriod.period_key
         )
 
-        if customer_id:
-            query = query.filter(OperationVolume.customer_id == customer_id)
         if contract_id:
             query = query.filter(OperationVolume.contract_id == contract_id)
         if service_code:
@@ -198,3 +189,7 @@ class OperationService:
     @staticmethod
     def get_audit_logs(db: Session, volume_id: int):
         return db.query(VolumeAuditLog).filter(VolumeAuditLog.volume_id == volume_id).all()
+
+    @staticmethod
+    def get_active_contracts(db: Session):
+        return db.query(ContractCache).filter(ContractCache.status == "ACTIVE").all()

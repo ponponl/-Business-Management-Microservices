@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from core.database import get_db
 from core.security import require_role
@@ -7,6 +7,7 @@ from schemas.operation import VolumeCreate, VolumeUpdate, VolumeResponse, Unlock
 from services.operation_service import OperationService
 from services.period_service import PeriodService
 from services.unlock_service import UnlockService
+from services.integration_service import IntegrationService
 from core.idempotency import check_idempotency
 
 router = APIRouter()
@@ -20,8 +21,18 @@ async def update_volume(volume_id: int, volume_in: VolumeUpdate, db: Session = D
     return await OperationService.update_volume(db, volume_id, volume_in, user["sub"])
 
 @router.get("/volumes")
-def get_volumes(customer_id: int = None, contract_id: int = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR"]))):
-    return OperationService.get_volumes(db, customer_id, contract_id, period_key)
+def get_volumes(contract_id: str = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR"]))):
+    return OperationService.get_volumes(db, contract_id, period_key)
+
+@router.get("/contracts")
+def get_contracts(db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR"]))):
+    return OperationService.get_active_contracts(db)
+
+@router.get("/services")
+async def get_services(request: Request, user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR"]))):
+    auth_header = request.headers.get("Authorization")
+    return await IntegrationService.get_pricing_services(auth_header)
+
 
 @router.get("/volumes/{volume_id}/audit-logs")
 def get_audit_logs(volume_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR"]))):
@@ -42,7 +53,6 @@ async def approve_unlock(request_id: int, approve_in: UnlockApprove, db: Session
 # Lấy dữ liệu cho Payment Service
 @router.get("/internal/volumes/billing-sync", response_model=List[BillingSyncResponse])
 def get_billing_volumes(
-    customer_id: str = None, 
     contract_id: str = None, 
     period_start: str = None, 
     period_end: str = None, 
@@ -50,5 +60,5 @@ def get_billing_volumes(
     db: Session = Depends(get_db)
 ):
     return OperationService.get_billing_volumes(
-        db, customer_id, contract_id, period_start, period_end, service_code
+        db, contract_id, period_start, period_end, service_code
     )

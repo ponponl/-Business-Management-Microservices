@@ -1,6 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 export default function VolumeTable({ volumes = [] }) {
+    const [filterStatus, setFilterStatus] = useState('ALL');
+
+    const filteredVolumes = volumes.filter(v => {
+        if (filterStatus === 'LOCKED') return v.status === 'LOCKED';
+        if (filterStatus === 'UNLOCKED') return v.status !== 'LOCKED'; // DRAFT, PENDING, UNLOCKED considered as Chưa khóa
+        return true;
+    });
+
     const getStatusBadge = (status) => {
         switch(status) {
             case 'LOCKED': return <span className="px-2 py-1 text-xs font-semibold rounded-md badge-locked">Đã khóa</span>;
@@ -25,9 +33,24 @@ export default function VolumeTable({ volumes = [] }) {
                     
                     {/* Status Chips */}
                     <div className="flex bg-slate-50 border border-slate-200 rounded-md overflow-hidden p-1 space-x-1 ml-2">
-                        <button className="px-3 py-1.5 text-xs font-medium rounded bg-white shadow-sm border border-slate-200 text-teal-700">Tất cả</button>
-                        <button className="px-3 py-1.5 text-xs font-medium rounded text-slate-500 hover:bg-slate-100">Đã khóa</button>
-                        <button className="px-3 py-1.5 text-xs font-medium rounded text-slate-500 hover:bg-slate-100">Chưa khóa</button>
+                        <button 
+                            onClick={() => setFilterStatus('ALL')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded border ${filterStatus === 'ALL' ? 'bg-white shadow-sm border-slate-200 text-teal-700' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+                        >
+                            Tất cả
+                        </button>
+                        <button 
+                            onClick={() => setFilterStatus('LOCKED')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded border ${filterStatus === 'LOCKED' ? 'bg-white shadow-sm border-slate-200 text-teal-700' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+                        >
+                            Đã khóa
+                        </button>
+                        <button 
+                            onClick={() => setFilterStatus('UNLOCKED')}
+                            className={`px-3 py-1.5 text-xs font-medium rounded border ${filterStatus === 'UNLOCKED' ? 'bg-white shadow-sm border-slate-200 text-teal-700' : 'border-transparent text-slate-500 hover:bg-slate-100'}`}
+                        >
+                            Chưa khóa
+                        </button>
                     </div>
                 </div>
                 
@@ -59,7 +82,7 @@ export default function VolumeTable({ volumes = [] }) {
                         </tr>
                     </thead>
                     <tbody className="text-sm">
-                        {volumes.length > 0 ? volumes.map((v) => (
+                        {filteredVolumes.length > 0 ? filteredVolumes.map((v) => (
                             <tr key={v.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4 font-medium text-slate-700">{v.id}</td>
                                 <td className="px-6 py-4 font-semibold text-slate-600">{v.contractId}</td>
@@ -87,7 +110,7 @@ export default function VolumeTable({ volumes = [] }) {
             
             {/* Pagination */}
             <div className="p-4 border-t border-slate-200 flex items-center justify-between text-sm text-slate-500 bg-white">
-                <div>Hiển thị {volumes.length} bản ghi</div>
+                <div>Hiển thị {filteredVolumes.length} bản ghi</div>
                 <div className="flex space-x-1">
                     <button className="w-8 h-8 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-50"><i className="fa-solid fa-chevron-left text-xs"></i></button>
                     <button className="w-8 h-8 rounded bg-sidebar text-white flex items-center justify-center font-medium">1</button>

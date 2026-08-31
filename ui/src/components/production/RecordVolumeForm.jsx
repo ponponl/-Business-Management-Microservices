@@ -12,10 +12,16 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // Production service runs on 8004
+                const token = localStorage.getItem('token') || '';
+                const headers = {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                };
+
+                // Production service runs on 8084 on host
                 const [contractsRes, servicesRes] = await Promise.all([
-                    fetch('http://localhost:8004/api/v1/contracts'),
-                    fetch('http://localhost:8004/api/v1/services')
+                    fetch('http://localhost:8084/api/v1/contracts', { headers }),
+                    fetch('http://localhost:8084/api/v1/services', { headers })
                 ]);
                 
                 if (contractsRes.ok) {

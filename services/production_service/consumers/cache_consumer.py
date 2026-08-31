@@ -3,7 +3,7 @@ import json
 import asyncio
 from core.config import settings
 from core.database import SessionLocal
-from models.cache import ContractCache, CustomerCache
+from models.cache import ContractCache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,6 @@ def handle_event(topic, event_data):
                 # Transform data from payload to match ContractCache columns
                 cache_data = {
                     "contract_number": contract_number,
-                    "customer_id": str(payload.get("customer_id")) if payload.get("customer_id") else None,
                     "start_date": payload.get("effective_from"),
                     "end_date": payload.get("effective_to"),
                     "status": payload.get("status")
