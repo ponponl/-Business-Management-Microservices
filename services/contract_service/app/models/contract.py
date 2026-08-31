@@ -81,6 +81,13 @@ class Contract(Base):
     )
 
     @property
+    def effective_from(self):
+        for version in self.versions:
+            if version.version_no == self.current_version:
+                return version.effective_from
+        return None
+
+    @property
     def effective_to(self):
         for version in self.versions:
             if version.version_no == self.current_version:

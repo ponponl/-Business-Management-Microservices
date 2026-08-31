@@ -30,6 +30,11 @@ from app.schemas.contract import (
     ApprovalActionRequest,
 )
 
+from app.schemas.payment_validation import (
+    PaymentContractValidationRequest,
+    PaymentContractValidationResponse,
+)
+
 from app.services.contract_service import (
     ContractService,
 )
@@ -803,3 +808,27 @@ def request_revision(
             status_code=400,
             detail=code,
         )
+        
+# Validate contract for payment endpoint
+@router.post(
+    "/validate-for-payment",
+    response_model=PaymentContractValidationResponse,
+)
+def validate_for_payment(
+    request: PaymentContractValidationRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(
+        get_current_user
+    ),
+):
+    return ContractService.validate_for_payment(
+        db=db,
+        contract_id=request.contract_id,
+        customer_id=request.customer_id,
+        billing_period_start=(
+            request.billing_period_start
+        ),
+        billing_period_end=(
+            request.billing_period_end
+        ),
+    )
