@@ -5,7 +5,15 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
     const [contracts, setContracts] = useState([]);
     const [services, setServices] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState(null);
     
+    // Form state
+    const [contractId, setContractId] = useState('');
+    const [serviceCode, setServiceCode] = useState('');
+    const [quantity, setQuantity] = useState('');
+    const [volumeDate, setVolumeDate] = useState('');
+
     // Sinh mã ngẫu nhiên chống Double Submit, mã này sẽ không đổi trong suốt vòng đời của component
     const idempotencyKey = useRef(crypto.randomUUID());
 
@@ -31,8 +39,6 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                 
                 if (servicesRes.ok) {
                     const data = await servicesRes.json();
-                    // map to code, name, unit based on pricing service response structure
-                    // Assuming pricing service returns { service_code, service_name, default_unit }
                     setServices(data.map(s => ({
                         code: s.service_code || s.code,
                         name: s.service_name || s.name,
@@ -49,9 +55,53 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
     }, []);
 
     const handleServiceChange = (e) => {
-        const serviceCode = e.target.value;
-        const srv = services.find(s => s.code === serviceCode);
+        const srvCode = e.target.value;
+        setServiceCode(srvCode);
+        const srv = services.find(s => s.code === srvCode);
         setSelectedUnit(srv ? srv.unit : '');
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError(null);
+        setSubmitting(true);
+
+        try {
+            const token = localStorage.getItem('token') || '';
+            const dateObj = new Date(volumeDate);
+            const periodKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+            
+            const payload = {
+                contract_id: contractId,
+                service_code: serviceCode,
+                volume_date: new Date(volumeDate).toISOString(),
+                period_key: periodKey,
+                quantity: parseFloat(quantity),
+                unit: selectedUnit
+            };
+
+            const res = await fetch('http://localhost:8084/api/v1/volumes', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'Idempotency-Key': idempotencyKey.current
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.detail || 'Lỗi khi lưu dữ liệu');
+            }
+
+            // Success
+            onSubmit();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     return (
@@ -68,13 +118,20 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                     <button type="button" onClick={onCancel} className="bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm">
                         Hủy bỏ
                     </button>
-                    <button type="button" onClick={onSubmit} className="bg-primary hover:bg-teal-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center">
-                        <i className="fa-solid fa-paper-plane mr-2"></i> Lưu dữ liệu
+                    <button type="submit" form="record-volume-form" disabled={submitting} className={`bg-primary hover:bg-teal-700 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center ${submitting ? 'opacity-70 cursor-not-allowed' : ''}`}>
+                        <i className="fa-solid fa-paper-plane mr-2"></i> {submitting ? 'Đang lưu...' : 'Lưu dữ liệu'}
                     </button>
                 </div>
             </div>
 
-            <form>
+            {error && (
+                <div className="mb-6 p-4 bg-red-50 text-red-600 rounded-lg border border-red-100 flex items-center">
+                    <i className="fa-solid fa-circle-exclamation mr-2"></i>
+                    {error}
+                </div>
+            )}
+
+            <form id="record-volume-form" onSubmit={handleSubmit}>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Thông tin chung */}
                     <div className="col-span-2 space-y-6">
@@ -83,7 +140,7 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
 
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">Hợp đồng dịch vụ <span className="text-red-500">*</span></label>
-                                <select required className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
+                                <select required value={contractId} onChange={e => setContractId(e.target.value)} className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
                                     <option value="">-- Chọn Hợp đồng --</option>
                                     {loading ? (
                                         <option value="" disabled>Đang tải...</option>
@@ -102,7 +159,7 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                             <h3 className="text-base font-bold text-slate-800 mb-4 border-b pb-2">Chi tiết Dịch vụ</h3>
                             <div className="mb-4">
                                 <label className="block text-sm font-medium text-slate-700 mb-2">Hạng mục Dịch vụ áp dụng <span className="text-red-500">*</span></label>
-                                <select required onChange={handleServiceChange} className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
+                                <select required value={serviceCode} onChange={handleServiceChange} className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm">
                                     <option value="">-- Chọn Dịch vụ --</option>
                                     {loading ? (
                                         <option value="" disabled>Đang tải...</option>
@@ -116,7 +173,7 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-2">Số lượng thực tế <span className="text-red-500">*</span></label>
-                                    <input type="number" min="0.01" step="0.01" required className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm" />
+                                    <input type="number" min="0.01" step="0.01" required value={quantity} onChange={e => setQuantity(e.target.value)} className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm" />
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-2">Đơn vị tính</label>
@@ -132,7 +189,7 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                             <h3 className="text-base font-bold text-slate-800 mb-4 border-b pb-2">Thời gian</h3>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">Ngày vận hành <span className="text-red-500">*</span></label>
-                                <input type="date" required className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm" />
+                                <input type="date" required value={volumeDate} onChange={e => setVolumeDate(e.target.value)} className="w-full border border-slate-300 rounded-lg px-4 py-2.5 outline-none focus:border-primary text-sm" />
                             </div>
                         </div>
                         

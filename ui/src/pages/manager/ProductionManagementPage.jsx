@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import StatCard from '../../components/production/StatCard';
 import VolumeTable from '../../components/production/VolumeTable';
 import PeriodTable from '../../components/production/PeriodTable';
@@ -6,10 +6,37 @@ import PeriodTable from '../../components/production/PeriodTable';
 export default function ProductionManagementManagerPage({ user }) {
     const [currentView, setCurrentView] = useState('list'); // 'list' | 'periods'
 
-    // Data initialized as empty array for actual API fetching later
-    const mockVolumes = [];
+    const [volumes, setVolumes] = useState([]);
+    const [periods, setPeriods] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-    const mockPeriods = [];
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            const token = localStorage.getItem('token') || '';
+            const headers = { 'Authorization': `Bearer ${token}` };
+            
+            const [volumesRes, periodsRes] = await Promise.all([
+                fetch('http://localhost:8084/api/v1/volumes', { headers }),
+                fetch('http://localhost:8084/api/v1/periods', { headers })
+            ]);
+            
+            if (volumesRes.ok) {
+                setVolumes(await volumesRes.json());
+            }
+            if (periodsRes.ok) {
+                setPeriods(await periodsRes.json());
+            }
+        } catch (error) {
+            console.error("Error fetching data", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, [currentView]);
 
     const handleSwitchView = (view) => setCurrentView(view);
 
@@ -32,14 +59,14 @@ export default function ProductionManagementManagerPage({ user }) {
 
                     {/* Summary Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                        <StatCard title="Tổng bản ghi" value="0" icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
-                        <StatCard title="Sản lượng Container" value="0" icon="fa-solid fa-box" colorClass="bg-amber-50 text-amber-500" />
-                        <StatCard title="Sản lượng Hàng rời" value="0" icon="fa-solid fa-weight-hanging" colorClass="bg-green-50 text-green-500" />
-                        <StatCard title="Kỳ đã khóa" value="0" icon="fa-solid fa-lock" colorClass="bg-red-50 text-red-500" />
+                        <StatCard title="Tổng bản ghi" value={volumes.length} icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
+                        <StatCard title="Kỳ chưa khóa" value={periods.filter(p => p.status === 'OPEN').length} icon="fa-solid fa-lock-open" colorClass="bg-amber-50 text-amber-500" />
+                        <StatCard title="Kỳ đã khóa" value={periods.filter(p => p.status === 'LOCKED').length} icon="fa-solid fa-lock" colorClass="bg-red-50 text-red-500" />
+                        <StatCard title="Dịch vụ" value={`${new Set(volumes.map(v => v.service_code)).size} loại`} icon="fa-solid fa-layer-group" colorClass="bg-green-50 text-green-500" />
                     </div>
 
                     {/* Table */}
-                    <VolumeTable volumes={mockVolumes} />
+                    <VolumeTable volumes={volumes} onRefresh={fetchData} />
                 </>
             )}
 
@@ -54,7 +81,7 @@ export default function ProductionManagementManagerPage({ user }) {
                         </div>
                     </div>
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <PeriodTable periods={mockPeriods} />
+                        <PeriodTable periods={periods} onRefresh={fetchData} />
                     </div>
                 </>
             )}

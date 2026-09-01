@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import StatCard from '../../components/production/StatCard';
 import VolumeTable from '../../components/production/VolumeTable';
 import UnlockRequestTable from '../../components/production/UnlockRequestTable';
@@ -6,10 +6,42 @@ import UnlockRequestTable from '../../components/production/UnlockRequestTable';
 export default function ProductionManagementDirectorPage({ user }) {
     const [currentView, setCurrentView] = useState('list'); // 'list' | 'approvals'
 
-    // Data initialized as empty array for actual API fetching later
-    const mockVolumes = [];
+    const [volumes, setVolumes] = useState([]);
+    const [requests, setRequests] = useState([]);
+    const [periods, setPeriods] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-    const mockRequests = [];
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            const token = localStorage.getItem('token') || '';
+            const headers = { 'Authorization': `Bearer ${token}` };
+            
+            const [volumesRes, requestsRes, periodsRes] = await Promise.all([
+                fetch('http://localhost:8084/api/v1/volumes', { headers }),
+                fetch('http://localhost:8084/api/v1/periods/unlock-requests', { headers }),
+                fetch('http://localhost:8084/api/v1/periods', { headers })
+            ]);
+            
+            if (volumesRes.ok) {
+                setVolumes(await volumesRes.json());
+            }
+            if (requestsRes.ok) {
+                setRequests(await requestsRes.json());
+            }
+            if (periodsRes.ok) {
+                setPeriods(await periodsRes.json());
+            }
+        } catch (error) {
+            console.error("Error fetching data", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchData();
+    }, [currentView]);
 
     const handleSwitchView = (view) => setCurrentView(view);
 
@@ -25,21 +57,21 @@ export default function ProductionManagementDirectorPage({ user }) {
                         </div>
                         <div className="flex space-x-3">
                             <button onClick={() => handleSwitchView('approvals')} className="bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-700 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center shadow-sm">
-                                <i className="fa-solid fa-bell mr-2"></i> Phê duyệt yêu cầu ({mockRequests.length})
+                                <i className="fa-solid fa-bell mr-2"></i> Phê duyệt yêu cầu ({requests.filter(r => r.status === 'PENDING').length})
                             </button>
                         </div>
                     </div>
 
                     {/* Summary Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                        <StatCard title="Tổng bản ghi" value="0" icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
-                        <StatCard title="Sản lượng Container" value="0" icon="fa-solid fa-box" colorClass="bg-amber-50 text-amber-500" />
-                        <StatCard title="Sản lượng Hàng rời" value="0" icon="fa-solid fa-weight-hanging" colorClass="bg-green-50 text-green-500" />
-                        <StatCard title="Yêu cầu chờ duyệt" value="0" icon="fa-solid fa-bell" colorClass="bg-amber-50 text-amber-500" />
+                        <StatCard title="Tổng bản ghi" value={volumes.length} icon="fa-regular fa-folder" colorClass="bg-slate-100 text-slate-500" />
+                        <StatCard title="Kỳ chưa khóa" value={periods.filter(p => p.status === 'OPEN').length} icon="fa-solid fa-lock-open" colorClass="bg-amber-50 text-amber-500" />
+                        <StatCard title="Kỳ đã khóa" value={periods.filter(p => p.status === 'LOCKED').length} icon="fa-solid fa-lock" colorClass="bg-red-50 text-red-500" />
+                        <StatCard title="Yêu cầu chờ duyệt" value={requests.filter(r => r.status === 'PENDING').length} icon="fa-solid fa-bell" colorClass="bg-amber-50 text-amber-500" />
                     </div>
 
                     {/* Table */}
-                    <VolumeTable volumes={mockVolumes} />
+                    <VolumeTable volumes={volumes} onRefresh={fetchData} />
                 </>
             )}
 
@@ -53,8 +85,8 @@ export default function ProductionManagementDirectorPage({ user }) {
                             <h2 className="text-2xl font-bold text-slate-800">Phê duyệt yêu cầu mở khóa</h2>
                         </div>
                     </div>
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        <UnlockRequestTable requests={mockRequests} />
+                    <div className="w-full">
+                        <UnlockRequestTable requests={requests} onRefresh={fetchData} />
                     </div>
                 </>
             )}

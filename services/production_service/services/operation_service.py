@@ -95,19 +95,23 @@ class OperationService:
             
         old_data = {
             "quantity": volume.quantity,
-            "unit": volume.unit
+            "unit": volume.unit,
+            "service_code": volume.service_code
         }
         
         volume.quantity = volume_in.quantity
         if volume_in.unit:
             volume.unit = volume_in.unit
+        if volume_in.service_code:
+            volume.service_code = volume_in.service_code
             
         db.commit()
         db.refresh(volume)
         
         new_data = {
             "quantity": volume.quantity,
-            "unit": volume.unit
+            "unit": volume.unit,
+            "service_code": volume.service_code
         }
         
         audit = VolumeAuditLog(
@@ -150,7 +154,10 @@ class OperationService:
             query = query.filter(OperationVolume.contract_id == contract_id)
         if period_key:
             query = query.filter(OperationVolume.period_key == period_key)
-        return query.all()
+        return query.order_by(
+            OperationVolume.is_locked.asc(),
+            OperationVolume.volume_date.desc()
+        ).all()
 
     # Lấy dữ liệu cho Payment Service
     @staticmethod
@@ -192,4 +199,4 @@ class OperationService:
 
     @staticmethod
     def get_active_contracts(db: Session):
-        return db.query(ContractCache).filter(ContractCache.status == "ACTIVE").all()
+        return db.query(ContractCache).filter(ContractCache.status.in_(["ACTIVE", "APPROVED"])).all()

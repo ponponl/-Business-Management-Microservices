@@ -25,12 +25,18 @@ class VolumeCreate(VolumeBase):
 class VolumeUpdate(BaseModel):
     quantity: float
     unit: Optional[str] = None
+    service_code: Optional[str] = None
 
 class PeriodLockRequest(BaseModel):
     pass 
 
 class UnlockRequestCreate(BaseModel):
     reason: str
+    target_type: Optional[str] = "PERIOD"
+    target_volume_id: Optional[int] = None
+    target_service_code: Optional[str] = None
+    old_quantity: Optional[float] = None
+    proposed_quantity: Optional[float] = None
     
 class UnlockApprove(BaseModel):
     approved: bool
@@ -43,7 +49,7 @@ class UnlockApprove(BaseModel):
 
 class VolumeResponse(VolumeBase):
     id: int
-    recorded_by: int
+    recorded_by: str
     is_locked: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -52,11 +58,16 @@ class VolumeResponse(VolumeBase):
 class UnlockRequestResponse(BaseModel):
     id: int
     period_key: str
-    requested_by: int
+    requested_by: str
     reason: str
     status: str
-    approved_by: Optional[int] = None
+    approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
+    target_type: Optional[str] = "PERIOD"
+    target_volume_id: Optional[int] = None
+    target_service_code: Optional[str] = None
+    old_quantity: Optional[float] = None
+    proposed_quantity: Optional[float] = None
     reject_reason: Optional[str] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)

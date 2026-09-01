@@ -28,7 +28,7 @@ def handle_event(topic, event_data):
     db = SessionLocal()
     try:
         if topic == "contract.events":
-            if event_data.get("event_name") in ["CONTRACT_CREATED", "CONTRACT_UPDATED", "CONTRACT_APPROVED"]:
+            if event_data.get("event_name") in ["CONTRACT_CREATED", "CONTRACT_UPDATED", "CONTRACT_APPROVED", "CONTRACT_ACTIVATED"]:
                 payload = event_data.get("payload", {})
                 contract_number = payload.get("contract_number")
                 

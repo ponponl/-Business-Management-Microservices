@@ -45,3 +45,7 @@ class PeriodService:
             pass
             
         return period
+
+    @staticmethod
+    def get_periods(db: Session):
+        return db.query(OperationPeriod).all()
