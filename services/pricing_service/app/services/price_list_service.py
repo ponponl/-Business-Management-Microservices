@@ -26,9 +26,29 @@ def safe_float(val: Any) -> float:
         return 0.0
     if isinstance(val, (int, float)):
         return float(val)
+    
+    val_str = str(val).strip()
+    if not val_str:
+        return 0.0
+
     try:
-        # Làm sạch chuỗi tiền tệ (Xóa bớt dấu chấm, phẩy, khoảng trắng, VND, etc.)
-        clean_str = re.sub(r'[^\d.-]', '', str(val).replace('.', '').replace(',', '.'))
+        if '.' in val_str and ',' in val_str:
+            if val_str.rfind('.') > val_str.rfind(','):
+                val_str = val_str.replace(',', '')
+            else:
+                val_str = val_str.replace('.', '').replace(',', '.')
+        elif '.' in val_str:
+            parts = val_str.split('.')
+            if len(parts[-1]) == 3 and len(parts) > 1:
+                val_str = val_str.replace('.', '')
+        elif ',' in val_str:
+            parts = val_str.split(',')
+            if len(parts[-1]) == 3 and len(parts) > 1:
+                val_str = val_str.replace(',', '')
+            else:
+                val_str = val_str.replace(',', '.')
+
+        clean_str = re.sub(r'[^\d.-]', '', val_str)
         return float(clean_str) if clean_str else 0.0
     except (ValueError, TypeError):
         return 0.0
