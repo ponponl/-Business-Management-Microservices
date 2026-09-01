@@ -626,11 +626,9 @@ export default function PriceListDetailPage() {
                   onChange={(e) => handleInputChange('targetType', e.target.value)}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 font-medium bg-white text-slate-800 focus:outline-none focus:border-[#2b727d] focus:ring-2 focus:ring-[#2b727d]/10 transition-all cursor-pointer"
                 >
-                  <option value="CUSTOMER">Khách hàng (CUSTOMER)</option>
-                  <option value="PARTNER">Đối tác (PARTNER)</option>
-                  <option value="TIER">Hạng hội viên (TIER)</option>
-                  <option value="CONTRACT">Hợp đồng (CONTRACT)</option>
-                  <option value="GENERAL">Chung (GENERAL)</option>
+                  <option value="CUSTOMER">CUSTOMER</option>
+                  <option value="CONTRACT">CONTRACT</option>
+                  <option value="GENERAL">GENERAL</option>
                 </select>
               ) : (
                 <input
@@ -664,7 +662,7 @@ export default function PriceListDetailPage() {
                     </option>
                     {targetOptions.map((opt) => (
                       <option key={opt.id} value={opt.id}>
-                        {opt.code ? `${opt.code} - ${opt.companyName || opt.name}` : (opt.companyName || opt.name)}
+                        {opt.code || opt.id}
                       </option>
                     ))}
                   </select>
