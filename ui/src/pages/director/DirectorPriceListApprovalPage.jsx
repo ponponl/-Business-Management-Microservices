@@ -62,7 +62,18 @@ export default function DirectorPriceListApprovalPage({ user }) {
   };
 
   const getItemName = (item) => {
-    return item?.price_name || item?.priceName || item?.name || item?.title || 'Bảng giá dịch vụ';
+    return (
+      item?.version_price_name ||
+      item?.version_name ||
+      item?.versionName ||
+      item?.price_name || 
+      item?.priceName || 
+      item?.price_list_name ||
+      item?.priceListName ||
+      item?.name || 
+      item?.title || 
+      'Bảng giá dịch vụ'
+    );
   };
 
   const getSpecificTarget = (item) => {
@@ -113,7 +124,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
     }
   }, [getAuthHeaders]);
 
-  // Fetch & Filter (Chỉ lọc đúng Tab và lấy duy nhất Phiên bản mới nhất)
+  // Fetch & Filter
   const fetchPriceLists = useCallback(async () => {
     setLoading(true);
 
@@ -132,7 +143,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
       const data = await res.json();
       let rawList = Array.isArray(data) ? data : (data.items || data.data || data.content || []);
 
-      // 1. LỌC CHÍNH XÁC THEO TAB (APPROVED / EFFECTIVE / REJECTED)
+      // 1. Lọc theo TAB
       if (statusFilter !== 'ALL') {
         rawList = rawList.filter(item => {
           const itemStatus = (item.status || item.approval_status || '').toUpperCase();
@@ -155,20 +166,20 @@ export default function DirectorPriceListApprovalPage({ user }) {
         );
       }
 
-      // Helper hỗ trợ parse version chuỗi "v1.2" -> 1.2
+      // Helper hỗ trợ parse version chuỗi "v2.3" -> [2, 3]
       const parseVersion = (v) => {
-        if (!v) return 0;
-        const num = parseFloat(String(v).replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? 0 : num;
+        if (!v) return [0, 0];
+        const parts = String(v).replace(/[^0-9.]/g, '').split('.');
+        return [parseInt(parts[0] || '0', 10), parseInt(parts[1] || '0', 10)];
       };
 
       // Helper lấy thời gian cập nhật/duyệt
       const getTime = (item) => {
-        const d = item.approved_at || item.approvedAt || item.updated_at || item.updatedAt || item.created_at;
+        const d = item.created_at || item.updated_at || item.approved_at || item.approvedAt || item.updatedAt;
         return d ? new Date(d).getTime() : 0;
       };
 
-      // 4. CHỈ GIỮ LẠI PHIÊN BẢN MỚI NHẤT CHO MỖI MÃ BẢNG GIÁ
+      // 4. Gom nhóm & giữ lại phiên bản mới nhất chuẩn xác [Major, Minor]
       const latestMap = new Map();
 
       rawList.forEach(item => {
@@ -179,13 +190,14 @@ export default function DirectorPriceListApprovalPage({ user }) {
           latestMap.set(code, item);
         } else {
           const existing = latestMap.get(code);
-          const currentVer = parseVersion(item.version || item.version_name);
-          const existingVer = parseVersion(existing.version || existing.version_name);
+          const [cMajor, cMinor] = parseVersion(item.version || item.version_name || item.version_number);
+          const [eMajor, eMinor] = parseVersion(existing.version || existing.version_name || existing.version_number);
 
-          // So sánh Version (VD: v1.2 > v1.1). Nếu bằng version thì so sánh thời gian
+          // So sánh phiên bản Major -> Minor -> Thời gian tạo
           if (
-            currentVer > existingVer || 
-            (currentVer === existingVer && getTime(item) > getTime(existing))
+            cMajor > eMajor || 
+            (cMajor === eMajor && cMinor > eMinor) ||
+            (cMajor === eMajor && cMinor === eMinor && getTime(item) > getTime(existing))
           ) {
             latestMap.set(code, item);
           }
