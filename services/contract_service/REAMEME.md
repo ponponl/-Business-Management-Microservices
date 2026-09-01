@@ -36,6 +36,13 @@ docker compose exec contract-service alembic upgrade head
 docker compose exec contract-service python seed_customer.py
 ```
 
+### Bước 2.3: Seed dữ liệu hợp đồng (Contract Data)
+
+```bash
+docker compose exec contract-service python seed_contract.py
+```
+
+
 ---
 
 ## 3. Kiểm tra trạng thái & API Docs
