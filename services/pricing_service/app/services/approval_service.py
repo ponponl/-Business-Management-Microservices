@@ -34,7 +34,11 @@ class ApprovalService:
 
         def parse_version_key(v: PriceListVersion):
             raw_ver = str(getattr(v, "version_number", "1.0") or "1.0").strip().lstrip("vV")
-            version_numbers = [int(num) for num in re.findall(r'\d+', raw_ver)]
+            try:
+                version_numbers = [int(num) for num in raw_ver.split(".") if num.isdigit()]
+            except Exception:
+                version_numbers = [0, 0]
+
             if not version_numbers:
                 version_numbers = [0, 0]
 
@@ -141,6 +145,16 @@ class ApprovalService:
     def _build_version_approval_response(db: Session, price_list: PriceList, version: PriceListVersion, message: str) -> ApprovalResponse:
         price_code = price_list.price_list_code or str(price_list.id)
 
+        # Lấy ưu tiên các trường tên trong PriceListVersion trước, bao gồm price_list_name
+        ver_name = (
+            getattr(version, "price_list_name", None) or
+            getattr(version, "version_price_name", None) or
+            getattr(version, "version_name", None) or
+            getattr(version, "price_name", None) or
+            getattr(version, "name", None) or
+            getattr(price_list, "price_list_name", None) or ""
+        )
+
         valid_from_val = getattr(version, "valid_from", None) or getattr(price_list, "valid_from", None)
         valid_to_val = getattr(version, "valid_to", None) or getattr(price_list, "valid_to", None)
 
@@ -178,7 +192,11 @@ class ApprovalService:
             price_list_id=str(price_list.id),
             price_list_code=price_code,
             price_code=price_code,
-            price_name=price_list.price_list_name,
+
+            price_name=ver_name, 
+            version_price_name=ver_name,
+            version_name=ver_name,
+
             target_type=target_type,
             specific_target=specific_target,
             version=version_str,
@@ -254,16 +272,13 @@ class ApprovalService:
             or_(PriceList.is_deleted == False, PriceList.is_deleted == None), or_(*conditions)
         ).first()
 
-
     @staticmethod
     def get_price_list_versions(db: Session, price_code: str) -> List[Dict[str, Any]]:
-        """API trả về tất cả lịch sử các version của bảng giá (Bao gồm các bản đã bị REJECTED)"""
         pl = ApprovalService._find_price_list(db, price_code)
         if not pl:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
 
         versions_list = []
-        # Sắp xếp theo ngày tạo mới nhất lên trước
         sorted_versions = sorted(
             pl.versions or [], 
             key=lambda v: getattr(v, "created_at", datetime.min) or datetime.min, 
@@ -294,7 +309,6 @@ class ApprovalService:
 
     @staticmethod
     def get_approval_detail(db: Session, price_code: str, version_str: Optional[str] = None) -> ApprovalResponse:
-        """Lấy chính xác thông tin bảng giá theo Version cụ thể (ví dụ v1.0 hoặc v1.1)"""
         pl = ApprovalService._find_price_list(db, price_code)
         if not pl:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
@@ -350,6 +364,11 @@ class ApprovalService:
                 created_by=user_uuid,
                 created_at=now_vn
             )
+            
+            # Gán lại tên nếu model có hỗ trợ
+            if hasattr(active_version, "price_list_name"):
+                active_version.price_list_name = getattr(latest_v, "price_list_name", pl.price_list_name)
+
             db.add(active_version)
             db.flush()
 
@@ -420,7 +439,6 @@ class ApprovalService:
         msg = "Quản lý phê duyệt thành công." if act == "APPROVE" else f"Từ chối thành công. Lý do: {reason_text}"
         return ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_v, message=msg)
 
-
     @staticmethod
     def director_approve(db: Session, price_code: str, payload: ApprovalActionRequest, director_id: Optional[str] = None) -> ApprovalResponse:
         act = payload.action.upper()
@@ -464,4 +482,3 @@ class ApprovalService:
         db.refresh(pl)
         msg = "Giám đốc phê duyệt thành công." if act == "APPROVE" else f"Từ chối thành công. Lý do: {reason_text}"
         return ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_v, message=msg)
-   

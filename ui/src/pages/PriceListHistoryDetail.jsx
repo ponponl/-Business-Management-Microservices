@@ -230,7 +230,7 @@ export const PriceListHistoryDetail = ({
     const statusStyles = {
       DRAFT: "bg-[#FFFBEB] text-[#D97706] border-[#FDE68A]",
       EFFECTIVE: "bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]",
-      SUPERSEDED: "bg-[#F8FAFC] text-[#475569] border-[#E2E8F0]",
+      SUPERSEDED: "bg-[#F3E8FF] text-[#7E22CE] border-[#E9D5FF]",
       EXPIRED: "bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]",
       SUBMITTED: "bg-[#F0F9FF] text-[#0284C7] border-[#BAE6FD]",
       APPROVED: "bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]",

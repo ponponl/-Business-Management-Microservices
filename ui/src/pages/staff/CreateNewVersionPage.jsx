@@ -122,14 +122,27 @@ export default function CreateNewVersionPage() {
     return rawNumber ? Number(rawNumber) : 0;
   };
 
-  const calculateNextVersion = (verStr) => {
-    if (!verStr) return 'v1.1';
-    const cleanVer = String(verStr).replace(/^v/i, '');
-    const parts = cleanVer.split('.');
-    if (parts.length === 2) {
-      return `v${parts[0]}.${parseInt(parts[1], 10) + 1}`;
-    }
-    return `v${cleanVer}.1`;
+  // Hàm tính phiên bản kế tiếp dự trên danh sách tất cả phiên bản hiện có
+  const calculateNextVersionFromList = (list) => {
+    if (!list || list.length === 0) return 'v1.1';
+    
+    let maxMajor = 1;
+    let maxMinor = 0;
+
+    list.forEach((v) => {
+      const verStr = String(v.version_number || v.version || '1.0').replace(/^v/i, '');
+      const parts = verStr.split('.');
+      if (parts.length >= 2) {
+        const major = parseInt(parts[0], 10) || 1;
+        const minor = parseInt(parts[1], 10) || 0;
+        if (major > maxMajor || (major === maxMajor && minor > maxMinor)) {
+          maxMajor = major;
+          maxMinor = minor;
+        }
+      }
+    });
+
+    return `v${maxMajor}.${maxMinor + 1}`;
   };
 
   // Helper lấy tên chuẩn cho Version
@@ -185,16 +198,14 @@ export default function CreateNewVersionPage() {
       const responseData = await res.json();
       const detailsData = responseData.data || responseData;
 
-      // Đọc tên chính xác của Version hiện tại (Đảm bảo lấy tên riêng không đổi)
+      // Đọc tên chính xác của Version hiện tại
       const currentVerName = extractVersionName(detailsData) || extractVersionName(verObj);
       if (currentVerName) {
         setPriceName(currentVerName);
       }
 
-      const currentVerNum = verObj?.version_number || verObj?.version || detailsData.version_number || detailsData.version || '1.0';
       setEffectiveFrom(formatDateForInput(verObj?.valid_from || verObj?.validFrom || detailsData.valid_from || detailsData.effectiveFrom));
       setEffectiveTo(formatDateForInput(verObj?.valid_to || verObj?.validTo || detailsData.valid_to || detailsData.effectiveTo));
-      setNextVersionStr(calculateNextVersion(currentVerNum));
 
       // Kiểm tra cache nháp
       if (draftServicesMap[versionId]) {
@@ -243,7 +254,11 @@ export default function CreateNewVersionPage() {
         if (verRes.ok) {
           const rawVer = await verRes.json();
           versionsData = Array.isArray(rawVer) ? rawVer : (rawVer.data || []);
-          if (isMounted) setVersionsList(versionsData);
+          if (isMounted) {
+            setVersionsList(versionsData);
+            // Tính số phiên bản dự kiến chuẩn xác dựa trên toàn bộ danh sách phiên bản hiện có
+            setNextVersionStr(calculateNextVersionFromList(versionsData));
+          }
         }
 
         // 3. Tải thông tin chung Bảng giá
@@ -390,8 +405,10 @@ export default function CreateNewVersionPage() {
     setServiceToDelete(null);
   };
 
-  // Submit dữ liệu trùng khớp tuyệt đối với Backend
+  // Submit dữ liệu
   const handleSubmitApproval = async () => {
+    if (selectedVersionStatus !== 'EFFECTIVE') return;
+
     const validServices = services
       .filter((s) => s.serviceItemId && String(s.serviceItemId).trim() !== '')
       .map((s) => {
@@ -399,9 +416,9 @@ export default function CreateNewVersionPage() {
         return {
           service_item_id: s.serviceItemId,
           serviceItemId: s.serviceItemId,
-          price: itemPrice,            // Thêm trường 'price' theo Schema FastAPI
-          unit_price: itemPrice,       // Thêm trường 'unit_price'
-          unitPrice: itemPrice,        // Thêm trường 'unitPrice'
+          price: itemPrice,
+          unit_price: itemPrice,
+          unitPrice: itemPrice,
           service_code: s.serviceCode || '',
           service_name: s.serviceName || '',
           unit: s.unit || 'Lượt',
@@ -425,7 +442,6 @@ export default function CreateNewVersionPage() {
         'Content-Type': 'application/json',
       };
 
-      // Payload bao gồm cả snake_case và camelCase cho targetType, effectiveFrom/To, price...
       const payload = {
         price_list_name: priceName,
         price_name: priceName,
@@ -441,20 +457,11 @@ export default function CreateNewVersionPage() {
         services: validServices,
       };
 
-      let res;
-      if (selectedVersionStatus === 'DRAFT' || selectedVersionStatus === 'REJECTED') {
-        res = await fetch(`${API_PRICE_LISTS}/${encodeURIComponent(priceCode)}`, {
-          method: 'PUT',
-          headers,
-          body: JSON.stringify(payload),
-        });
-      } else {
-        res = await fetch(`${API_PRICE_LISTS}/${encodeURIComponent(priceCode)}/create-version`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-        });
-      }
+      let res = await fetch(`${API_PRICE_LISTS}/${encodeURIComponent(priceCode)}/create-version`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -519,6 +526,8 @@ export default function CreateNewVersionPage() {
       </div>
     );
   }
+
+  const isEffective = selectedVersionStatus === 'EFFECTIVE';
 
   return (
     <div className="space-y-6 text-slate-700 font-sans max-w-[1400px] mx-auto pb-12">
@@ -804,9 +813,14 @@ export default function CreateNewVersionPage() {
 
             <button
               type="button"
-              disabled={submitting}
+              disabled={submitting || !isEffective}
+              title={!isEffective ? 'Chỉ có thể tạo phiên bản mới từ phiên bản EFFECTIVE' : ''}
               onClick={handleSubmitApproval}
-              className="px-6 py-2.5 rounded-xl bg-[#2b727d] hover:bg-[#235d67] text-white text-xs font-semibold flex items-center space-x-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+              className={`px-6 py-2.5 rounded-xl bg-[#2b727d] text-white text-xs font-semibold flex items-center space-x-2 shadow-xs transition ${
+                !isEffective
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'hover:bg-[#235d67] cursor-pointer'
+              }`}
             >
               {submitting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />

@@ -37,6 +37,23 @@ export default function PriceListApprovalPage({ user }) {
   const [rejectModal, setRejectModal] = useState({ isOpen: false, item: null, reason: '' });
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: '', title: '', message: '' });
 
+  // Helper lấy tên chính xác của Version / Bảng giá
+  const extractVersionName = (obj) => {
+    if (!obj) return '';
+    return (
+      obj.version_price_name ||
+      obj.versionPriceName ||
+      obj.version_name ||
+      obj.versionName ||
+      obj.price_list_name ||
+      obj.priceListName ||
+      obj.price_name ||
+      obj.priceName ||
+      obj.name ||
+      ''
+    );
+  };
+
   // Debounce tìm kiếm
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -125,7 +142,7 @@ export default function PriceListApprovalPage({ user }) {
         const term = debouncedSearch.trim().toLowerCase();
         rawList = rawList.filter(item => {
           const code = getItemCode(item).toLowerCase();
-          const name = (item.price_name || item.priceName || item.name || '').toLowerCase();
+          const name = extractVersionName(item).toLowerCase();
           const target = (item.specific_target || item.specificTarget || item.target || '').toLowerCase();
           return code.includes(term) || name.includes(term) || target.includes(term);
         });
@@ -411,7 +428,7 @@ export default function PriceListApprovalPage({ user }) {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/50 text-[11px] font-semibold text-slate-500">
                 <th className="py-3 px-4">Mã bảng giá</th>
-                <th className="py-3 px-4">Tên bảng giá / Đối tượng</th>
+                <th className="py-3 px-4">Tên phiên bản / Bảng giá</th>
                 <th className="py-3 px-4">Loại áp dụng</th>
                 <th className="py-3 px-4">Phiên bản</th>
                 <th className="py-3 px-4">Thời gian hiệu lực</th>
@@ -433,7 +450,8 @@ export default function PriceListApprovalPage({ user }) {
               ) : priceLists.length > 0 ? (
                 priceLists.map((item, index) => {
                   const code = getItemCode(item) || `PL-${index + 1}`;
-                  const name = item.price_name || item.priceName || item.name || 'Bảng giá dịch vụ';
+                  // Trích xuất đúng tên của phiên bản hiện tại
+                  const name = extractVersionName(item) || 'Bảng giá dịch vụ';
                   const subTarget = item.specific_target || item.specificTarget || item.target || 'N/A';
                   const targetType = item.target_type || item.targetType || 'GENERAL';
                   const effectiveFrom = item.effective_from || item.effectiveFrom || '-';
@@ -441,13 +459,13 @@ export default function PriceListApprovalPage({ user }) {
                   const updatedBy = item.updated_by || item.updatedBy || item.created_by || item.createdBy || 'Staff';
                   const updatedAt = item.updated_at || item.updatedAt || item.created_at || item.createdAt || '-';
                   const status = (item.status || 'DRAFT').toUpperCase();
-                  const versionStr = formatVersion(item.version);
+                  const versionStr = formatVersion(item.version || item.version_number);
 
                   return (
                     <tr key={code + index} className="hover:bg-slate-50/70 transition">
                       <td className="py-3 px-4 font-mono font-bold text-slate-900">{code}</td>
                       <td className="py-3 px-4 max-w-[220px]">
-                        <div className="font-bold text-slate-800 leading-snug truncate">{name}</div>
+                        <div className="font-bold text-slate-800 leading-snug truncate" title={name}>{name}</div>
                         <div className="text-[10px] font-mono text-slate-400 truncate leading-none mt-0.5">{subTarget}</div>
                       </td>
                       <td className="py-3 px-4">
@@ -509,6 +527,7 @@ export default function PriceListApprovalPage({ user }) {
         const isSubmitted = (selectedItem.status || '').toUpperCase() === 'SUBMITTED';
         const isRejected = (selectedItem.status || '').toUpperCase() === 'REJECTED';
         const rejectReason = selectedItem.rejected_reason || selectedItem.reject_reason || selectedItem.comment || '';
+        const modalVersionName = extractVersionName(selectedItem) || 'Chi tiết bảng giá';
 
         return (
           <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
@@ -516,7 +535,7 @@ export default function PriceListApprovalPage({ user }) {
               <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                 <div className="flex items-center space-x-2">
                   <span className="text-[11px] font-mono text-sky-600 font-bold bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">{getItemCode(selectedItem)}</span>
-                  <h3 className="text-sm font-bold text-slate-900 truncate max-w-[300px]">{selectedItem.price_name || selectedItem.priceName || selectedItem.name || 'Chi tiết bảng giá'}</h3>
+                  <h3 className="text-sm font-bold text-slate-900 truncate max-w-[300px]" title={modalVersionName}>{modalVersionName}</h3>
                   {renderStatusBadge(selectedItem.status)}
                 </div>
                 <button onClick={() => setSelectedItem(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded transition cursor-pointer">
@@ -552,7 +571,7 @@ export default function PriceListApprovalPage({ user }) {
                   <div>
                     <span className="block text-slate-400 text-[10px] mb-0.5">Phiên bản</span>
                     <span className="font-semibold text-slate-800 font-mono bg-white px-2 py-1 rounded border border-slate-200 block text-xs">
-                      {formatVersion(selectedItem.version)}
+                      {formatVersion(selectedItem.version || selectedItem.version_number)}
                     </span>
                   </div>
                   <div className="col-span-2 sm:col-span-3 flex items-center space-x-3 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
