@@ -7,6 +7,8 @@ import {
 
 const PRICE_LIST_API = 'http://localhost:8082/api/v1/price-lists';
 const APPROVAL_API = 'http://localhost:8082/api/v1/approvals';
+const CUSTOMERS_API = 'http://localhost:8083/api/v1/customers';
+const CONTRACTS_API = 'http://localhost:8083/api/v1/contracts';
 
 export default function DirectorPriceListApprovalPage({ user }) {
   // Stats Card State
@@ -17,6 +19,10 @@ export default function DirectorPriceListApprovalPage({ user }) {
   const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+
+  // Mappings State (tra cứu UUID -> Code/Number)
+  const [customerMap, setCustomerMap] = useState(new Map());
+  const [contractMap, setContractMap] = useState(new Map());
 
   // Filters State
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -48,6 +54,42 @@ export default function DirectorPriceListApprovalPage({ user }) {
     };
   }, [user]);
 
+  const fetchReferenceData = useCallback(async () => {
+    try {
+      const headers = getAuthHeaders();
+      const [custRes, contRes] = await Promise.allSettled([
+        fetch(CUSTOMERS_API, { headers }),
+        fetch(CONTRACTS_API, { headers })
+      ]);
+
+      const cMap = new Map();
+      if (custRes.status === 'fulfilled' && custRes.value.ok) {
+        const custData = await custRes.value.json();
+        const rawCust = Array.isArray(custData) ? custData : (custData.items || custData.data || custData.content || []);
+        rawCust.forEach(c => {
+          const id = c.id || c.customer_id || c.customerId;
+          const code = c.customer_code || c.customerCode || c.code || c.name || c.customer_name;
+          if (id) cMap.set(String(id), code);
+        });
+        setCustomerMap(cMap);
+      }
+
+      const ctMap = new Map();
+      if (contRes.status === 'fulfilled' && contRes.value.ok) {
+        const contData = await contRes.value.json();
+        const rawCont = Array.isArray(contData) ? contData : (contData.items || contData.data || contData.content || []);
+        rawCont.forEach(ct => {
+          const id = ct.id || ct.contract_id || ct.contractId;
+          const num = ct.contract_number || ct.contractNumber || ct.code || ct.number;
+          if (id) ctMap.set(String(id), num);
+        });
+        setContractMap(ctMap);
+      }
+    } catch (err) {
+      console.error('Lỗi lấy dữ liệu tra cứu:', err);
+    }
+  }, [getAuthHeaders]);
+
   const getItemCode = (item) => {
     if (!item) return '';
     return (
@@ -76,13 +118,36 @@ export default function DirectorPriceListApprovalPage({ user }) {
     );
   };
 
-  const getSpecificTarget = (item) => {
-    return item?.specific_target || item?.specificTarget || item?.customer_name || item?.customerName || 'Áp dụng chung';
-  };
-
   const getTargetType = (item) => {
     return item?.target_type || item?.targetType || item?.type || 'GENERAL';
   };
+
+  const getSpecificTarget = useCallback((item) => {
+    const rawTarget = item?.specific_target || item?.specificTarget || item?.customer_name || item?.customerName || item?.customer_code || item?.contract_number || item?.scope_id || item?.scopeId;
+    const targetType = getTargetType(item).toUpperCase();
+
+    if (!rawTarget) return 'Áp dụng chung';
+
+    const strTarget = String(rawTarget).trim();
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(strTarget);
+
+    if (!isUUID) {
+      return strTarget;
+    }
+
+    if (targetType === 'CUSTOMER' && customerMap.has(strTarget)) {
+      return customerMap.get(strTarget);
+    }
+    if (targetType === 'CONTRACT' && contractMap.has(strTarget)) {
+      return contractMap.get(strTarget);
+    }
+
+    // Tra cứu dự phòng cả 2 Map
+    if (customerMap.has(strTarget)) return customerMap.get(strTarget);
+    if (contractMap.has(strTarget)) return contractMap.get(strTarget);
+
+    return strTarget;
+  }, [customerMap, contractMap]);
 
   const formatDate = (dateStr) => {
     if (!dateStr || dateStr === '-') return '-';
@@ -93,7 +158,6 @@ export default function DirectorPriceListApprovalPage({ user }) {
     }
   };
 
-  // Keyboard support (Escape key to close modals)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -106,7 +170,6 @@ export default function DirectorPriceListApprovalPage({ user }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [rejectModal.isOpen, selectedItem, modalConfig.isOpen]);
 
-  // Fetch Statistics
   const fetchStats = useCallback(async () => {
     try {
       const res = await fetch(`${APPROVAL_API}/director-approval/stats`, {
@@ -124,7 +187,6 @@ export default function DirectorPriceListApprovalPage({ user }) {
     }
   }, [getAuthHeaders]);
 
-  // Fetch & Filter
   const fetchPriceLists = useCallback(async () => {
     setLoading(true);
 
@@ -143,7 +205,6 @@ export default function DirectorPriceListApprovalPage({ user }) {
       const data = await res.json();
       let rawList = Array.isArray(data) ? data : (data.items || data.data || data.content || []);
 
-      // 1. Lọc theo TAB
       if (statusFilter !== 'ALL') {
         rawList = rawList.filter(item => {
           const itemStatus = (item.status || item.approval_status || '').toUpperCase();
@@ -151,12 +212,10 @@ export default function DirectorPriceListApprovalPage({ user }) {
         });
       }
 
-      // 2. Lọc theo Loại đối tượng
       if (typeFilter !== 'ALL') {
         rawList = rawList.filter(item => getTargetType(item).toUpperCase() === typeFilter.toUpperCase());
       }
 
-      // 3. Lọc theo Từ khóa tìm kiếm
       if (searchTerm.trim() !== '') {
         const term = searchTerm.trim().toLowerCase();
         rawList = rawList.filter(item => 
@@ -166,20 +225,17 @@ export default function DirectorPriceListApprovalPage({ user }) {
         );
       }
 
-      // Helper hỗ trợ parse version chuỗi "v2.3" -> [2, 3]
       const parseVersion = (v) => {
         if (!v) return [0, 0];
         const parts = String(v).replace(/[^0-9.]/g, '').split('.');
         return [parseInt(parts[0] || '0', 10), parseInt(parts[1] || '0', 10)];
       };
 
-      // Helper lấy thời gian cập nhật/duyệt
       const getTime = (item) => {
         const d = item.created_at || item.updated_at || item.approved_at || item.approvedAt || item.updatedAt;
         return d ? new Date(d).getTime() : 0;
       };
 
-      // 4. Gom nhóm & giữ lại phiên bản mới nhất chuẩn xác [Major, Minor]
       const latestMap = new Map();
 
       rawList.forEach(item => {
@@ -193,7 +249,6 @@ export default function DirectorPriceListApprovalPage({ user }) {
           const [cMajor, cMinor] = parseVersion(item.version || item.version_name || item.version_number);
           const [eMajor, eMinor] = parseVersion(existing.version || existing.version_name || existing.version_number);
 
-          // So sánh phiên bản Major -> Minor -> Thời gian tạo
           if (
             cMajor > eMajor || 
             (cMajor === eMajor && cMinor > eMinor) ||
@@ -217,11 +272,12 @@ export default function DirectorPriceListApprovalPage({ user }) {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, statusFilter, typeFilter, searchTerm, getAuthHeaders]);
+  }, [page, pageSize, statusFilter, typeFilter, searchTerm, getAuthHeaders, getSpecificTarget]);
 
   useEffect(() => {
+    fetchReferenceData();
     fetchStats();
-  }, [fetchStats]);
+  }, [fetchReferenceData, fetchStats]);
 
   useEffect(() => {
     fetchPriceLists();
@@ -376,7 +432,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
         </div>
         <div className="flex items-center space-x-2">
           <button 
-            onClick={() => { fetchPriceLists(); fetchStats(); }}
+            onClick={() => { fetchPriceLists(); fetchStats(); fetchReferenceData(); }}
             className="p-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-xs cursor-pointer"
             title="Làm mới dữ liệu"
           >
@@ -514,7 +570,7 @@ export default function DirectorPriceListApprovalPage({ user }) {
                       <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{code}</td>
                       <td className="py-2.5 px-3 max-w-[220px]">
                         <div className="font-bold text-slate-800 leading-snug truncate">{name}</div>
-                        <div className="text-[10px] font-mono text-slate-400 truncate leading-none mt-0.5">
+                        <div className="text-[10px] font-mono text-slate-500 font-medium truncate leading-none mt-0.5">
                           {subTarget}
                         </div>
                       </td>
