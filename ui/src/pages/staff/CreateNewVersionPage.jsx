@@ -17,6 +17,7 @@ import {
 const API_BASE_URL = 'http://localhost:8082/api/v1'; 
 const API_PRICE_LISTS = `${API_BASE_URL}/price-lists`;
 const API_PRICE_HISTORY = `${API_BASE_URL}/price-history`;
+const CONTRACT_SERVICE_URL = 'http://localhost:8083';
 
 export default function CreateNewVersionPage() {
   const { id } = useParams();
@@ -38,6 +39,10 @@ export default function CreateNewVersionPage() {
   const [targetType, setTargetType] = useState('CUSTOMER');
   const [specificTarget, setSpecificTarget] = useState('');
   
+  // Maps lưu thông tin Khách hàng & Hợp đồng từ API port 8083
+  const [customersMap, setCustomersMap] = useState({});
+  const [contractsMap, setContractsMap] = useState({});
+
   // Thời gian của phiên bản đang chọn
   const [effectiveFrom, setEffectiveFrom] = useState('');
   const [effectiveTo, setEffectiveTo] = useState('');
@@ -52,6 +57,66 @@ export default function CreateNewVersionPage() {
 
   const [serviceToDelete, setServiceToDelete] = useState(null);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+
+  // Gọi API tải danh sách Khách hàng & Hợp đồng
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      try {
+        const res = await fetch(`${CONTRACT_SERVICE_URL}/api/v1/customers`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) return;
+        const resData = await res.json();
+        let list = [];
+        if (Array.isArray(resData)) list = resData;
+        else if (Array.isArray(resData?.data)) list = resData.data;
+        else if (Array.isArray(resData?.content)) list = resData.content;
+        else if (Array.isArray(resData?.items)) list = resData.items;
+
+        const map = {};
+        list.forEach((item) => {
+          const cId = item.customer_id || item.customerId || item.id;
+          const cCode = item.customer_code || item.customerCode || "";
+          const cName = item.customer_name || item.customerName || item.full_name || item.name || "";
+          if (cId) map[String(cId)] = { code: cCode, name: cName };
+          if (cCode) map[String(cCode)] = { code: cCode, name: cName };
+        });
+        setCustomersMap(map);
+      } catch (err) {
+        console.error("Error fetching customers:", err);
+      }
+    };
+
+    const fetchContracts = async () => {
+      try {
+        const res = await fetch(`${CONTRACT_SERVICE_URL}/api/v1/contracts`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) return;
+        const resData = await res.json();
+        let list = [];
+        if (Array.isArray(resData)) list = resData;
+        else if (Array.isArray(resData?.data)) list = resData.data;
+        else if (Array.isArray(resData?.content)) list = resData.content;
+        else if (Array.isArray(resData?.items)) list = resData.items;
+
+        const map = {};
+        list.forEach((item) => {
+          const ctId = item.contract_id || item.id;
+          const ctCode = item.contract_number || item.code || "";
+          const ctName = item.contract_name || item.title || item.customer_name || "";
+          if (ctId) map[String(ctId)] = { code: ctCode, name: ctName };
+          if (ctCode) map[String(ctCode)] = { code: ctCode, name: ctName };
+        });
+        setContractsMap(map);
+      } catch (err) {
+        console.error("Error fetching contracts:", err);
+      }
+    };
+
+    fetchCustomers();
+    fetchContracts();
+  }, [token]);
 
   // Parse thông báo lỗi từ FastAPI/Pydantic
   const parseFastAPIError = (data) => {
@@ -159,6 +224,31 @@ export default function CreateNewVersionPage() {
       obj.name ||
       ''
     );
+  };
+
+  // Helper hiển thị tên Khách hàng / Hợp đồng đã map (Đã xóa bỏ ngoặc mở/đóng)
+  const getMappedScopeTargetDisplay = (type, targetVal) => {
+    if (!targetVal) return '';
+    const tType = String(type || '').toUpperCase();
+    const key = String(targetVal);
+
+    if (tType === 'GENERAL') {
+      return 'Áp dụng cho tất cả (Chung)';
+    }
+
+    if (tType === 'CUSTOMER') {
+      const found = customersMap[key];
+      if (found) {
+        return found.name ? `${found.name} - ${found.code || key}` : (found.code || key);
+      }
+    } else if (tType === 'CONTRACT') {
+      const found = contractsMap[key];
+      if (found) {
+        return found.code ? `${found.code} - ${found.name}` : found.name;
+      }
+    }
+
+    return targetVal;
   };
 
   // Mapping danh sách dịch vụ
@@ -270,7 +360,15 @@ export default function CreateNewVersionPage() {
           if (isMounted) {
             setPriceCode(priceListInfo.price_list_code || priceListInfo.priceCode || id);
             setTargetType(priceListInfo.type || priceListInfo.target_type || priceListInfo.targetType || 'CUSTOMER');
-            setSpecificTarget(priceListInfo.contract_id || priceListInfo.contractId || priceListInfo.specific_target || '');
+            setSpecificTarget(
+              priceListInfo.contract_id ||
+              priceListInfo.contractId ||
+              priceListInfo.customer_id ||
+              priceListInfo.customerId ||
+              priceListInfo.specific_target ||
+              priceListInfo.scope_id ||
+              ''
+            );
           }
         }
 
@@ -660,7 +758,7 @@ export default function CreateNewVersionPage() {
                   <input
                     type="text"
                     readOnly
-                    value={specificTarget}
+                    value={getMappedScopeTargetDisplay(targetType, specificTarget)}
                     className="w-full pl-3 pr-8 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-500 font-mono text-xs focus:outline-none cursor-not-allowed"
                   />
                   <Lock className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3" />

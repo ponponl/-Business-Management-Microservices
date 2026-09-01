@@ -48,7 +48,13 @@ export default function CreatePriceListPage() {
     const fetchTargets = async () => {
       try {
         setIsLoadingTargets(true);
-        const endpoint = `${CONTRACT_SERVICE_URL}/api/v1/contracts`;
+        
+        let endpoint = '';
+        if (formData.targetType === 'CUSTOMER') {
+          endpoint = `${CONTRACT_SERVICE_URL}/api/v1/customers`;
+        } else if (formData.targetType === 'CONTRACT') {
+          endpoint = `${CONTRACT_SERVICE_URL}/api/v1/contracts`;
+        }
 
         const response = await fetch(endpoint, {
           method: 'GET',
@@ -487,7 +493,9 @@ export default function CreatePriceListPage() {
                   </option>
                   {targetOptions.map((opt) => (
                     <option key={opt.id} value={opt.id}>
-                      {opt.code ? `${opt.code} - ${opt.name}` : opt.name || opt.id}
+                      {formData.targetType === 'CUSTOMER'
+                        ? (opt.code || opt.name || opt.id)
+                        : (opt.code ? `${opt.code} - ${opt.name}` : opt.name || opt.id)}
                     </option>
                   ))}
                 </select>

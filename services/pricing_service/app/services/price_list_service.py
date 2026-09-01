@@ -357,6 +357,8 @@ class PriceListService:
                 # ƯU TIÊN LẤY TÊN CỦA VERSION MỚI NHẤT -> NẾU RỖNG MỚI LẤY TÊN BẢNG GIÁ CHA
                 version_display_name = getattr(ver, "price_list_name", None) or getattr(ver, "price_name", None) or pl.price_list_name or "N/A"
 
+                raw_scope_id = getattr(pl, "scope_id", None) or getattr(pl, "contract_id", None)
+
                 items.append({
                     "id": clean_code,
                     "priceCode": clean_code,
@@ -366,7 +368,10 @@ class PriceListService:
                     "priceName": str(version_display_name),
                     "price_name": str(version_display_name),
                     "price_list_name": str(version_display_name),
-                    "contractId": str(getattr(pl, "scope_id", None) or getattr(pl, "contract_id", None) or "N/A"),
+                    "contractId": str(raw_scope_id or "N/A"),
+                    "scope_id": str(raw_scope_id or ""),
+                    "scopeId": str(raw_scope_id or ""),
+                    "targetId": str(raw_scope_id or ""),
                     "type": str(pl.scope_type or "GENERAL").upper(),
                     "version": format_version(getattr(ver, "version_number", "1.0")),
                     "effectiveTime": eff_time,

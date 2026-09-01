@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Download, Plus, Eye, ChevronLeft, ChevronRight, 
   Search, Layers, Hourglass, CheckCircle2, XCircle, Loader2, ShieldCheck 
@@ -6,6 +6,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
+const CONTRACT_SERVICE_URL = 'http://localhost:8083';
 
 export default function PriceManagementPage() {
   const navigate = useNavigate();
@@ -16,6 +17,11 @@ export default function PriceManagementPage() {
   const [availableCustomers, setAvailableCustomers] = useState(['Tất cả']);
   const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(false);
+
+  const [customersMap, setCustomersMap] = useState({});
+  const [contractsMap, setContractsMap] = useState({});
+
+  const pendingFetches = useRef(new Set());
 
   const [activeStatusTab, setActiveStatusTab] = useState('Tất cả');
   const [selectedType, setSelectedType] = useState('Tất cả');
@@ -28,6 +34,142 @@ export default function PriceManagementPage() {
   const pageSize = 10;
 
   const availableTypes = ['Tất cả', 'CUSTOMER', 'CONTRACT', 'GENERAL', 'SERVICE_GROUP', 'SERVICE_TYPE'];
+
+  const extractList = (resData) => {
+    if (!resData) return [];
+    if (Array.isArray(resData)) return resData;
+    if (Array.isArray(resData.data)) return resData.data;
+    if (Array.isArray(resData.content)) return resData.content;
+    if (Array.isArray(resData.items)) return resData.items;
+    if (resData.data && Array.isArray(resData.data.items)) return resData.data.items;
+    if (resData.data && Array.isArray(resData.data.content)) return resData.data.content;
+    return [];
+  };
+
+  useEffect(() => {
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+    fetch(`${CONTRACT_SERVICE_URL}/api/v1/customers`, { headers })
+      .then(res => res.json())
+      .then(resData => {
+        const list = extractList(resData);
+        const map = {};
+        list.forEach((item) => {
+          const id = String(item.customer_id || item.id || item.customerId || '').trim().toLowerCase();
+          const code = String(item.customer_code || item.customerCode || item.code || '').trim();
+          const name = String(item.customer_name || item.customerName || item.full_name || item.name || '').trim();
+          
+          if (id) map[id] = { code, name };
+          if (code) map[code.toLowerCase()] = { code, name };
+        });
+        setCustomersMap(prev => ({ ...prev, ...map }));
+      })
+      .catch(err => console.error("Lỗi lấy danh sách khách hàng:", err));
+
+    fetch(`${CONTRACT_SERVICE_URL}/api/v1/contracts`, { headers })
+      .then(res => res.json())
+      .then(resData => {
+        const list = extractList(resData);
+        const map = {};
+        list.forEach((item) => {
+          const id = String(item.contract_id || item.id || '').trim().toLowerCase();
+          const code = String(item.contract_number || item.contract_code || item.code || '').trim();
+          const name = String(item.contract_name || item.title || '').trim();
+          
+          if (id) map[id] = { code, name };
+          if (code) map[code.toLowerCase()] = { code, name };
+        });
+        setContractsMap(prev => ({ ...prev, ...map }));
+      })
+      .catch(err => console.error("Lỗi lấy danh sách hợp đồng:", err));
+  }, [token]);
+
+  const fetchSingleItem = async (type, id) => {
+    if (!id || pendingFetches.current.has(`${type}_${id}`)) return;
+    pendingFetches.current.add(`${type}_${id}`);
+
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const endpoint = type === 'CUSTOMER' ? `customers/${id}` : `contracts/${id}`;
+
+    try {
+      const res = await fetch(`${CONTRACT_SERVICE_URL}/api/v1/${endpoint}`, { headers });
+      if (!res.ok) return;
+      const resData = await res.json();
+      const item = resData.data || resData.item || resData;
+
+      if (type === 'CUSTOMER') {
+        const name = item.customer_name || item.customerName || item.full_name || item.name || '';
+        const code = item.customer_code || item.customerCode || item.code || '';
+        setCustomersMap(prev => ({ ...prev, [id.toLowerCase()]: { name, code } }));
+      } else {
+        const name = item.contract_name || item.title || '';
+        const code = item.contract_number || item.contract_code || item.code || '';
+        setContractsMap(prev => ({ ...prev, [id.toLowerCase()]: { name, code } }));
+      }
+    } catch (err) {
+      console.error(`Lỗi fetch ${type} lẻ:`, err);
+    }
+  };
+
+  const renderScopeInfo = (item, activeVersionObj) => {
+    const scopeType = String(
+      item.scope_type || item.scopeType || item.target_type || item.type ||
+      activeVersionObj?.scope_type || activeVersionObj?.target_type || ""
+    ).toUpperCase();
+
+    const scopeId = String(
+      item.scope_id || item.scopeId || item.contractId || item.targetId ||
+      activeVersionObj?.scope_id || activeVersionObj?.scopeId || ""
+    ).trim();
+
+    if (!scopeId || scopeId === "null" || scopeId === "N/A" || scopeType === "GENERAL") {
+      return null;
+    }
+
+    const key = scopeId.toLowerCase();
+
+    if (scopeType === "CUSTOMER") {
+      const customer = customersMap[key];
+      if (customer) {
+        const displayName = customer.name || customer.code;
+        const showCode = customer.code && customer.code.toLowerCase() !== displayName.toLowerCase();
+        return (
+          <div className="mt-0.5">
+            <div className="text-[11px] font-normal text-slate-400">{displayName}</div>
+            {showCode && (
+              <div className="text-[10px] text-slate-400">{customer.code}</div>
+            )}
+          </div>
+        );
+      }
+      fetchSingleItem('CUSTOMER', scopeId);
+    }
+
+    if (scopeType === "CONTRACT") {
+      const contract = contractsMap[key];
+      if (contract) {
+        const displayName = contract.name || contract.code;
+        const showCode = contract.code && contract.code.toLowerCase() !== displayName.toLowerCase();
+        return (
+          <div className="mt-0.5">
+            <div className="text-[11px] font-normal text-slate-400">{displayName}</div>
+            {showCode && (
+              <div className="text-[10px] text-slate-400">{contract.code}</div>
+            )}
+          </div>
+        );
+      }
+      fetchSingleItem('CONTRACT', scopeId);
+    }
+
+    // Hiển thị tạm ID đã được rút gọn nếu đang chờ API phản hồi
+    const shortId = scopeId.length > 18 ? `${scopeId.substring(0, 8)}...${scopeId.substring(scopeId.length - 4)}` : scopeId;
+    return (
+      <div className="mt-0.5 text-[11px] font-normal text-slate-400 font-mono">
+        {shortId}
+      </div>
+    );
+  };
 
   const formatVersion = (item) => {
     if (!item) return 'v1.0';
@@ -333,14 +475,12 @@ export default function PriceManagementPage() {
                 priceLists.map((item, index) => {
                   const itemCode = item.price_list_code || item.price_code || item.id;
 
-                  // 1. Tìm đối tượng Version đang hiển thị/active
                   let activeVersionObj = item.latest_version || item.latestVersion || item.current_version || item.currentVersion || item.active_version || item.activeVersion;
                   
                   if (!activeVersionObj && Array.isArray(item.versions) && item.versions.length > 0) {
                     activeVersionObj = item.versions[0];
                   }
 
-                  // 2. Ưu tiên lấy tên của Version, nếu không có mới dùng tên PriceList
                   const itemName = 
                     (typeof activeVersionObj === 'object' ? (activeVersionObj?.price_list_name || activeVersionObj?.price_name || activeVersionObj?.name) : null) ||
                     item.price_list_name || 
@@ -348,9 +488,8 @@ export default function PriceManagementPage() {
                     item.name || 
                     'Bảng giá dịch vụ';
 
-                  const itemType = item.target_type || item.targetType || item.type || 'GENERAL';
+                  const itemType = item.target_type || item.scope_type || item.type || 'GENERAL';
 
-                  // 3. Ưu tiên lấy thời gian hiệu lực từ Version
                   const effectiveFrom = (typeof activeVersionObj === 'object' && activeVersionObj?.valid_from) || item.effective_from || item.valid_from;
                   const effectiveTo = (typeof activeVersionObj === 'object' && activeVersionObj?.valid_to) || item.effective_to || item.valid_to;
                   const effectiveDisplay = (effectiveFrom || effectiveTo) 
@@ -365,6 +504,7 @@ export default function PriceManagementPage() {
                       <td className="py-3 px-4 font-semibold text-slate-900">{itemCode}</td>
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-800">{itemName}</div>
+                        {renderScopeInfo(item, activeVersionObj)}
                       </td>
                       <td className="py-3 px-4">
                         <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">
