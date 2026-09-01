@@ -420,6 +420,7 @@ class ApprovalService:
         msg = "Quản lý phê duyệt thành công." if act == "APPROVE" else f"Từ chối thành công. Lý do: {reason_text}"
         return ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_v, message=msg)
 
+
     @staticmethod
     def director_approve(db: Session, price_code: str, payload: ApprovalActionRequest, director_id: Optional[str] = None) -> ApprovalResponse:
         act = payload.action.upper()
@@ -447,6 +448,8 @@ class ApprovalService:
                 if v.id != latest_v.id and v.status == "EFFECTIVE":
                     v.status = "SUPERSEDED"
                     v.approval_stage = "SUPERSEDED"
+                    if latest_v.valid_from:
+                        v.valid_to = latest_v.valid_from
 
             latest_v.status = "EFFECTIVE"
             latest_v.approval_stage = "COMPLETED"
@@ -461,3 +464,4 @@ class ApprovalService:
         db.refresh(pl)
         msg = "Giám đốc phê duyệt thành công." if act == "APPROVE" else f"Từ chối thành công. Lý do: {reason_text}"
         return ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_v, message=msg)
+   

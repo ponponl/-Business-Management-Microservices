@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Clock, Loader2, AlertCircle, Plus, Trash2, Send, Check, AlertTriangle, History } from 'lucide-react';
+import { ArrowLeft, Clock, Loader2, AlertCircle, Plus, Trash2, Send, Check, AlertTriangle, History, Archive, CalendarX } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:8082/api/v1/price-lists';
 const APPROVAL_BASE_URL = 'http://localhost:8082/api/v1/approvals';
@@ -205,7 +205,7 @@ export default function PriceListDetailPage() {
       .then((data) => {
         const latestVerObj = data.latest_version || data.current_version || data.latestVersion || {};
         
-        const rawFrom = data.effectiveFrom || data.effective_from || data.validFrom || data.valid_to || data.valid_from || latestVerObj.valid_from || '';
+        const rawFrom = data.effectiveFrom || data.effective_from || data.validFrom || data.valid_from || latestVerObj.valid_from || '';
         const rawTo = data.effectiveTo || data.effective_to || data.validTo || data.valid_to || latestVerObj.valid_to || '';
 
         const rawStatus = data.status || latestVerObj.status || data.version_status || 'DRAFT';
@@ -251,7 +251,7 @@ export default function PriceListDetailPage() {
     fetchDetail();
   }, [id, versionParam, token]);
 
-  // Nếu đang hiển thị modal thông báo thành công thì tạm khóa thao tác chỉnh sửa/gửi
+  // Chỉ cho phép chỉnh sửa khi ở trạng thái DRAFT hoặc REJECTED
   const isSubmittedSuccess = showSuccessModal || showUpdateSuccessModal;
   const canEdit = (priceDetail?.status === 'DRAFT' || priceDetail?.status === 'REJECTED') && !isSubmittedSuccess;
 
@@ -263,9 +263,14 @@ export default function PriceListDetailPage() {
   };
 
   const handleVersionSelectChange = (e) => {
-    const selectedVer = e.target.value;
-    if (selectedVer) {
-      setSearchParams({ version: selectedVer, version_id: selectedVer });
+    const selectedVerValue = e.target.value;
+    if (selectedVerValue) {
+      // Tìm object phiên bản tương ứng để lấy id hoặc version_number chính xác
+      const targetVer = versionsList.find(
+        (v) => String(v.version) === String(selectedVerValue) || String(v.version_number) === String(selectedVerValue) || String(v.id) === String(selectedVerValue)
+      );
+      const versionIdToSend = targetVer?.id || targetVer?.version_id || selectedVerValue;
+      setSearchParams({ version: selectedVerValue, version_id: versionIdToSend });
     } else {
       setSearchParams({});
     }
@@ -316,12 +321,10 @@ export default function PriceListDetailPage() {
     }));
   };
 
-  // Mở modal xác nhận xóa
   const handleRemoveServiceClick = (index) => {
     setServiceToDeleteIndex(index);
   };
 
-  // Thực thi xóa sau khi xác nhận trong Modal
   const confirmRemoveService = () => {
     if (serviceToDeleteIndex !== null) {
       setPriceDetail((prev) => ({
@@ -431,7 +434,6 @@ export default function PriceListDetailPage() {
         throw new Error(errorMessage);
       }
 
-      // Cập nhật trạng thái ngay lập tức về SUBMITTED để disable form và làm mờ các nút hành động
       setPriceDetail((prev) => ({
         ...prev,
         status: 'SUBMITTED',
@@ -463,6 +465,10 @@ export default function PriceListDetailPage() {
         return <span className="px-2.5 py-0.5 rounded bg-amber-100/70 text-amber-700 text-[10px] font-bold tracking-wide">DRAFT</span>;
       case 'REJECTED':
         return <span className="px-2.5 py-0.5 rounded bg-rose-100/70 text-rose-700 text-[10px] font-bold tracking-wide">REJECTED</span>;
+      case 'SUPERSEDED':
+        return <span className="px-2.5 py-0.5 rounded bg-purple-100/80 text-purple-700 text-[10px] font-bold tracking-wide">SUPERSEDED</span>;
+      case 'EXPIRED':
+        return <span className="px-2.5 py-0.5 rounded bg-slate-200 text-slate-700 text-[10px] font-bold tracking-wide">EXPIRED</span>;
       default:
         return <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-bold">{status}</span>;
     }
@@ -523,11 +529,14 @@ export default function PriceListDetailPage() {
                 onChange={handleVersionSelectChange}
                 className="px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 font-mono text-xs font-semibold focus:outline-none cursor-pointer hover:bg-slate-100 transition"
               >
-                {versionsList.map((v) => (
-                  <option key={v.id || v.version} value={v.version}>
-                    Phiên bản: {v.version} ({v.status})
-                  </option>
-                ))}
+                {versionsList.map((v) => {
+                  const verStr = v.version || v.version_number || `v${v.version_number}`;
+                  return (
+                    <option key={v.id || v.version} value={verStr}>
+                      Phiên bản: {verStr} ({v.status})
+                    </option>
+                  );
+                })}
               </select>
             </div>
           )}
@@ -544,6 +553,32 @@ export default function PriceListDetailPage() {
             <h4 className="font-bold text-rose-900 text-sm">Bảng giá này đã bị từ chối phê duyệt!</h4>
             <p className="text-[11px] text-rose-600">
               * Vui lòng chỉnh sửa lại các thông tin tương ứng bên dưới và nhấn <b className="text-rose-700">"Gửi phê duyệt"</b> lại.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* SUPERSEDED BANNER */}
+      {priceDetail.status === 'SUPERSEDED' && (
+        <div className="bg-purple-50/80 border border-purple-200 text-purple-900 rounded-xl p-4 flex items-start space-x-3 shadow-xs">
+          <Archive className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <h4 className="font-bold text-purple-900 text-sm">Phiên bản đã bị thay thế (SUPERSEDED)</h4>
+            <p className="text-[11px] text-purple-700">
+              * Đây là phiên bản lưu trữ cũ. Một phiên bản mới hơn đã được phát hành và đang áp dụng. Bạn chỉ có thể xem dữ liệu lịch sử này.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* EXPIRED BANNER */}
+      {priceDetail.status === 'EXPIRED' && (
+        <div className="bg-slate-100 border border-slate-300 text-slate-800 rounded-xl p-4 flex items-start space-x-3 shadow-xs">
+          <CalendarX className="w-5 h-5 text-slate-600 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <h4 className="font-bold text-slate-900 text-sm">Bảng giá đã hết hiệu lực (EXPIRED)</h4>
+            <p className="text-[11px] text-slate-600">
+              * Phiên bản này đã quá thời gian hiệu lực và không còn giá trị áp dụng trong hệ thống.
             </p>
           </div>
         </div>
@@ -819,7 +854,6 @@ export default function PriceListDetailPage() {
 
       {/* ACTIONS BAR */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-end space-x-3">
-        {/* Nút Xem phiên bản khác */}
         <button
           onClick={() => navigate(`/staff/price-lists/${id}/versions`)}
           className="px-4 py-2 rounded-lg border border-[#2b727d]/40 bg-[#f4fbf9] text-[#2b727d] hover:bg-[#e6f4f1] text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"

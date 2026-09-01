@@ -332,11 +332,27 @@ export default function PriceManagementPage() {
               ) : priceLists.length > 0 ? (
                 priceLists.map((item, index) => {
                   const itemCode = item.price_list_code || item.price_code || item.id;
-                  const itemName = item.price_name || item.name || 'Bảng giá dịch vụ';
+
+                  // 1. Tìm đối tượng Version đang hiển thị/active
+                  let activeVersionObj = item.latest_version || item.latestVersion || item.current_version || item.currentVersion || item.active_version || item.activeVersion;
+                  
+                  if (!activeVersionObj && Array.isArray(item.versions) && item.versions.length > 0) {
+                    activeVersionObj = item.versions[0];
+                  }
+
+                  // 2. Ưu tiên lấy tên của Version, nếu không có mới dùng tên PriceList
+                  const itemName = 
+                    (typeof activeVersionObj === 'object' ? (activeVersionObj?.price_list_name || activeVersionObj?.price_name || activeVersionObj?.name) : null) ||
+                    item.price_list_name || 
+                    item.price_name || 
+                    item.name || 
+                    'Bảng giá dịch vụ';
+
                   const itemType = item.target_type || item.targetType || item.type || 'GENERAL';
 
-                  const effectiveFrom = item.effective_from || item.valid_from;
-                  const effectiveTo = item.effective_to || item.valid_to;
+                  // 3. Ưu tiên lấy thời gian hiệu lực từ Version
+                  const effectiveFrom = (typeof activeVersionObj === 'object' && activeVersionObj?.valid_from) || item.effective_from || item.valid_from;
+                  const effectiveTo = (typeof activeVersionObj === 'object' && activeVersionObj?.valid_to) || item.effective_to || item.valid_to;
                   const effectiveDisplay = (effectiveFrom || effectiveTo) 
                     ? `${effectiveFrom || '...'} - ${effectiveTo || 'Vô thời hạn'}` 
                     : (item.effectiveTime || 'Vô thời hạn');

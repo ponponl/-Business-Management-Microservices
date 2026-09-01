@@ -7,4 +7,4 @@ redis==5.0.3
 aiokafka==0.10.0
 pyjwt==2.8.0
 passlib[bcrypt]==1.7.4
-
+python-dateutil>=2.8.2

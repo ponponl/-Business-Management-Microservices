@@ -10,8 +10,6 @@ import {
 
 const API_BASE_URL = "http://localhost:8082/api/v1/price-history";
 
-/**
- */
 const formatDate = (dateString, includeTime = false) => {
   if (!dateString || dateString === "---" || dateString === null) return "---";
 
@@ -60,7 +58,7 @@ export const PriceListHistoryDetail = ({
   const [selectedVersionId, setSelectedVersionId] = useState(null);
   const [selectedVersionsForCompare, setSelectedVersionsForCompare] = useState([]);
 
-  const [activeTab, setActiveTab] = useState("changes"); // 'details' | 'changes' | 'usage'
+  const [activeTab, setActiveTab] = useState("details"); // 'details' | 'changes' | 'usage'
 
   const [versionDetail, setVersionDetail] = useState(null);
   const [changeLogs, setChangeLogs] = useState([]);
@@ -68,9 +66,21 @@ export const PriceListHistoryDetail = ({
   const [usageLogs, setUsageLogs] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // Tìm phiên bản đang chọn từ danh sách Sidebar (bảng price_list_version)
   const selectedVersion = versions.find(
     (v) => (v.id || v.version_id) === selectedVersionId
   );
+
+  // ÉP LẤY CHÍNH XÁC `price_list_name` TỪ PAYLOAD API DETAILS TRẢ VỀ TRƯỚC
+  const displayPriceName =
+    versionDetail?.price_list_name ||
+    versionDetail?.price_name ||
+    versionDetail?.version_price_name ||
+    selectedVersion?.price_list_name ||
+    selectedVersion?.price_name ||
+    selectedVersion?.version_price_name ||
+    selectedVersion?.priceName ||
+    "";
 
   const isCreateVersionAllowed =
     (selectedVersion?.status || "").toUpperCase() === "EFFECTIVE";
@@ -110,37 +120,41 @@ export const PriceListHistoryDetail = ({
 
   useEffect(() => {
     if (!selectedVersionId) return;
-    setLoading(true);
 
-    if (activeTab === "details") {
-      fetch(`${API_BASE_URL}/versions/${selectedVersionId}/details`)
-        .then((res) => res.json())
-        .then((data) => setVersionDetail(data))
-        .catch((err) => console.error("Error fetching version details:", err))
-        .finally(() => setLoading(false));
-    } else if (activeTab === "changes") {
-      fetch(`${API_BASE_URL}/versions/${selectedVersionId}/change-logs`)
-        .then((res) => res.json())
-        .then((data) => {
-          const logs = Array.isArray(data) ? data : data?.data || [];
-          setChangeLogs(logs);
-          if (logs.length > 0 && activeTab !== "changes") {
-            setHasUnreadChanges(true);
-          }
-        })
-        .catch((err) => console.error("Error fetching change logs:", err))
-        .finally(() => setLoading(false));
-    } else if (activeTab === "usage") {
-      fetch(`${API_BASE_URL}/versions/${selectedVersionId}/usage-logs`)
-        .then((res) => res.json())
-        .then((data) => {
-          const logs = Array.isArray(data) ? data : data?.data || [];
-          setUsageLogs(logs);
-        })
-        .catch((err) => console.error("Error fetching usage logs:", err))
-        .finally(() => setLoading(false));
-    }
-  }, [selectedVersionId, activeTab]);
+    setLoading(true);
+    setVersionDetail(null); // Clear cache cũ khi chuyển phiên bản
+
+    const fetchDetails = fetch(`${API_BASE_URL}/versions/${selectedVersionId}/details`)
+      .then((res) => res.json())
+      .then((data) => {
+        const detailData = data?.data || data;
+        setVersionDetail(detailData);
+      })
+      .catch((err) => console.error("Error fetching version details:", err));
+
+    const fetchChanges = fetch(`${API_BASE_URL}/versions/${selectedVersionId}/change-logs`)
+      .then((res) => res.json())
+      .then((data) => {
+        const logs = Array.isArray(data) ? data : data?.data || [];
+        setChangeLogs(logs);
+        if (logs.length > 0 && activeTab !== "changes") {
+          setHasUnreadChanges(true);
+        }
+      })
+      .catch((err) => console.error("Error fetching change logs:", err));
+
+    const fetchUsage = fetch(`${API_BASE_URL}/versions/${selectedVersionId}/usage-logs`)
+      .then((res) => res.json())
+      .then((data) => {
+        const logs = Array.isArray(data) ? data : data?.data || [];
+        setUsageLogs(logs);
+      })
+      .catch((err) => console.error("Error fetching usage logs:", err));
+
+    Promise.all([fetchDetails, fetchChanges, fetchUsage]).finally(() => {
+      setLoading(false);
+    });
+  }, [selectedVersionId]);
 
   const handleCheckboxChange = (vId) => {
     if (selectedVersionsForCompare.includes(vId)) {
@@ -155,10 +169,58 @@ export const PriceListHistoryDetail = ({
   const handleCreateNewVersionClick = () => {
     if (!isCreateVersionAllowed) return;
 
+    const currentVersionName = displayPriceName;
+
+    const rawServices = versionDetail
+      ? Array.isArray(versionDetail)
+        ? versionDetail
+        : versionDetail.items || versionDetail.services || versionDetail.details || []
+      : [];
+
+    const formattedServices = rawServices.map((item) => ({
+      ...item,
+      price: item.price ?? item.unit_price ?? item.unitPrice ?? 0,
+      unit_price: item.unit_price ?? item.unitPrice ?? item.price ?? 0,
+    }));
+
+    const formattedPayload = {
+      priceName: currentVersionName,
+      targetType:
+        selectedVersion?.target_type ||
+        versionDetail?.target_type ||
+        selectedVersion?.scope_type ||
+        versionDetail?.scope_type ||
+        "CUSTOMER",
+      effectiveFrom:
+        selectedVersion?.valid_from ||
+        selectedVersion?.validFrom ||
+        versionDetail?.valid_from ||
+        new Date().toISOString(),
+      effectiveTo:
+        selectedVersion?.valid_to ||
+        selectedVersion?.validTo ||
+        versionDetail?.valid_to ||
+        null,
+      services: formattedServices,
+    };
+
     if (onCreateNewVersion) {
-      onCreateNewVersion(selectedVersion);
+      onCreateNewVersion({
+        ...selectedVersion,
+        ...formattedPayload,
+        currentPriceName: currentVersionName,
+        versionDetail: versionDetail,
+      });
     } else {
-      console.log("Tạo phiên bản mới từ version:", selectedVersionId);
+      const targetId = priceListIdentifier || selectedVersionId;
+      navigate(`/staff/price-lists/${targetId}/create-version`, {
+        state: {
+          parentVersion: selectedVersion,
+          versionDetail: versionDetail,
+          currentPriceName: currentVersionName,
+          payloadData: formattedPayload,
+        },
+      });
     }
   };
 
@@ -187,28 +249,26 @@ export const PriceListHistoryDetail = ({
     );
   };
 
-  /* Helper render nhãn đối tượng áp dụng (Khách hàng / Hợp đồng) */
   const renderScopeLabelAndValue = (detail) => {
     if (!detail) return { label: "Đối tượng áp dụng cụ thể *", value: "" };
 
-    const type = (detail.scope_type || "").toUpperCase();
+    const type = (detail.scope_type || detail.target_type || "").toUpperCase();
     let label = "Đối tượng áp dụng cụ thể *";
-    let value = detail.scope_name || detail.scope_id || detail.scope_type || "";
+    let value = detail.scope_name || detail.scope_id || detail.contract_id || detail.specific_target || "";
 
     if (type === "CUSTOMER" || detail.customer_code || detail.customer_name) {
       label = "Khách hàng áp dụng *";
-      value = detail.customer_name 
-        ? `${detail.customer_name} (${detail.customer_code || detail.scope_id})` 
+      value = detail.customer_name
+        ? `${detail.customer_name} (${detail.customer_code || detail.scope_id})`
         : detail.customer_code || value;
-    } else if (type === "CONTRACT" || detail.contract_code || detail.contract_name) {
+    } else if (type === "CONTRACT" || detail.contract_code || detail.contract_name || detail.contract_id) {
       label = "Số hợp đồng áp dụng *";
-      value = detail.contract_code || detail.contract_name || value;
+      value = detail.contract_code || detail.contract_name || detail.contract_id || value;
     }
 
     return { label, value };
   };
 
-  /* Helper render badge trạng thái ở Tab Lịch sử áp dụng */
   const renderUsageStatusBadge = (status) => {
     const s = (status || "").toUpperCase();
     if (s.includes("SETTLED") || s.includes("ĐÃ QUYẾT TOÁN")) {
@@ -239,9 +299,14 @@ export const PriceListHistoryDetail = ({
     );
   };
 
+  const serviceItems = versionDetail
+    ? Array.isArray(versionDetail)
+      ? versionDetail
+      : versionDetail.items || versionDetail.services || versionDetail.details || []
+    : [];
+
   return (
     <div className="p-8 bg-[#F8FAFC] min-h-screen font-sans text-slate-700">
-      {}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <button
@@ -291,9 +356,8 @@ export const PriceListHistoryDetail = ({
         </div>
       </div>
 
-      {/* --- Main Grid Layout --- */}
       <div className="grid grid-cols-12 gap-6">
-        {/* --- Cột Trái: Sidebar Lịch sử phiên bản --- */}
+        {/* --- Cột Trái: Lịch sử phiên bản --- */}
         <div className="col-span-12 lg:col-span-4 bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm self-start">
           <div className="mb-4">
             <h2 className="font-bold text-slate-900 text-sm">Lịch sử phiên bản</h2>
@@ -308,6 +372,13 @@ export const PriceListHistoryDetail = ({
                 const currentId = v.id || v.version_id;
                 const isSelected = selectedVersionId === currentId;
                 const isChecked = selectedVersionsForCompare.includes(currentId);
+                const rawVer = v.version_number || v.version || "1.0";
+                const verNum = String(rawVer).toLowerCase().startsWith("v") ? rawVer : `v${rawVer}`;
+                
+                // Nếu item đang chọn trùng id với versionDetail thì ưu tiên dùng tên từ versionDetail
+                const itemVersionName = isSelected && versionDetail?.price_list_name
+                  ? versionDetail.price_list_name
+                  : (v.price_list_name || v.price_name || "");
 
                 return (
                   <div
@@ -332,23 +403,29 @@ export const PriceListHistoryDetail = ({
                           className="w-4 h-4 rounded text-[#508D83] focus:ring-[#508D83] border-slate-300 cursor-pointer"
                         />
                         <span className="font-bold text-slate-900 text-base">
-                          {v.version_number}
+                          {verNum}
                         </span>
                       </div>
                       {renderStatusBadge(v.status)}
                     </div>
 
+                    {itemVersionName && (
+                      <div className="text-xs font-semibold text-slate-700 pl-7 mb-1 truncate">
+                        {itemVersionName}
+                      </div>
+                    )}
+
                     <div className="text-xs text-slate-400 pl-7 flex items-center gap-3">
                       <span>
-                        Hiệu lực từ:{" "}
+                        Từ:{" "}
                         <strong className="font-semibold text-slate-600">
-                          {formatDate(v.valid_from)}
+                          {formatDate(v.valid_from || v.validFrom)}
                         </strong>
                       </span>
                       <span>
                         Đến:{" "}
                         <strong className="font-semibold text-slate-600">
-                          {formatDate(v.valid_to)}
+                          {formatDate(v.valid_to || v.validTo)}
                         </strong>
                       </span>
                     </div>
@@ -363,9 +440,8 @@ export const PriceListHistoryDetail = ({
           </div>
         </div>
 
-        {/* --- Cột Phải: Nội dung chi tiết các Tabs --- */}
+        {/* --- Cột Phải: Nội dung chi tiết --- */}
         <div className="col-span-12 lg:col-span-8 bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
-          {/* Header Tabs Navigation */}
           <div className="flex items-center justify-between border-b border-slate-100 px-6 pt-4">
             <div className="flex gap-8">
               <button
@@ -406,7 +482,6 @@ export const PriceListHistoryDetail = ({
               </button>
             </div>
 
-            {/* Hiển thị số lượt áp dụng khi chọn tab usage */}
             {activeTab === "usage" && (
               <div className="pb-3 text-xs text-slate-400">
                 Hiển thị: <strong className="text-slate-700">{usageLogs.length} lượt áp dụng</strong>
@@ -414,7 +489,6 @@ export const PriceListHistoryDetail = ({
             )}
           </div>
 
-          {/* Body Content */}
           <div className="p-6">
             {/* === TAB 1: ĐƠN GIÁ CHI TIẾT === */}
             {activeTab === "details" &&
@@ -437,7 +511,14 @@ export const PriceListHistoryDetail = ({
                         <input
                           type="text"
                           readOnly
-                          value={versionDetail.price_list_code || ""}
+                          value={
+                            versionDetail.price_list_code ||
+                            versionDetail.code ||
+                            selectedVersion?.price_list_code ||
+                            selectedVersion?.code ||
+                            priceListIdentifier ||
+                            ""
+                          }
                           className="w-full px-3.5 py-2.5 bg-[#F8FAFC] border border-slate-200/80 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none"
                         />
                       </div>
@@ -448,12 +529,11 @@ export const PriceListHistoryDetail = ({
                         <input
                           type="text"
                           readOnly
-                          value={versionDetail.price_list_name || ""}
+                          value={displayPriceName}
                           className="w-full px-3.5 py-2.5 bg-[#F8FAFC] border border-slate-200/80 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none"
                         />
                       </div>
                       <div>
-                        {/* Render tự động linh hoạt Mã khách hàng hoặc Mã hợp đồng */}
                         {(() => {
                           const { label, value } = renderScopeLabelAndValue(versionDetail);
                           return (
@@ -479,7 +559,7 @@ export const PriceListHistoryDetail = ({
                           <input
                             type="text"
                             readOnly
-                            value={`${formatDate(versionDetail.valid_from)} đến ${formatDate(versionDetail.valid_to)}`}
+                            value={`${formatDate(versionDetail.valid_from || selectedVersion?.valid_from || selectedVersion?.validFrom)} đến ${formatDate(versionDetail.valid_to || selectedVersion?.valid_to || selectedVersion?.validTo)}`}
                             className="w-full px-3.5 py-2.5 bg-[#F8FAFC] border border-slate-200/80 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none"
                           />
                           <Calendar
@@ -509,29 +589,43 @@ export const PriceListHistoryDetail = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {Array.isArray(versionDetail.items) &&
-                            versionDetail.items.map((item) => (
-                              <tr
-                                key={item.service_item_id || item.service_code}
-                                className="hover:bg-slate-50/50"
-                              >
-                                <td className="py-3.5 px-4 font-semibold text-slate-800">
-                                  {item.service_name}
-                                </td>
-                                <td className="py-3.5 px-4 text-slate-400 text-xs">
-                                  {item.service_code}
-                                </td>
-                                <td className="py-3.5 px-4 text-slate-500">
-                                  {item.unit || "-"}
-                                </td>
-                                <td className="py-3.5 px-4 text-right font-bold text-slate-900">
-                                  {item.unit_price?.toLocaleString("vi-VN")}{" "}
-                                  <span className="text-[10px] font-normal text-slate-400 ml-0.5">
-                                    VND
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
+                          {serviceItems.length > 0 ? (
+                            serviceItems.map((item, idx) => {
+                              const sName = item.service_name || item.serviceName || item.name || "---";
+                              const sCode = item.service_code || item.serviceCode || item.code || "---";
+                              const sUnit = item.unit || "Lượt";
+                              const sPrice = item.unit_price !== undefined ? item.unit_price : (item.unitPrice !== undefined ? item.unitPrice : (item.price || 0));
+
+                              return (
+                                <tr
+                                  key={item.service_item_id || item.serviceItemId || item.id || idx}
+                                  className="hover:bg-slate-50/50"
+                                >
+                                  <td className="py-3.5 px-4 font-semibold text-slate-800">
+                                    {sName}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-slate-400 text-xs font-mono">
+                                    {sCode}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-slate-500">
+                                    {sUnit}
+                                  </td>
+                                  <td className="py-3.5 px-4 text-right font-bold text-slate-900">
+                                    {Number(sPrice).toLocaleString("vi-VN")}{" "}
+                                    <span className="text-[10px] font-normal text-slate-400 ml-0.5">
+                                      VND
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            <tr>
+                              <td colSpan={4} className="py-8 text-center text-xs text-slate-400">
+                                Chưa có dữ liệu hạng mục dịch vụ cho phiên bản này.
+                              </td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -543,7 +637,7 @@ export const PriceListHistoryDetail = ({
                 </div>
               ))}
 
-            {/* === TAB 2: NHẬT KÝ THAY ĐỔI (Timeline UI) === */}
+            {/* === TAB 2: NHẬT KÝ THAY ĐỔI === */}
             {activeTab === "changes" &&
               (loading ? (
                 <div className="py-12 text-center text-slate-400 text-sm">
@@ -588,7 +682,7 @@ export const PriceListHistoryDetail = ({
                           <div className="text-right text-[11px] text-slate-400">
                             Thực hiện:{" "}
                             <span className="font-semibold text-slate-700">
-                              {log.changed_by_name || log.performed_by || "Nguyễn Văn A"}
+                              {log.changed_by_name || log.performed_by || "Hệ thống"}
                             </span>
                           </div>
                         </div>
@@ -615,7 +709,7 @@ export const PriceListHistoryDetail = ({
                 </div>
               ))}
 
-            {/* === TAB 3: LỊCH SỬ ÁP DỤNG (Cập nhật giao diện Timeline dạng Card) === */}
+            {/* === TAB 3: LỊCH SỬ ÁP DỤNG === */}
             {activeTab === "usage" &&
               (loading ? (
                 <div className="py-12 text-center text-slate-400 text-sm">

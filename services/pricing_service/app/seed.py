@@ -22,7 +22,6 @@ def seed_rich_data():
     try:
         print("2. Đang khởi tạo danh mục Dịch vụ (SERVICE_ITEM)...")
         # Định dạng: (code, name, service_group, unit)
-        # Đã cập nhật Tên Nhóm Dịch Vụ tiếng Việt rõ ràng cho Frontend
         services_data = [
             ("SRV-20ft-IN", "Bốc xếp container 20ft (Hàng nhập)", "Bốc xếp & Nâng hạ", "Container"),
             ("SRV-WH-GEN", "Lưu kho bãi tổng hợp", "Lưu kho & Bãi container", "Ngày/Tấn"),
@@ -37,7 +36,7 @@ def seed_rich_data():
                 id=uuid.uuid4(),
                 service_code=code,
                 service_name=name,
-                service_group=s_group,  # Gán nhóm dịch vụ
+                service_group=s_group,
                 unit=unit,
                 status="ACTIVE",
             )
@@ -45,7 +44,7 @@ def seed_rich_data():
             service_objects[code] = item
         db.flush()
 
-        print("3. Đang khởi tạo Bảng giá và các Phiên bản...")
+        print("3. Đang khởi tạo Bảng giá và các Phiên bản (kèm price_list_name)...")
 
         # Định danh User theo đúng Role
         staff_user_id = uuid.UUID("55399947-e92e-4afb-a8af-572b84050f4b")
@@ -85,6 +84,7 @@ def seed_rich_data():
         ]
 
         for idx, (code, name, scope_type, ver_num, status, valid_from, valid_to) in enumerate(price_lists_raw):
+            # Tạo Bảng giá gốc (PriceList)
             pl = PriceList(
                 id=uuid.uuid4(),
                 price_list_code=code,
@@ -116,9 +116,11 @@ def seed_rich_data():
             else:
                 stage = "DRAFT"
 
+            # Tạo Phiên bản Bảng giá (PriceListVersion) - Thêm gán price_list_name
             ver = PriceListVersion(
                 id=uuid.uuid4(),
                 price_list_id=pl.id,
+                price_list_name=name,  # Bổ sung gán tên bảng giá cho từng phiên bản
                 version_number=ver_num,
                 valid_from=valid_from,
                 valid_to=valid_to,
@@ -175,7 +177,7 @@ def seed_rich_data():
                     db.add(log)
 
         db.commit()
-        print("Tạo thành công dữ liệu mẫu với đầy đủ Role và Schema mới!")
+        print("Tạo thành công dữ liệu mẫu với đầy đủ price_list_name cho từng Phiên bản!")
 
     except Exception as e:
         db.rollback()

@@ -77,16 +77,26 @@ class PriceHistoryService:
             .all()
         )
 
-        return [
-            VersionHistoryItem(
-                id=v.id,
-                version_number=v.version_number,
-                status=v.status,
-                valid_from=v.valid_from,
-                valid_to=v.valid_to,
+        result = []
+        for v in versions:
+            v_name = (
+                getattr(v, "price_list_name", None) or 
+                getattr(v, "price_name", None) or 
+                price_list.price_list_name
             )
-            for v in versions
-        ]
+            
+            result.append(
+                VersionHistoryItem(
+                    id=v.id,
+                    version_number=v.version_number,
+                    status=v.status,
+                    price_list_name=v_name,  
+                    valid_from=v.valid_from,
+                    valid_to=v.valid_to,
+                )
+            )
+
+        return result
 
     @staticmethod
     def get_version_details(db: Session, version_id: UUID) -> VersionDetailResponse:
@@ -98,6 +108,13 @@ class PriceHistoryService:
         price_list = db.query(PriceList).filter(PriceList.id == version.price_list_id).first()
         if not price_list:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bảng giá chứa phiên bản này không tồn tại.")
+
+        # LẤY TÊN TỪ BẢN GHI VERSION TRƯỚC (ƯU TIÊN TÊN RIÊNG CỦA VERSION NÀY)
+        current_version_name = (
+            getattr(version, "price_list_name", None) or 
+            getattr(version, "price_name", None) or 
+            price_list.price_list_name
+        )
 
         details = (
             db.query(PriceListDetail, ServiceItem)
@@ -120,7 +137,7 @@ class PriceHistoryService:
         return VersionDetailResponse(
             price_list_id=price_list.id,
             price_list_code=price_list.price_list_code,
-            price_list_name=price_list.price_list_name,
+            price_list_name=current_version_name,  
             scope_type=price_list.scope_type,
             scope_id=price_list.scope_id,
             version_id=version.id,

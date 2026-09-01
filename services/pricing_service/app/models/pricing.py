@@ -59,6 +59,7 @@ class PriceListVersion(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     price_list_id = Column(UUID(as_uuid=True), ForeignKey("price_list.id"), nullable=False)
+    price_list_name = Column(String(255), nullable=True)  # Thêm cột lưu tên riêng cho từng phiên bản
     version_number = Column(String(20), nullable=False)
     valid_from = Column(Date, nullable=False)
     valid_to = Column(Date, nullable=True)

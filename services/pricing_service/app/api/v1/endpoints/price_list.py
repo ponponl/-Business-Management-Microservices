@@ -1,4 +1,6 @@
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -61,12 +63,26 @@ def get_services_from_db(
         )
 
 
+@router.post("/auto-expire")
+def auto_expire_versions(
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Tự động kiểm tra và chuyển các phiên bản EFFECTIVE quá hạn sang trạng thái EXPIRED"""
+    count = PriceListService.auto_expire_versions(db)
+    return {
+        "message": f"Đã chuyển {count} phiên bản hết hiệu lực sang trạng thái EXPIRED.",
+        "expired_count": count
+    }
+
+
 @router.get("/{price_code}")
 def get_price_list_detail(
     price_code: str, 
     version_id: Optional[str] = None, 
     db: Session = Depends(get_db)
 ):
+    """Lấy thông tin chi tiết của một bảng giá theo mã hoặc UUID"""
     return PriceListService.get_detail_by_code(db, price_code, version_id=version_id)
 
 
@@ -92,6 +108,21 @@ def create_new_price_list(
             detail=f"Không thể tạo bảng giá: {str(e)}",
         )
 
+
+@router.post("/{price_code}/create-version", status_code=status.HTTP_201_CREATED)
+def create_new_version(
+    price_code: str,
+    payload: PriceListCreate,  
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_roles(["STAFF", "MANAGER", "ADMIN"])),
+):
+    """Tạo phiên bản mới từ bảng giá đang ở trạng thái EFFECTIVE"""
+    return PriceListService.create_new_version(
+        db=db,
+        price_code=price_code,
+        payload=payload, 
+        current_user=current_user,
+    )
 
 @router.put("/{price_code}")
 def update_price_list(
@@ -120,5 +151,6 @@ def delete_service_from_price_list(
     return PriceListService.delete_service_item(
         db=db, 
         price_code=price_code, 
-        service_identifier=service_code
+        service_identifier=service_code,
+        current_user=current_user,
     )
