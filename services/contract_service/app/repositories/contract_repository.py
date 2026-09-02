@@ -1,11 +1,10 @@
+from datetime import date
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.contract import Contract
 from app.models.contract_version import ContractVersion
-
-from datetime import date
 
 
 class ContractRepository:
@@ -66,6 +65,7 @@ class ContractRepository:
             .filter(
                 ContractVersion.contract_id
                 == contract_id,
+
                 ContractVersion.version_no
                 == version_no,
             )
@@ -91,6 +91,29 @@ class ContractRepository:
         )
 
     @staticmethod
+    def get_current_version_with_attachments(
+        db: Session,
+        contract: Contract,
+    ) -> ContractVersion | None:
+
+        return (
+            db.query(ContractVersion)
+            .options(
+                selectinload(
+                    ContractVersion.attachments
+                )
+            )
+            .filter(
+                ContractVersion.contract_id
+                == contract.contract_id,
+
+                ContractVersion.version_no
+                == contract.current_version,
+            )
+            .first()
+        )
+
+    @staticmethod
     def list_contracts(
         db: Session,
         customer_id: UUID | None = None,
@@ -99,8 +122,12 @@ class ContractRepository:
         limit: int = 20,
     ) -> list[Contract]:
 
-        from sqlalchemy.orm import selectinload
-        query = db.query(Contract).options(selectinload(Contract.versions))
+        query = (
+            db.query(Contract)
+            .options(
+                selectinload(Contract.versions)
+            )
+        )
 
         if customer_id is not None:
             query = query.filter(
@@ -146,15 +173,18 @@ class ContractRepository:
             )
 
         return query.count()
-    
-    
-    # New method to find contracts to activate based on effective date
+
+    # =========================================================
+    # LIFECYCLE
+    # =========================================================
+
     @staticmethod
     def find_contracts_to_activate(
-        db,
+        db: Session,
         today: date,
         limit: int = 100,
     ):
+
         return (
             db.query(Contract)
             .join(
@@ -177,15 +207,14 @@ class ContractRepository:
             .limit(limit)
             .all()
         )
-        
-        
-    # New method to find contracts to expire based on effective date    
+
     @staticmethod
     def find_contracts_to_expire(
-        db,
+        db: Session,
         today: date,
         limit: int = 100,
     ):
+
         return (
             db.query(Contract)
             .join(
@@ -208,5 +237,3 @@ class ContractRepository:
             .limit(limit)
             .all()
         )
-    
-    

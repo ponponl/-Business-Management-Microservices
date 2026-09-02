@@ -1,9 +1,26 @@
 import React from 'react';
 
+const BASE_URL = 'http://localhost:8080/api/v1';
+
+const formatFileSize = (bytes = 0) => {
+    if (!bytes) return '0 KB';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+    }
+
+    return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+};
+
 export default function ContractDetailModal({ detail, customers, onClose }) {
     if (!detail) return null;
 
     const customer = customers.find(c => c.customer_id === detail.customer_id) || {};
+    const attachments = Array.isArray(detail.attachments) ? detail.attachments : [];
 
     const formatDateValue = (value) => {
         if (!value) return 'N/A';
@@ -18,6 +35,38 @@ export default function ContractDetailModal({ detail, customers, onClose }) {
 
         const [year, month, day] = normalized.split('-');
         return `${day}/${month}/${year}`;
+    };
+
+    const handleDownloadAttachment = async (attachment) => {
+        if (!attachment?.attachment_id) {
+            return;
+        }
+
+        const token = localStorage.getItem('token') || JSON.parse(localStorage.getItem('user_info') || '{}').token || '';
+
+        try {
+            const response = await fetch(`${BASE_URL}/contracts/${detail.contract_id}/attachments/${attachment.attachment_id}`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+
+            if (!response.ok) {
+                throw new Error('Không thể tải file đính kèm');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = attachment.file_name || 'attachment';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            alert(error.message || 'Không thể tải file đính kèm');
+        }
     };
 
     return (
@@ -96,11 +145,41 @@ export default function ContractDetailModal({ detail, customers, onClose }) {
                         </div>
                     </div>
 
-                    <div>
+                    <div className="mb-6">
                         <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Điều khoản dịch vụ</h4>
                         <div className="p-4 bg-slate-50 rounded-lg text-sm text-slate-700 whitespace-pre-wrap border border-slate-100">
                             {detail.current_version_detail?.service_terms || 'Không có điều khoản dịch vụ.'}
                         </div>
+                    </div>
+
+                    <div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">File đính kèm</h4>
+                        {attachments.length > 0 ? (
+                            <div className="space-y-2">
+                                {attachments.map((attachment) => (
+                                    <div key={attachment.attachment_id || attachment.file_name} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                                        <div className="flex items-center min-w-0">
+                                            <i className="fa-solid fa-paperclip text-slate-400 mr-2"></i>
+                                            <span className="text-sm text-slate-700 truncate">{attachment.file_name}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 ml-3 shrink-0">
+                                            <span className="text-xs text-slate-500">{formatFileSize(attachment.file_size)}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDownloadAttachment(attachment)}
+                                                className="px-2 py-1 text-xs font-medium rounded border border-slate-300 text-slate-700 hover:bg-white transition-colors"
+                                            >
+                                                Tải xuống
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="p-4 bg-slate-50 rounded-lg text-sm text-slate-500 border border-slate-100">
+                                Không có file đính kèm cho phiên bản hiện tại.
+                            </div>
+                        )}
                     </div>
                 </div>
                 

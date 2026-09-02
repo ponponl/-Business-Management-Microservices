@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.attachment import AttachmentResponse
+
 
 class CreateContractRequest(BaseModel):
     customer_id: UUID
@@ -91,6 +93,8 @@ class ContractResponse(BaseModel):
     updated_at: datetime
 
     current_version_detail: ContractVersionResponse | None = None
+    
+    attachments: list[AttachmentResponse] = Field(default_factory=list)
 
     model_config = {
         "from_attributes": True
@@ -129,9 +133,6 @@ class RenewContractRequest(BaseModel):
     
 class CancelContractRequest(BaseModel):
     reason: str
-    
-class StartReviewRequest(BaseModel):
-    approver_id: UUID
     
 class ApprovalActionRequest(BaseModel):
     comment: str | None = Field(

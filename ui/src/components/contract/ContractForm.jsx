@@ -1,10 +1,26 @@
 import React, { useState, useEffect } from 'react';
 
+const formatFileSize = (bytes = 0) => {
+    if (!bytes) return '0 KB';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+        size /= 1024;
+        unitIndex += 1;
+    }
+
+    return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+};
+
 export default function ContractForm({ 
     initialData = null, 
     customers = [], 
     onClose, 
-    onSubmit 
+    onSubmit,
+    contractStatus = '',
+    existingAttachments = []
 }) {
     const [formData, setFormData] = useState({
         customer_id: '',
@@ -15,20 +31,59 @@ export default function ContractForm({
         service_terms: '',
         ...initialData
     });
+    const [selectedFiles, setSelectedFiles] = useState([]);
+    const [currentAttachments, setCurrentAttachments] = useState(existingAttachments || []);
 
     const isEditMode = !!initialData;
+    const isAttachmentEditable = !isEditMode || ['DRAFT', 'REVISION_REQUESTED'].includes(contractStatus);
+
+    useEffect(() => {
+        setFormData(prev => ({
+            ...prev,
+            ...initialData,
+        }));
+    }, [initialData]);
+
+    useEffect(() => {
+        setCurrentAttachments(existingAttachments || []);
+    }, [existingAttachments]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
+    const handleFileChange = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+
+        setSelectedFiles(prev => {
+            const next = [...prev];
+            files.forEach((file) => {
+                const exists = next.some(item => 
+                    item.name === file.name && item.size === file.size && item.lastModified === file.lastModified
+                );
+
+                if (!exists) {
+                    next.push(file);
+                }
+            });
+            return next;
+        });
+
+        e.target.value = '';
+    };
+
+    const handleRemoveSelectedFile = (fileIndex) => {
+        setSelectedFiles(prev => prev.filter((_, index) => index !== fileIndex));
+    };
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        // convert contract_value to number
         const payload = {
             ...formData,
-            contract_value: parseFloat(formData.contract_value) || 0
+            contract_value: parseFloat(formData.contract_value) || 0,
+            attachments: selectedFiles,
         };
         onSubmit(payload);
     };
@@ -129,6 +184,78 @@ export default function ContractForm({
                                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
                                 placeholder="Ghi chú điều khoản dịch vụ..."
                             ></textarea>
+                        </div>
+
+                        <div className="border border-dashed border-slate-300 rounded-lg p-4 bg-slate-50">
+                            <div className="flex items-center justify-between mb-3">
+                                <label className="block text-sm font-medium text-slate-700">File đính kèm</label>
+                                {isAttachmentEditable ? (
+                                    <label className="inline-flex items-center px-3 py-1.5 rounded-md bg-white border border-slate-300 text-sm text-slate-700 hover:bg-slate-100 cursor-pointer">
+                                        <i className="fa-solid fa-upload mr-2"></i>
+                                        Chọn file
+                                        <input
+                                            type="file"
+                                            multiple
+                                            className="hidden"
+                                            onChange={handleFileChange}
+                                        />
+                                    </label>
+                                ) : null}
+                            </div>
+
+                            {!isAttachmentEditable && (
+                                <p className="text-xs text-slate-500 mb-3">
+                                    Hợp đồng đang ở trạng thái {contractStatus}. Không cho phép thêm file đính kèm.
+                                </p>
+                            )}
+
+                            {currentAttachments.length > 0 && (
+                                <div className="mb-3 space-y-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">File hiện tại</p>
+                                    {currentAttachments.map((attachment) => (
+                                        <div key={attachment.attachment_id || attachment.file_name} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                                            <div className="flex items-center min-w-0">
+                                                <i className="fa-solid fa-paperclip text-slate-400 mr-2"></i>
+                                                <span className="truncate">{attachment.file_name}</span>
+                                            </div>
+                                            <span className="text-xs text-slate-500 ml-3">{formatFileSize(attachment.file_size)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {selectedFiles.length > 0 && (
+                                <div className="space-y-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">File mới</p>
+                                    {selectedFiles.map((file, index) => (
+                                        <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                                            <div className="flex items-center min-w-0">
+                                                <i className="fa-solid fa-file-lines text-slate-400 mr-2"></i>
+                                                <span className="truncate">{file.name}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 ml-3">
+                                                <span className="text-xs text-slate-500">{formatFileSize(file.size)}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveSelectedFile(index)}
+                                                    className="text-slate-400 hover:text-red-500"
+                                                    title="Xóa file"
+                                                >
+                                                    <i className="fa-solid fa-xmark"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {selectedFiles.length === 0 && currentAttachments.length === 0 && (
+                                <p className="text-sm text-slate-500">Chưa có file nào được đính kèm.</p>
+                            )}
+
+                            <p className="mt-2 text-[11px] text-slate-500">
+                                Định dạng hỗ trợ: PDF, DOC, DOCX, XLS, XLSX, PNG, JPG, JPEG (tối đa 10MB/file)
+                            </p>
                         </div>
                     </form>
                 </div>

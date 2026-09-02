@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +23,11 @@ class Settings(BaseSettings):
     # JWT Authentication
     JWT_SECRET: str = "your_jwt_secret_key"
     JWT_ALGORITHM: str = "HS256"
+    
+    ATTACHMENT_STORAGE_PATH: str = os.getenv(
+    "ATTACHMENT_STORAGE_PATH",
+    "/app/storage/attachments",
+)
 
     model_config = SettingsConfigDict(
         env_file=".env",

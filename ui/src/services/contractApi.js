@@ -11,6 +11,38 @@ const getHeaders = () => {
     };
 };
 
+const buildMultipartFormData = (contractData, attachments = []) => {
+    const formData = new FormData();
+    formData.append('contract', JSON.stringify(contractData));
+
+    if (Array.isArray(attachments)) {
+        attachments.forEach((file) => {
+            if (file) {
+                formData.append('attachments', file);
+            }
+        });
+    }
+
+    return formData;
+};
+
+const extractErrorMessage = async (response) => {
+    try {
+        const errorPayload = await response.json();
+        if (errorPayload?.detail) {
+            if (typeof errorPayload.detail === 'string') {
+                return errorPayload.detail;
+            }
+            if (typeof errorPayload.detail === 'object') {
+                return errorPayload.detail.message || errorPayload.detail.code || 'Có lỗi xảy ra';
+            }
+        }
+        return 'Có lỗi xảy ra';
+    } catch {
+        return 'Có lỗi xảy ra';
+    }
+};
+
 export const fetchContracts = async (status = null) => {
     const url = new URL(`${BASE_URL}/contracts`);
     if (status) url.searchParams.append('status', status);
@@ -33,28 +65,38 @@ export const fetchContractDetail = async (contractId) => {
     return response.json();
 };
 
-export const createContract = async (data) => {
+export const createContract = async (data, attachments = []) => {
+    const formData = buildMultipartFormData(data, attachments);
+    const token = localStorage.getItem('token') || JSON.parse(localStorage.getItem('user_info') || '{}').token || '';
+
     const response = await fetch(`${BASE_URL}/contracts`, {
         method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(data),
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
     });
     if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || 'Failed to create contract');
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Failed to create contract');
     }
     return response.json();
 };
 
-export const updateContract = async (contractId, data) => {
+export const updateContract = async (contractId, data, attachments = []) => {
+    const formData = buildMultipartFormData(data, attachments);
+    const token = localStorage.getItem('token') || JSON.parse(localStorage.getItem('user_info') || '{}').token || '';
+
     const response = await fetch(`${BASE_URL}/contracts/${contractId}`, {
         method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify(data),
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
     });
     if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || 'Failed to update contract');
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Failed to update contract');
     }
     return response.json();
 };
