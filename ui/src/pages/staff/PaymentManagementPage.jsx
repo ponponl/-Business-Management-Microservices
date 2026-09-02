@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Check,
   CheckCircle2,
@@ -13,15 +13,17 @@ import {
   X,
   XCircle,
   Download,
+  History,
   Users,
 } from "lucide-react";
 
-const API_BASE_URL = "http://localhost:8085/api/payments";
+const API_BASE_URL = "http://localhost:8085/api/v1/payments";
 const API_CONTRACT_URL = "http://localhost:8080/api/v1/contracts";
 const API_CUSTOMER_URL = "http://localhost:8080/api/v1/customers";
 const API_PRICELIST_URL = "http://localhost:8080/api/v1/price-lists";
-const API_VOLUMES_URL = "http://localhost:8080/api/v1/volumes";
-const API_USERS_URL = "http://localhost:8080/api/v1/users";
+const API_VOLUMES_URL = `${API_BASE_URL}/production-volumes`;
+const API_PERIODS_URL = `${API_BASE_URL}/production-periods`;
+const API_USERS_URL = "http://localhost:8080/api/v1/auth/users";
 
 const EMPTY_ITEM = {
   serviceCode: "",
@@ -31,10 +33,15 @@ const EMPTY_ITEM = {
   unitPrice: 0,
 };
 const STATUS_LABELS = {
+  PENDING: "Chờ xử lý",
+  SIGNING: "Đang ký",
+  FAILED: "Thất bại",
+  CANCELLED: "Đã hủy",
   CALCULATED: "Đã tính",
   RECONCILED: "Đã đối soát",
   SUBMITTED: "Chờ duyệt",
   APPROVED: "Đã duyệt",
+  PENDING_SIGN: "Chờ ký",
   REJECTED: "Từ chối",
   REVISION_REQUESTED: "Yêu cầu sửa",
   SIGNING: "Đang ký",
@@ -52,6 +59,14 @@ const authHeaders = (token) => {
   return headers;
 };
 
+const getTokenSubject = (token) => {
+  try {
+    return token ? JSON.parse(atob(token.split(".")[1])).sub : "";
+  } catch {
+    return "";
+  }
+};
+
 // Helper: Fetch customers with search
 const fetchCustomers = async (search = "", token) => {
   try {
@@ -60,7 +75,14 @@ const fetchCustomers = async (search = "", token) => {
     const response = await fetch(`${API_CUSTOMER_URL}?${params}`, {
       headers: authHeaders(token),
     });
-    return (await response.json()) || [];
+    const customers = (await response.json()) || [];
+    const normalizedSearch = search.trim().toLowerCase();
+    if (!normalizedSearch) return customers;
+    return customers.filter((customer) =>
+      [customer.company_name, customer.customer_code, customer.customer_id]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedSearch)),
+    );
   } catch (err) {
     console.error("Fetch customers error:", err);
     return [];
@@ -70,12 +92,13 @@ const fetchCustomers = async (search = "", token) => {
 // Helper: Fetch contracts by customer
 const fetchContracts = async (customerId, token) => {
   try {
-    const params = new URLSearchParams({ customer_id: customerId, status: "Active" });
+    const params = new URLSearchParams({ customer_id: customerId, status: "ACTIVE" });
     const response = await fetch(`${API_CONTRACT_URL}?${params}`, {
       headers: authHeaders(token),
     });
+    if (!response.ok) throw new Error("Không thể tải hợp đồng của khách hàng");
     const data = await response.json();
-    return data.items || data || [];
+    return Array.isArray(data) ? data : data.items || [];
   } catch (err) {
     console.error("Fetch contracts error:", err);
     return [];
@@ -83,20 +106,65 @@ const fetchContracts = async (customerId, token) => {
 };
 
 // Helper: Find effective price table
-const findEffectivePrice = async (periodStart, periodEnd, token) => {
+const findEffectivePrice = async (contractId, customerId, periodStart, periodEnd, token) => {
   try {
-    const response = await fetch(`${API_PRICELIST_URL}`, {
+    const response = await fetch(`${API_PRICELIST_URL}?page_size=100`, {
       headers: authHeaders(token),
     });
+    if (!response.ok) throw new Error("Không thể tải bảng giá");
     const data = await response.json();
-    const tables = data.items || data || [];
-    const effective = tables.find(
-      (t) =>
-        t.status === "Effective" &&
-        t.validFrom <= periodStart &&
-        t.validTo >= periodEnd
-    );
-    return effective;
+    const tables = Array.isArray(data) ? data : data.items || [];
+    const priority = { CONTRACT: 0, CUSTOMER: 1, GENERAL: 2 };
+    const candidates = tables
+      .filter((table) => {
+        const type = (table.type || table.scopeType || table.scope_type || "").toUpperCase();
+        const scopeId = String(table.scopeId || table.scope_id || table.contractId || "");
+        return (
+          (type === "CONTRACT" && scopeId === String(contractId)) ||
+          (type === "CUSTOMER" && scopeId === String(customerId)) ||
+          type === "GENERAL"
+        );
+      })
+      .sort((left, right) => {
+        const leftType = (left.type || left.scopeType || left.scope_type || "").toUpperCase();
+        const rightType = (right.type || right.scopeType || right.scope_type || "").toUpperCase();
+        return (priority[leftType] ?? 99) - (priority[rightType] ?? 99);
+      });
+    for (const table of candidates) {
+      const detailUrl = `${API_PRICELIST_URL}/${encodeURIComponent(table.priceCode || table.id)}`;
+      const detailResponse = await fetch(
+        detailUrl,
+        { headers: authHeaders(token) },
+      );
+      if (!detailResponse.ok) continue;
+      const detail = await detailResponse.json();
+      const effectiveVersion = (detail.versions || []).find(
+        (version) =>
+          version.status?.toUpperCase() === "EFFECTIVE" &&
+          version.validFrom <= periodStart &&
+          version.validTo >= periodEnd,
+      );
+      if (effectiveVersion) {
+        const versionResponse = await fetch(
+          `${detailUrl}?version_id=${encodeURIComponent(effectiveVersion.versionId || effectiveVersion.id)}`,
+          { headers: authHeaders(token) },
+        );
+        if (!versionResponse.ok) continue;
+        const effectiveDetail = await versionResponse.json();
+        return {
+          ...effectiveDetail,
+          details: effectiveDetail.items || effectiveDetail.services || [],
+        };
+      }
+      if (
+        detail.status?.toUpperCase() === "EFFECTIVE" &&
+        detail.validFrom <= periodStart &&
+        detail.validTo >= periodEnd
+      ) {
+        return { ...detail, details: detail.items || detail.services || [] };
+      }
+    }
+    return null;
   } catch (err) {
     console.error("Fetch price tables error:", err);
     return null;
@@ -107,17 +175,31 @@ const findEffectivePrice = async (periodStart, periodEnd, token) => {
 const fetchVolumes = async (customerId, contractId, periodStart, periodEnd, token) => {
   try {
     const params = new URLSearchParams({
-      customer_id: customerId,
       contract_id: contractId,
-      period_key: periodStart.slice(0, 7), // YYYY-MM
+      period_key: periodStart.slice(0, 7),
     });
     const response = await fetch(`${API_VOLUMES_URL}?${params}`, {
       headers: authHeaders(token),
     });
+    if (!response.ok) throw new Error("Không thể tải sản lượng");
     const data = await response.json();
-    return data.items || data || [];
+    return Array.isArray(data) ? data : data.items || [];
   } catch (err) {
     console.error("Fetch volumes error:", err);
+    return [];
+  }
+};
+
+const fetchProductionPeriods = async (contractId, token) => {
+  try {
+    const params = new URLSearchParams({ contract_id: contractId });
+    const response = await fetch(`${API_PERIODS_URL}?${params}`, {
+      headers: authHeaders(token),
+    });
+    if (!response.ok) throw new Error("Không thể tải kỳ sản lượng");
+    return (await response.json()) || [];
+  } catch (err) {
+    console.error("Fetch production periods error:", err);
     return [];
   }
 };
@@ -130,7 +212,8 @@ const fetchUsers = async (search = "", token) => {
     const response = await fetch(`${API_USERS_URL}?${params}`, {
       headers: authHeaders(token),
     });
-    return (await response.json()) || [];
+    const data = (await response.json()) || [];
+    return Array.isArray(data) ? data : data.items || [];
   } catch (err) {
     console.error("Fetch users error:", err);
     return [];
@@ -139,10 +222,14 @@ const fetchUsers = async (search = "", token) => {
 
 function StatusBadge({ status }) {
   const colors = {
+    PENDING: "bg-amber-100 text-amber-700",
+    FAILED: "bg-rose-100 text-rose-700",
+    CANCELLED: "bg-slate-100 text-slate-600",
     CALCULATED: "bg-slate-100 text-slate-700",
     RECONCILED: "bg-cyan-100 text-cyan-700",
     SUBMITTED: "bg-amber-100 text-amber-700",
     APPROVED: "bg-blue-100 text-blue-700",
+    PENDING_SIGN: "bg-amber-100 text-amber-700",
     REJECTED: "bg-rose-100 text-rose-700",
     REVISION_REQUESTED: "bg-orange-100 text-orange-700",
     SIGNING: "bg-violet-100 text-violet-700",
@@ -161,8 +248,13 @@ function StatusBadge({ status }) {
 
 function PaymentEditor({ payment, user, onClose, onSaved }) {
   const token = user?.token || localStorage.getItem("token");
+  const paymentPeriodId = payment
+    ? payment.periodId || payment.referenceId || payment.periodStart?.slice(0, 7)
+    : "";
   const [form, setForm] = useState(
-    payment || {
+    payment
+      ? { ...payment, periodId: paymentPeriodId }
+      : {
       customerId: "",
       contractId: "",
       priceTableId: "",
@@ -179,9 +271,11 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
   const [customers, setCustomers] = useState([]);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
   
   const [contracts, setContracts] = useState([]);
-  const [showContractDropdown, setShowContractDropdown] = useState(false);
+  const [periods, setPeriods] = useState([]);
+  const [periodsLoading, setPeriodsLoading] = useState(false);
   
   const [priceTableInfo, setPriceTableInfo] = useState(null);
   const [fetchingVolumes, setFetchingVolumes] = useState(false);
@@ -202,6 +296,15 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
     return () => clearTimeout(timer);
   }, [customerSearch, token]);
 
+  useEffect(() => {
+    if (!selectedCustomer && form.customerId) {
+      const customer = customers.find(
+        (item) => String(item.customer_id || item.id) === String(form.customerId),
+      );
+      if (customer) setSelectedCustomer(customer);
+    }
+  }, [customers, form.customerId, selectedCustomer]);
+
   // Fetch contracts when customer selected
   useEffect(() => {
     if (form.customerId) {
@@ -215,16 +318,64 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
     }
   }, [form.customerId, token]);
 
+  useEffect(() => {
+    if (!form.contractId) {
+      setPeriods([]);
+      setPriceTableInfo(null);
+      setForm((previous) => ({
+        ...previous,
+        periodId: "",
+        periodStart: "",
+        periodEnd: "",
+        priceTableId: "",
+      }));
+      return;
+    }
+    setPeriodsLoading(true);
+    fetchProductionPeriods(form.contractId, token)
+      .then((availablePeriods) => {
+        if (
+          form.periodId &&
+          form.periodStart &&
+          form.periodEnd &&
+          !availablePeriods.some((period) => period.period_id === form.periodId)
+        ) {
+          setPeriods([
+            {
+              period_id: form.periodId,
+              from_date: form.periodStart,
+              to_date: form.periodEnd,
+              status: "LOCKED",
+              is_billed: true,
+            },
+            ...availablePeriods,
+          ]);
+          return;
+        }
+        setPeriods(availablePeriods);
+      })
+      .finally(() => setPeriodsLoading(false));
+  }, [form.contractId, token]);
+
   // Auto-detect price table
   useEffect(() => {
-    if (form.contractId && form.periodStart && form.periodEnd) {
+    if (form.contractId && form.periodId && form.periodStart && form.periodEnd) {
       (async () => {
-        const pt = await findEffectivePrice(form.periodStart, form.periodEnd, token);
+        const pt = await findEffectivePrice(
+          form.contractId,
+          selectedCustomer?.customer_code || form.customerId,
+          form.periodStart,
+          form.periodEnd,
+          token,
+        );
         setPriceTableInfo(pt);
         setForm((p) => ({ ...p, priceTableId: pt?.priceCode || "" }));
       })();
+    } else {
+      setPriceTableInfo(null);
+      setForm((previous) => ({ ...previous, priceTableId: "" }));
     }
-  }, [form.contractId, form.periodStart, form.periodEnd, token]);
+  }, [form.contractId, form.periodId, form.periodStart, form.periodEnd, token]);
 
   const update = (field, value) =>
     setForm((previous) => ({ ...previous, [field]: value }));
@@ -238,7 +389,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
     }));
 
   const handleFetchVolumes = async () => {
-    if (!form.customerId || !form.contractId || !form.periodStart || !form.periodEnd) {
+    if (!form.customerId || !form.contractId || !form.periodId) {
       setError("Vui lòng chọn khách hàng, hợp đồng và kỳ tính phí");
       return;
     }
@@ -248,8 +399,8 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
       const volumes = await fetchVolumes(
         form.customerId,
         form.contractId,
-        form.periodStart,
-        form.periodEnd,
+        form.periodId,
+        form.periodId,
         token
       );
       if (volumes.length === 0) {
@@ -262,14 +413,27 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
       const grouped = {};
       volumes.forEach((v) => {
         if (!grouped[v.service_code]) {
+          const priceDetail = priceTableInfo?.details?.find(
+            (detail) =>
+              (detail.serviceCode || detail.service_code || detail.code) ===
+              v.service_code,
+          );
           grouped[v.service_code] = {
             serviceCode: v.service_code,
-            serviceName: v.service_name || v.service_code,
-            unit: v.unit || "container",
+            serviceName:
+              v.service_name ||
+              priceDetail?.serviceName ||
+              priceDetail?.service_name ||
+              priceDetail?.name ||
+              v.service_code,
+            unit: v.unit || priceDetail?.unit || "container",
             quantity: 0,
-            unitPrice: priceTableInfo?.details?.find(
-              (d) => d.service_code === v.service_code
-            )?.unit_price || 0,
+            unitPrice: Number(
+              priceDetail?.unitPrice ||
+                priceDetail?.unit_price ||
+                priceDetail?.price ||
+                0,
+            ),
           };
         }
         grouped[v.service_code].quantity += Number(v.quantity || 0);
@@ -355,7 +519,11 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
               <input
                 type="text"
                 placeholder="Tìm kiếm khách hàng..."
-                value={showCustomerDropdown ? customerSearch : form.customerId}
+                value={
+                  showCustomerDropdown
+                    ? customerSearch
+                    : selectedCustomer?.company_name || form.customerId
+                }
                 onChange={(e) => {
                   setCustomerSearch(e.target.value);
                   setShowCustomerDropdown(true);
@@ -371,16 +539,17 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
                       type="button"
                       onClick={() => {
                         update("customerId", c.customer_id || c.id);
+                        setSelectedCustomer(c);
                         setCustomerSearch("");
                         setShowCustomerDropdown(false);
                       }}
                       className="w-full px-3 py-2 text-left text-xs hover:bg-slate-50 border-b last:border-b-0"
                     >
                       <div className="font-semibold text-slate-800">
-                        {c.customer_id || c.id}
+                        {c.company_name || c.name}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        {c.customer_name || c.name}
+                        {c.customer_code || c.customer_id || c.id}
                       </div>
                     </button>
                   ))}
@@ -395,18 +564,49 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
             <select
               required
               value={form.contractId}
-              onChange={(e) => update("contractId", e.target.value)}
+              onChange={(e) => {
+                update("contractId", e.target.value);
+                update("periodId", "");
+                update("periodStart", "");
+                update("periodEnd", "");
+                update("priceTableId", "");
+                setPriceTableInfo(null);
+              }}
               disabled={!form.customerId}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#2b727d] disabled:bg-slate-50"
             >
               <option value="">-- Chọn hợp đồng --</option>
               {contracts.map((c) => (
-                <option key={c.contract_id || c.id} value={c.contract_id || c.id}>
-                  {c.contract_number || c.contract_id} - {c.contract_id}
+                <option key={c.contract_number} value={c.contract_number}>
+                  {c.contract_number}
                 </option>
               ))}
             </select>
           </div>
+
+          <label className="text-xs font-medium text-slate-600">
+            Kỳ sản lượng (đã khóa, chưa lập bảng) *
+            <select
+              required
+              value={form.periodId || ""}
+              disabled={!form.contractId || periodsLoading}
+              onChange={(event) => {
+                const period = periods.find((item) => item.period_id === event.target.value);
+                update("periodId", event.target.value);
+                update("periodStart", period?.from_date || "");
+                update("periodEnd", period?.to_date || "");
+                update("priceTableId", "");
+              }}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50"
+            >
+              <option value="">{periodsLoading ? "Đang tải kỳ..." : "-- Chọn kỳ --"}</option>
+              {periods.map((period) => (
+                <option key={period.period_id} value={period.period_id}>
+                  {period.period_id}
+                </option>
+              ))}
+            </select>
+          </label>
 
           {/* Date Range */}
           <label className="text-xs font-medium text-slate-600">
@@ -415,6 +615,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
               required
               type="date"
               value={form.periodStart}
+              readOnly
               onChange={(event) => update("periodStart", event.target.value)}
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
@@ -425,6 +626,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
               required
               type="date"
               value={form.periodEnd}
+              readOnly
               onChange={(event) => update("periodEnd", event.target.value)}
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
@@ -434,11 +636,11 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
           <div className="text-xs font-medium text-slate-600">
             <label className="block mb-1">Bảng giá (Effective) *</label>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 font-semibold">
-              {form.priceTableId || "-- Auto-detect --"}
+              {priceTableInfo?.priceName || "-- Chưa xác định --"}
             </div>
             {priceTableInfo && (
               <div className="mt-1 text-[11px] text-slate-500">
-                Hiệu lực: {priceTableInfo.validFrom} - {priceTableInfo.validTo}
+                {priceTableInfo.priceCode} · Hiệu lực: {priceTableInfo.validFrom} - {priceTableInfo.validTo}
               </div>
             )}
           </div>
@@ -462,7 +664,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
           <button
             type="button"
             onClick={handleFetchVolumes}
-            disabled={fetchingVolumes || !form.customerId || !form.contractId}
+            disabled={fetchingVolumes || !form.customerId || !form.contractId || !form.periodId}
             className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
           >
             {fetchingVolumes ? (
@@ -630,11 +832,16 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
 export default function PaymentManagementPage({ user }) {
   const role = user?.role || "STAFF";
   const token = user?.token || localStorage.getItem("token");
+  const actorId = user?.user_id || user?.id || getTokenSubject(token) || user?.username || role;
   const [payments, setPayments] = useState([]);
   const [stats, setStats] = useState({});
   const [selected, setSelected] = useState(null);
   const [workflow, setWorkflow] = useState(null);
   const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [signatures, setSignatures] = useState([]);
+  const [signaturesOpen, setSignaturesOpen] = useState(false);
+  const [signaturesLoading, setSignaturesLoading] = useState(false);
+  const [signLoading, setSignLoading] = useState(false);
   const [editor, setEditor] = useState(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -647,16 +854,38 @@ export default function PaymentManagementPage({ user }) {
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [availableAssignees, setAvailableAssignees] = useState([]);
   const [selectedAssignees, setSelectedAssignees] = useState([]);
+  const [selectedAssigneeUsers, setSelectedAssigneeUsers] = useState([]);
+  const [customerNames, setCustomerNames] = useState({});
+  const [contractNumbers, setContractNumbers] = useState({});
+  const [userNames, setUserNames] = useState({});
 
   const load = async () => {
     setLoading(true);
     try {
-      const [listResponse, statsResponse] = await Promise.all([
+      const [listResponse, statsResponse, customersResponse, contractsResponse, usersResponse] = await Promise.all([
         fetch(`${API_BASE_URL}?search=${encodeURIComponent(search)}`),
         fetch(`${API_BASE_URL}/stats`),
+        fetch(API_CUSTOMER_URL, { headers: authHeaders(token) }),
+        fetch(`${API_CONTRACT_URL}?limit=100`, { headers: authHeaders(token) }),
+        fetch(API_USERS_URL, { headers: authHeaders(token) }),
       ]);
       setPayments((await listResponse.json()).items || []);
       setStats(await statsResponse.json());
+      const customers = await customersResponse.json();
+      setCustomerNames(Object.fromEntries((Array.isArray(customers) ? customers : []).flatMap((item) => [
+        [String(item.customer_id), item.company_name || item.customer_code],
+        [String(item.customer_code), item.company_name || item.customer_code],
+      ])));
+      const contracts = await contractsResponse.json();
+      const contractItems = Array.isArray(contracts) ? contracts : contracts.items || [];
+      setContractNumbers(Object.fromEntries(contractItems.flatMap((item) => [
+        [String(item.contract_id), item.contract_number],
+        [String(item.contract_number), item.contract_number],
+      ])));
+      const users = await usersResponse.json();
+      setUserNames(Object.fromEntries((Array.isArray(users) ? users : []).map((item) => [
+        String(item.id || item.user_id), item.username || item.name,
+      ])));
     } catch (err) {
       setMessage(`Không thể kết nối Payment Service: ${err.message}`);
     } finally {
@@ -668,7 +897,18 @@ export default function PaymentManagementPage({ user }) {
   }, [search]);
 
   useEffect(() => {
-    if (selected?.id) {
+    const workflowStatuses = [
+      "SUBMITTED",
+      "APPROVED",
+      "REJECTED",
+      "REVISION_REQUESTED",
+      "PENDING_SIGN",
+      "SIGNING",
+      "SIGNED",
+      "SIGN_FAILED",
+      "ISSUED",
+    ];
+    if (selected?.id && workflowStatuses.includes(selected.status)) {
       setWorkflowLoading(true);
       fetch(`${API_BASE_URL}/${selected.id}/workflow`, {
         headers: authHeaders(token),
@@ -681,6 +921,38 @@ export default function PaymentManagementPage({ user }) {
       setWorkflow(null);
     }
   }, [selected?.id, token]);
+
+  useEffect(() => {
+    if (!selected?.id || !["PENDING_SIGN", "SIGNING"].includes(selected.status)) return undefined;
+    const timer = setInterval(async () => {
+      const response = await fetch(`${API_BASE_URL}/${selected.id}`, {
+        headers: authHeaders(token),
+      });
+      if (response.ok) {
+        const payment = await response.json();
+        setSelected(payment);
+        setPayments((items) => items.map((item) => item.id === payment.id ? payment : item));
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [selected?.id, selected?.status, token]);
+
+  const loadSignatures = async () => {
+    if (!selected?.id) return;
+    setSignaturesLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/${selected.id}/signatures`, {
+        headers: authHeaders(token),
+      });
+      if (!response.ok) throw new Error("Không thể tải lịch sử ký");
+      setSignatures(await response.json());
+      setSignaturesOpen(true);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setSignaturesLoading(false);
+    }
+  };
 
   // Fetch assignees on search
   useEffect(() => {
@@ -697,7 +969,7 @@ export default function PaymentManagementPage({ user }) {
     try {
       const headers = {
         ...authHeaders(token),
-        "X-User": user?.username || role,
+        "X-User": actorId,
       };
       if (assignees.length) {
         headers["X-Approval-Assignees"] = assignees.join(",");
@@ -714,6 +986,25 @@ export default function PaymentManagementPage({ user }) {
       load();
     } catch (err) {
       setMessage(err.message);
+    }
+  };
+
+  const sendSign = async () => {
+    setSignLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/${selected.id}/send-sign`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "X-User": actorId },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Không thể gửi ký");
+      setSelected(data);
+      setMessage("Đã gửi hồ sơ vào luồng ký điện tử.");
+      load();
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setSignLoading(false);
     }
   };
   const openActionDialog = (id, endpoint) => {
@@ -736,6 +1027,7 @@ export default function PaymentManagementPage({ user }) {
     });
     setAssigneeSearch("");
     setSelectedAssignees([]);
+    setSelectedAssigneeUsers([]);
     setAvailableAssignees([]);
   };
 
@@ -757,6 +1049,7 @@ export default function PaymentManagementPage({ user }) {
     const { paymentId } = assigneeDialog;
     setAssigneeDialog(null);
     setSelectedAssignees([]);
+    setSelectedAssigneeUsers([]);
     setAssigneeSearch("");
     await action(paymentId, "submit", "", selectedAssignees);
   };
@@ -766,6 +1059,18 @@ export default function PaymentManagementPage({ user }) {
     ["CALCULATED", "RECONCILED", "REVISION_REQUESTED"].includes(
       selected.status,
     );
+  const currentApprovalStep = workflow?.steps?.find(
+    (step) => step.status === "PENDING" && !step.action,
+  );
+  const finalApprovalStep = workflow?.steps?.filter(
+    (step) => step.action === "APPROVED",
+  ).at(-1);
+  const canSign = selected &&
+    ["APPROVED", "SIGN_FAILED"].includes(selected.status) &&
+    finalApprovalStep?.assigneeId === actorId;
+  const canApprove = selected?.status === "SUBMITTED" &&
+    ["MANAGER", "DIRECTOR"].includes(role) &&
+    currentApprovalStep?.assigneeId === actorId;
 
   return (
     <div className="space-y-5 pb-10 text-slate-700">
@@ -798,7 +1103,6 @@ export default function PaymentManagementPage({ user }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
           ["total", "Tổng hồ sơ", CreditCard],
-          ["draft", "Bản nháp", Pencil],
           ["submitted", "Chờ duyệt", ShieldCheck],
           ["approved", "Đã duyệt", CheckCircle2],
           ["signed", "Đã ký", Check],
@@ -865,9 +1169,9 @@ export default function PaymentManagementPage({ user }) {
                       {payment.code}
                     </td>
                     <td className="p-3">
-                      <b>{payment.customerId}</b>
+                      <b>{customerNames[String(payment.customerId)] || payment.customerId}</b>
                       <div className="text-[10px] text-slate-400">
-                        {payment.contractId} · {payment.priceTableId}
+                        {contractNumbers[String(payment.contractId)] || payment.contractId} · {payment.priceTableId}
                       </div>
                     </td>
                     <td className="p-3 text-slate-500">
@@ -937,14 +1241,32 @@ export default function PaymentManagementPage({ user }) {
                 Trạng thái hồ sơ: {selected.status}
               </span>
             </div>
+            {[
+              "PENDING_SIGN",
+              "SIGNING",
+              "SIGNED",
+              "SIGN_FAILED",
+              "ISSUED",
+            ].includes(selected.status) && (
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={loadSignatures}
+                  disabled={signaturesLoading}
+                  className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600"
+                >
+                  {signaturesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />}
+                  Lịch sử ký
+                </button>
+              </div>
+            )}
             <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
               <div>
                 <span className="text-slate-400">Customer ID</span>
-                <p className="font-semibold">{selected.customerId}</p>
+                <p className="font-semibold">{customerNames[String(selected.customerId)] || selected.customerId}</p>
               </div>
               <div>
                 <span className="text-slate-400">Hợp đồng</span>
-                <p className="font-semibold">{selected.contractId}</p>
+                <p className="font-semibold">{contractNumbers[String(selected.contractId)] || selected.contractId}</p>
               </div>
               <div>
                 <span className="text-slate-400">Price table ID</span>
@@ -1017,7 +1339,9 @@ export default function PaymentManagementPage({ user }) {
                           <td className="p-2 font-semibold text-slate-700">
                             {step.stepNo}
                           </td>
-                          <td className="p-2 text-slate-600">{step.assigneeId}</td>
+                          <td className="p-2 text-slate-600">
+                            {userNames[String(step.assigneeId)] || step.assigneeId}
+                          </td>
                           <td className="p-2">
                             <span
                               className={`rounded px-2 py-1 text-[10px] font-bold ${
@@ -1087,8 +1411,7 @@ export default function PaymentManagementPage({ user }) {
                   <Send className="h-3.5 w-3.5" /> Gửi duyệt
                 </button>
               )}
-              {(role === "MANAGER" || role === "DIRECTOR") &&
-                selected.status === "SUBMITTED" && (
+              {canApprove && (
                   <>
                     <button
                       onClick={() => openActionDialog(selected.id, "reject")}
@@ -1112,20 +1435,13 @@ export default function PaymentManagementPage({ user }) {
                     </button>
                   </>
                 )}
-              {role === "STAFF" && selected.status === "APPROVED" && (
+              {canSign && (
                 <button
-                  onClick={() => action(selected.id, "send-sign")}
-                  className="flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white"
+                  onClick={sendSign}
+                  disabled={signLoading}
+                  className="flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
                 >
-                  <Send className="h-3.5 w-3.5" /> Gửi ký
-                </button>
-              )}
-              {role === "STAFF" && selected.status === "SIGNING" && (
-                <button
-                  onClick={() => action(selected.id, "sign-callback")}
-                  className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"
-                >
-                  <Check className="h-3.5 w-3.5" /> Mô phỏng ký thành công
+                  {signLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Ký điện tử
                 </button>
               )}
             </div>
@@ -1249,6 +1565,10 @@ export default function PaymentManagementPage({ user }) {
                         const userId = user.user_id || user.id;
                         if (!selectedAssignees.includes(userId)) {
                           setSelectedAssignees([...selectedAssignees, userId]);
+                          setSelectedAssigneeUsers([
+                            ...selectedAssigneeUsers,
+                            user,
+                          ]);
                         }
                         setAssigneeSearch("");
                         setAvailableAssignees([]);
@@ -1274,22 +1594,30 @@ export default function PaymentManagementPage({ user }) {
                   Người được chỉ định ({selectedAssignees.length})
                 </label>
                 <div className="space-y-1">
-                  {selectedAssignees.map((id, idx) => (
+                  {selectedAssigneeUsers.map((user, idx) => (
                     <div
-                      key={id}
+                      key={user.user_id || user.id}
                       className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs"
                     >
                       <div>
                         <span className="font-semibold text-slate-700">Bước {idx + 1}:</span>
-                        <span className="ml-2 text-slate-600">{id}</span>
+                        <span className="ml-2 font-semibold text-slate-700">
+                          {user.username || user.name}
+                        </span>
+                        <span className="ml-2 text-slate-500">
+                          ({user.role})
+                        </span>
                       </div>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
                           setSelectedAssignees(
-                            selectedAssignees.filter((_, i) => i !== idx)
-                          )
-                        }
+                            selectedAssignees.filter((_, i) => i !== idx),
+                          );
+                          setSelectedAssigneeUsers(
+                            selectedAssigneeUsers.filter((_, i) => i !== idx),
+                          );
+                        }}
                         className="text-slate-400 hover:text-rose-600"
                       >
                         <X className="h-4 w-4" />
@@ -1319,6 +1647,39 @@ export default function PaymentManagementPage({ user }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {signaturesOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/45 p-4">
+          <section className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Audit log</p>
+                <h2 className="mt-1 text-lg font-bold text-slate-800">Lịch sử ký điện tử</h2>
+              </div>
+              <button onClick={() => setSignaturesOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100" aria-label="Đóng">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="mt-5 overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-left text-slate-500">
+                  <tr><th className="p-2">Người ký</th><th className="p-2">Trạng thái</th><th className="p-2">Tạo lúc</th><th className="p-2">Hoàn tất</th></tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {signatures.map((signature) => (
+                    <tr key={signature.id}>
+                      <td className="p-2 font-semibold">{signature.assigneeId}</td>
+                      <td className="p-2"><StatusBadge status={signature.status} /></td>
+                      <td className="p-2 text-slate-500">{new Date(signature.createdAt).toLocaleString("vi-VN")}</td>
+                      <td className="p-2 text-slate-500">{signature.resolvedAt ? new Date(signature.resolvedAt).toLocaleString("vi-VN") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!signatures.length && <p className="p-6 text-center text-xs text-slate-400">Chưa có lần trình ký.</p>}
+            </div>
+          </section>
         </div>
       )}
     </div>

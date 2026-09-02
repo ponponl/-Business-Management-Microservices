@@ -22,14 +22,10 @@ def initialize_database():
             board_columns = {
                 column["name"] for column in inspector.get_columns("payment_boards")
             } if inspector.has_table("payment_boards") else set()
-            history_columns = {
-                column["name"] for column in inspector.get_columns("payment_status_histories")
-            } if inspector.has_table("payment_status_histories") else set()
             needs_recreate = board_columns and (
                 "code" not in board_columns
                 or "customer_id" not in board_columns
                 or "total_amount" not in board_columns
-                or "action" not in history_columns
             )
             if needs_recreate:
                 with engine.begin() as connection:
