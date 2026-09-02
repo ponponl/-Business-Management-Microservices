@@ -1,7 +1,7 @@
 import re
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import HTTPException, status
 from sqlalchemy import desc, func, or_
@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.deps import CurrentUser
 from app.models.pricing import PriceList, PriceListDetail, PriceListVersion, ServiceItem, PriceChangeHistory
 from app.schemas.price_list import PriceListCreate
+
+from datetime import datetime
+from dateutil.parser import parse as parse_date
 
 VN_TZ = timezone(timedelta(hours=7))
 
@@ -21,8 +24,32 @@ def get_current_vn_time() -> datetime:
 def safe_float(val: Any) -> float:
     if val is None:
         return 0.0
-    try:
+    if isinstance(val, (int, float)):
         return float(val)
+    
+    val_str = str(val).strip()
+    if not val_str:
+        return 0.0
+
+    try:
+        if '.' in val_str and ',' in val_str:
+            if val_str.rfind('.') > val_str.rfind(','):
+                val_str = val_str.replace(',', '')
+            else:
+                val_str = val_str.replace('.', '').replace(',', '.')
+        elif '.' in val_str:
+            parts = val_str.split('.')
+            if len(parts[-1]) == 3 and len(parts) > 1:
+                val_str = val_str.replace('.', '')
+        elif ',' in val_str:
+            parts = val_str.split(',')
+            if len(parts[-1]) == 3 and len(parts) > 1:
+                val_str = val_str.replace(',', '')
+            else:
+                val_str = val_str.replace(',', '.')
+
+        clean_str = re.sub(r'[^\d.-]', '', val_str)
+        return float(clean_str) if clean_str else 0.0
     except (ValueError, TypeError):
         return 0.0
 
@@ -260,7 +287,6 @@ class PriceListService:
         auth_token: Optional[str] = None
     ) -> Dict[str, Any]:
         try:
-            # Subquery lọc ra phiên bản mới nhất theo created_at của từng PriceList
             subquery = (
                 db.query(
                     PriceListVersion.price_list_id,
@@ -270,7 +296,6 @@ class PriceListService:
                 .subquery()
             )
 
-            # Query kết hợp để chỉ lấy đúng 1 dòng phiên bản mới nhất cho mỗi bảng giá
             query = (
                 db.query(PriceList, PriceListVersion)
                 .join(PriceListVersion, PriceList.id == PriceListVersion.price_list_id)
@@ -286,13 +311,19 @@ class PriceListService:
             if apply_type and apply_type != "Tất cả":
                 query = query.filter(PriceList.scope_type.ilike(apply_type.strip()))
             if customer and customer != "Tất cả":
-                query = query.filter(PriceList.price_list_name.ilike(f"%{customer.strip()}%"))
+                query = query.filter(
+                    or_(
+                        PriceList.price_list_name.ilike(f"%{customer.strip()}%"),
+                        PriceListVersion.price_list_name.ilike(f"%{customer.strip()}%")
+                    )
+                )
             if search and search.strip():
                 sterm = f"%{search.strip()}%"
                 query = query.filter(
                     or_(
                         PriceList.price_list_code.ilike(sterm),
                         PriceList.price_list_name.ilike(sterm),
+                        PriceListVersion.price_list_name.ilike(sterm),
                         PriceList.scope_id.ilike(sterm)
                     )
                 )
@@ -323,13 +354,24 @@ class PriceListService:
                 cid = str(getattr(ver, "created_by", None) or getattr(pl, "created_by", None) or "").strip().lower()
                 creator = users_map.get(cid, "Staff" if (re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", cid) or not cid or cid == "none") else cid)
 
+                # ƯU TIÊN LẤY TÊN CỦA VERSION MỚI NHẤT -> NẾU RỖNG MỚI LẤY TÊN BẢNG GIÁ CHA
+                version_display_name = getattr(ver, "price_list_name", None) or getattr(ver, "price_name", None) or pl.price_list_name or "N/A"
+
+                raw_scope_id = getattr(pl, "scope_id", None) or getattr(pl, "contract_id", None)
+
                 items.append({
                     "id": clean_code,
                     "priceCode": clean_code,
                     "price_code": clean_code,
                     "versionId": str(ver.id),
-                    "name": str(pl.price_list_name or "N/A"),
-                    "contractId": str(getattr(pl, "scope_id", None) or getattr(pl, "contract_id", None) or "N/A"),
+                    "name": str(version_display_name),
+                    "priceName": str(version_display_name),
+                    "price_name": str(version_display_name),
+                    "price_list_name": str(version_display_name),
+                    "contractId": str(raw_scope_id or "N/A"),
+                    "scope_id": str(raw_scope_id or ""),
+                    "scopeId": str(raw_scope_id or ""),
+                    "targetId": str(raw_scope_id or ""),
                     "type": str(pl.scope_type or "GENERAL").upper(),
                     "version": format_version(getattr(ver, "version_number", "1.0")),
                     "effectiveTime": eff_time,
@@ -358,6 +400,7 @@ class PriceListService:
 
     @staticmethod
     def get_detail_by_code(db: Session, price_code: str, version_id: Optional[str] = None) -> Dict[str, Any]:
+        """Lấy chính xác dữ liệu dịch vụ, thời gian hiệu lực và danh sách lịch sử tất cả phiên bản."""
         conds = [PriceList.price_list_code == price_code]
         try:
             conds.append(PriceList.id == uuid.UUID(price_code))
@@ -370,21 +413,28 @@ class PriceListService:
 
         ver = None
         if version_id and str(version_id).strip():
+            clean_ver_str = str(version_id).strip()
+            
+            # 1. Thử tìm theo UUID trực tiếp
             try:
+                ver_uuid = uuid.UUID(clean_ver_str)
                 ver = db.query(PriceListVersion).filter(
                     PriceListVersion.price_list_id == pl.id,
-                    PriceListVersion.id == uuid.UUID(version_id.strip())
+                    PriceListVersion.id == ver_uuid
                 ).first()
             except ValueError:
                 pass
-            
-            if not ver:
-                clean_ver_num = str(version_id).strip().lstrip("vV")
-                ver = db.query(PriceListVersion).filter(
-                    PriceListVersion.price_list_id == pl.id,
-                    PriceListVersion.version_number == clean_ver_num
-                ).first()
 
+            # 2. Nếu version_id truyền lên là chuỗi như "2.1" hoặc "v2.0"
+            if not ver:
+                clean_target = clean_ver_str.lower().lstrip("v")
+                for v in pl.versions:
+                    v_num_clean = str(v.version_number or "").lower().lstrip("v")
+                    if v_num_clean == clean_target:
+                        ver = v
+                        break
+
+        # 3. Nếu vẫn không tìm thấy thì mới lấy phiên bản mặc định
         if not ver:
             ver = PriceListService._get_latest_version(pl)
 
@@ -393,10 +443,12 @@ class PriceListService:
 
         clean_code = PriceListService._ensure_valid_price_code(db, pl)
 
+        # Trích xuất thời gian hiệu lực ĐÚNG của phiên bản `ver`
         vf, vt = getattr(ver, "valid_from", None), getattr(ver, "valid_to", None)
-        vf_str = vf.strftime("%Y-%m-%d") if hasattr(vf, "strftime") else ""
-        vt_str = vt.strftime("%Y-%m-%d") if hasattr(vt, "strftime") else ""
+        vf_str = vf.strftime("%Y-%m-%d") if hasattr(vf, "strftime") and vf else ""
+        vt_str = vt.strftime("%Y-%m-%d") if hasattr(vt, "strftime") and vt else ""
 
+        # LẤY ĐÚNG DANH SÁCH DỊCH VỤ CỦA CHÍNH PHIÊN BẢN (ver.id) NÀY
         details = db.query(PriceListDetail).options(
             joinedload(PriceListDetail.service_item)
         ).filter(PriceListDetail.price_list_version_id == ver.id).all()
@@ -405,8 +457,8 @@ class PriceListService:
         for item in details:
             srv = item.service_item
             services_data.append({
-                "serviceItemId": str(srv.id) if srv else None,
-                "service_item_id": str(srv.id) if srv else None,
+                "serviceItemId": str(srv.id) if srv else str(item.service_item_id),
+                "service_item_id": str(srv.id) if srv else str(item.service_item_id),
                 "code": srv.service_code if srv else "SRV-DEFAULT",
                 "serviceCode": srv.service_code if srv else "SRV-DEFAULT",
                 "service_code": srv.service_code if srv else "SRV-DEFAULT",
@@ -425,13 +477,44 @@ class PriceListService:
         reason = getattr(ver, "rejected_reason", None) or getattr(ver, "rejection_reason", None) or ""
         scope_id = str(getattr(pl, "scope_id", None) or getattr(pl, "contract_id", None) or getattr(pl, "customer_id", None) or "")
 
+        # Lấy tên của phiên bản con (ver), nếu rỗng mới lấy tên bảng cha (pl)
+        display_name = getattr(ver, "price_list_name", None) or pl.price_list_name or "N/A"
+
+        # TẠO DANH SÁCH TẤT CẢ PHIÊN BẢN ĐỂ HIỂN THỊ Ở CỘT BÊN TRÁI TRANG LỊCH SỬ
+        versions_list = []
+        # Sắp xếp phiên bản giảm dần theo created_at
+        sorted_versions = sorted(
+            pl.versions, 
+            key=lambda v: getattr(v, "created_at", None) or datetime.min, 
+            reverse=True
+        )
+        for v in sorted_versions:
+            v_vf, v_vt = getattr(v, "valid_from", None), getattr(v, "valid_to", None)
+            v_vf_str = v_vf.strftime("%Y-%m-%d") if hasattr(v_vf, "strftime") and v_vf else ""
+            v_vt_str = v_vt.strftime("%Y-%m-%d") if hasattr(v_vt, "strftime") and v_vt else ""
+            v_name = getattr(v, "price_list_name", None) or pl.price_list_name or "N/A"
+
+            versions_list.append({
+                "id": str(v.id),
+                "versionId": str(v.id),
+                "version": format_version(getattr(v, "version_number", "1.0")),
+                "versionNumber": getattr(v, "version_number", "1.0"),
+                "priceName": v_name,
+                "price_name": v_name,
+                "status": str(v.status or "DRAFT").upper(),
+                "validFrom": v_vf_str,
+                "validTo": v_vt_str,
+                "effectiveFrom": v_vf_str,
+                "effectiveTo": v_vt_str,
+            })
+
         return {
             "id": clean_code,
             "priceCode": clean_code,
             "price_code": clean_code,
             "versionId": str(ver.id),
-            "priceName": pl.price_list_name or "N/A",
-            "price_name": pl.price_list_name or "N/A",
+            "priceName": display_name,
+            "price_name": display_name,
             "scopeType": str(pl.scope_type or "CUSTOMER"),
             "scope_type": str(pl.scope_type or "CUSTOMER"),
             "targetType": str(pl.scope_type or "CUSTOMER"),
@@ -450,7 +533,9 @@ class PriceListService:
             "effective_from": vf_str,
             "effectiveTo": vt_str,
             "effective_to": vt_str,
-            "services": services_data
+            "services": services_data,
+            "items": services_data,
+            "versions": versions_list  # Bổ sung danh sách các phiên bản cho trang Lịch sử
         }
 
     @staticmethod
@@ -529,7 +614,13 @@ class PriceListService:
             raise HTTPException(status_code=400, detail=f"Lỗi tạo bảng giá: {str(e)}")
 
     @staticmethod
-    def update_price_list(db: Session, price_code: str, payload: PriceListCreate, current_user: Optional[CurrentUser] = None) -> Dict[str, Any]:
+    def update_price_list(
+        db: Session, 
+        price_code: str, 
+        payload: PriceListCreate, 
+        current_user: Optional[CurrentUser] = None
+    ) -> Dict[str, Any]:
+        # 1. Tìm PriceList theo Code hoặc UUID
         conds = [PriceList.price_list_code == price_code]
         try:
             conds.append(PriceList.id == uuid.UUID(price_code))
@@ -540,9 +631,22 @@ class PriceListService:
         if not pl:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
 
-        ver = PriceListService._get_latest_version(pl)
+        # 2. Ưu tiên lấy theo version_id gửi từ Payload (nếu có), nếu không mới lấy phiên bản mới nhất
+        payload_version_id = getattr(payload, "version_id", None)
+        if payload_version_id:
+            try:
+                target_ver_uuid = uuid.UUID(str(payload_version_id))
+                ver = db.query(PriceListVersion).filter(
+                    PriceListVersion.id == target_ver_uuid,
+                    PriceListVersion.price_list_id == pl.id
+                ).first()
+            except ValueError:
+                ver = None
+        else:
+            ver = PriceListService._get_latest_version(pl)
+
         if not ver:
-            raise HTTPException(status_code=404, detail=f"Bảng giá '{price_code}' chưa có phiên bản nào.")
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy phiên bản phù hợp của bảng giá '{price_code}'.")
 
         current_status = str(ver.status or "").upper()
         if current_status not in ["DRAFT", "REJECTED"]:
@@ -550,6 +654,7 @@ class PriceListService:
 
         target_status = payload.status.upper() if payload.status else current_status
 
+        # 3. Kiểm tra trùng lặp thời gian hiệu lực
         if target_status != "DRAFT":
             PriceListService._validate_overlapping_time(
                 db=db,
@@ -568,7 +673,9 @@ class PriceListService:
             pl.updated_at = now
             clean_code = PriceListService._ensure_valid_price_code(db, pl)
 
+            # 4. Phân nhánh xử lý theo trạng thái hiện tại
             if current_status == "REJECTED":
+                # Nếu bị Từ chối -> Sinh phiên bản mới
                 new_ver_num = PriceListService._generate_next_version_number(ver.version_number)
                 stage_val = "MANAGER_PENDING" if target_status == "SUBMITTED" else "DRAFT"
 
@@ -584,13 +691,18 @@ class PriceListService:
                     created_by=user_uuid,
                     created_at=now
                 )
+                # Đồng bộ tên bảng giá vào phiên bản mới
+                if hasattr(target_version, "price_list_name"):
+                    target_version.price_list_name = payload.price_name
+
                 db.add(target_version)
                 db.flush()
                 old_service_map = {}
             else:
+                # Cập nhật trực tiếp trên phiên bản DRAFT
                 target_version = ver
 
-                # 1. GHI LOG THAY ĐỔI THÔNG TIN CHUNG BẢNG GIÁ
+                # Ghi log cập nhật tên bảng giá
                 if pl.price_list_name != payload.price_name:
                     db.add(PriceChangeHistory(
                         id=uuid.uuid4(),
@@ -606,37 +718,11 @@ class PriceListService:
                     ))
                     pl.price_list_name = payload.price_name
 
-                if pl.scope_type != payload.target_type:
-                    db.add(PriceChangeHistory(
-                        id=uuid.uuid4(),
-                        price_list_version_id=target_version.id,
-                        entity_type="PRICE_LIST",
-                        entity_name=pl.price_list_code,
-                        field_name="scope_type",
-                        old_value=str(pl.scope_type or ""),
-                        new_value=str(payload.target_type or ""),
-                        change_reason="Thay đổi loại đối tượng áp dụng",
-                        changed_by=user_uuid,
-                        changed_at=now
-                    ))
-                    pl.scope_type = payload.target_type
+                    # Cập nhật tên vào phiên bản hiện tại
+                    if hasattr(target_version, "price_list_name"):
+                        target_version.price_list_name = payload.price_name
 
-                new_scope_id = payload.specific_target.strip() if (payload.target_type != "GENERAL" and payload.specific_target) else None
-                if pl.scope_id != new_scope_id:
-                    db.add(PriceChangeHistory(
-                        id=uuid.uuid4(),
-                        price_list_version_id=target_version.id,
-                        entity_type="PRICE_LIST",
-                        entity_name=pl.price_list_code,
-                        field_name="scope_id",
-                        old_value=str(pl.scope_id or "Chung"),
-                        new_value=str(new_scope_id or "Chung"),
-                        change_reason="Thay đổi đối tượng áp dụng cụ thể",
-                        changed_by=user_uuid,
-                        changed_at=now
-                    ))
-                    pl.scope_id = new_scope_id
-
+                # Ghi log thời gian bắt đầu
                 old_vf_str = target_version.valid_from.strftime("%d/%m/%Y") if target_version.valid_from else ""
                 new_vf_str = payload.effective_from.strftime("%d/%m/%Y") if payload.effective_from else ""
                 if old_vf_str != new_vf_str:
@@ -654,6 +740,7 @@ class PriceListService:
                     ))
                     target_version.valid_from = payload.effective_from
 
+                # Ghi log thời gian kết thúc
                 old_vt_str = target_version.valid_to.strftime("%d/%m/%Y") if target_version.valid_to else ""
                 new_vt_str = payload.effective_to.strftime("%d/%m/%Y") if payload.effective_to else ""
                 if old_vt_str != new_vt_str:
@@ -675,16 +762,18 @@ class PriceListService:
                 if target_status == "SUBMITTED":
                     target_version.approval_stage = "MANAGER_PENDING"
 
+                # Đọc danh sách dịch vụ cũ trước khi xóa
                 old_details = db.query(PriceListDetail).filter(
                     PriceListDetail.price_list_version_id == target_version.id
                 ).all()
                 old_service_map = {dt.service_item_id: dt.unit_price for dt in old_details}
 
+                # Xóa chi tiết cũ để ghi nhận chi tiết mới
                 db.query(PriceListDetail).filter(
                     PriceListDetail.price_list_version_id == target_version.id
                 ).delete(synchronize_session=False)
 
-            # 2. GHI LOG CẤU HÌNH ĐƠN GIÁ DỊCH VỤ (THÊM / CẬP NHẬT GIÁ)
+            # 5. Lưu danh sách Dịch vụ mới & Ghi Log
             new_service_ids = set()
 
             for item in payload.services:
@@ -741,7 +830,7 @@ class PriceListService:
                             changed_at=now
                         ))
 
-            # 3. GHI LOG XÓA DỊCH VỤ KHỎI BẢNG GIÁ
+            # 6. Ghi Log dịch vụ bị loại bỏ
             if current_status != "REJECTED":
                 for old_srv_id, old_price in old_service_map.items():
                     if old_srv_id not in new_service_ids:
@@ -769,12 +858,14 @@ class PriceListService:
                 "versionId": str(target_version.id),
                 "message": f"Cập nhật thành công phiên bản {format_version(target_version.version_number)}"
             }
+
         except HTTPException:
             db.rollback()
             raise
         except Exception as e:
             db.rollback()
             raise HTTPException(status_code=400, detail=f"Lỗi khi cập nhật bảng giá: {str(e)}")
+
 
     @staticmethod
     def approve_or_reject_price_list(
@@ -903,3 +994,216 @@ class PriceListService:
         except Exception as e:
             db.rollback()
             raise HTTPException(status_code=400, detail=f"Lỗi khi xóa dịch vụ: {str(e)}")
+
+    @staticmethod
+    def auto_expire_versions(db: Session) -> int:
+        """Tự động chuyển các bản ghi EFFECTIVE đã qua ngày valid_to sang EXPIRED"""
+        today = get_current_vn_time().date()
+        expired_versions = db.query(PriceListVersion).filter(
+            PriceListVersion.status == "EFFECTIVE",
+            PriceListVersion.valid_to.isnot(None),
+            PriceListVersion.valid_to < today
+        ).all()
+
+        for ver in expired_versions:
+            ver.status = "EXPIRED"
+
+        if expired_versions:
+            db.commit()
+
+        return len(expired_versions)
+
+    
+    @staticmethod
+    def create_new_version(
+        db: Session,
+        price_code: str,
+        payload: Any = None,
+        valid_from: Optional[Union[datetime, str]] = None,
+        valid_to: Optional[Union[datetime, str]] = None,
+        services: Optional[List[Dict[str, Any]]] = None,
+        current_user: Optional[Any] = None,
+        price_list_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Tạo phiên bản mới (SUBMITTED) từ phiên bản EFFECTIVE hiện tại."""
+        
+        # 1. Tìm Bảng giá gốc (PriceList)
+        conds = [PriceList.price_list_code == price_code]
+        try:
+            conds.append(PriceList.id == uuid.UUID(price_code))
+        except ValueError:
+            pass
+
+        pl = db.query(PriceList).options(joinedload(PriceList.versions)).filter(or_(*conds)).first()
+        if not pl:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy bảng giá '{price_code}'")
+
+        # 2. Lấy phiên bản EFFECTIVE hiện tại
+        current_ver = PriceListService._get_latest_version(pl)
+        if not current_ver:
+            raise HTTPException(status_code=404, detail=f"Bảng giá '{price_code}' chưa có phiên bản nào.")
+
+        if str(current_ver.status or "").upper() != "EFFECTIVE":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Chỉ có thể tạo phiên bản mới từ phiên bản đang 'EFFECTIVE'. Trạng thái hiện tại: '{current_ver.status}'"
+            )
+
+        try:
+            now = get_current_vn_time()
+            user_id = current_user.id if current_user else None
+            user_uuid = uuid.UUID(str(user_id)) if user_id and str(user_id) != "None" else None
+
+            # --- BẮT DỮ LIỆU TỪ PAYLOAD FRONTEND ---
+            raw_data = payload
+            if hasattr(payload, "dict"):
+                raw_data = payload.dict(by_alias=True)
+            elif hasattr(payload, "__dict__"):
+                raw_data = payload.__dict__
+
+            inner_data = {}
+            if isinstance(raw_data, dict):
+                inner_data = raw_data.get("data", raw_data) if isinstance(raw_data.get("data"), dict) else raw_data
+
+            # 1. Bắt tên mới dành riêng cho Phiên bản mới
+            extracted_new_name = (
+                price_list_name or
+                (getattr(payload, "price_name", None) if payload else None) or
+                (getattr(payload, "price_list_name", None) if payload else None) or
+                (getattr(payload, "priceName", None) if payload else None) or
+                inner_data.get("priceName") or
+                inner_data.get("price_name") or
+                inner_data.get("price_list_name") or
+                inner_data.get("currentPriceName") or
+                inner_data.get("name")
+            )
+
+            # Lấy tên cũ của version trước làm fallback nếu FE không truyền tên mới
+            current_ver_name = getattr(current_ver, 'price_list_name', None) or getattr(current_ver, 'price_name', None) or pl.price_list_name
+
+            # Nếu Frontend gửi tên mới thì dùng tên mới cho VERSION MỚI, ngược lại mới dùng lại tên cũ
+            new_version_name = str(extracted_new_name).strip() if extracted_new_name and str(extracted_new_name).strip() else current_ver_name
+
+            # GIỮ NGUYÊN pl.price_list_name (Không update bảng PriceList cha để bảo toàn tên gốc)
+
+            valid_from = valid_from or inner_data.get("valid_from") or inner_data.get("effective_from") or inner_data.get("validFrom") or inner_data.get("effectiveFrom")
+            valid_to = valid_to or inner_data.get("valid_to") or inner_data.get("effective_to") or inner_data.get("validTo") or inner_data.get("effectiveTo")
+            
+            if services is None:
+                services = (
+                    inner_data.get("services") or 
+                    inner_data.get("service_items") or 
+                    inner_data.get("serviceItems") or 
+                    inner_data.get("items") or 
+                    inner_data.get("details") or 
+                    inner_data.get("price_list_details")
+                )
+
+            def safe_parse_date(dt_val):
+                if not dt_val:
+                    return None
+                if isinstance(dt_val, datetime):
+                    return dt_val
+                try:
+                    return parse_date(str(dt_val))
+                except Exception:
+                    return None
+
+            parsed_valid_from = safe_parse_date(valid_from) or now
+            parsed_valid_to = safe_parse_date(valid_to)
+
+            # 3. Sinh số phiên bản mới
+            raw_next_ver = PriceListService._generate_next_version_number(current_ver.version_number)
+            clean_ver_str = str(raw_next_ver).lstrip("vV")
+            formatted_version = f"v{clean_ver_str}"
+
+            # Cập nhật thời hạn của phiên bản EFFECTIVE cũ
+            current_ver.valid_to = parsed_valid_from
+
+            # 4. CHỈ LƯU TÊN MỚI VÀO PHIÊN BẢN MỚI NÀY
+            new_ver = PriceListVersion(
+                id=uuid.uuid4(),
+                price_list_id=pl.id,
+                price_list_name=new_version_name,  # Tên mới gán riêng biệt tại bản ghi version này
+                version_number=formatted_version,
+                status="SUBMITTED",
+                approval_stage="MANAGER_PENDING",
+                valid_from=parsed_valid_from,
+                valid_to=parsed_valid_to,
+                parent_version_id=current_ver.id,
+                created_by=user_uuid,
+                created_at=now
+            )
+
+            db.add(new_ver)
+            db.flush()
+
+            # 5. LƯU DỊCH VỤ VÀO BẢNG price_list_detail
+            if services is not None and isinstance(services, list):
+                for item in services:
+                    target_service_id = PriceListService._resolve_service_item_id(db, item)
+                    
+                    if not target_service_id and isinstance(item, dict):
+                        raw_id = item.get("service_item_id") or item.get("service_id") or item.get("id") or item.get("serviceItemId")
+                        if raw_id:
+                            try:
+                                target_service_id = uuid.UUID(str(raw_id))
+                            except ValueError:
+                                pass
+                    
+                    if not target_service_id:
+                        continue
+
+                    if isinstance(item, dict):
+                        price_raw = item.get("unit_price", item.get("unitPrice", item.get("price", 0.0)))
+                    else:
+                        price_raw = getattr(item, "unit_price", getattr(item, "unitPrice", getattr(item, "price", 0.0)))
+
+                    new_price = safe_float(price_raw)
+
+                    detail = PriceListDetail(
+                        id=uuid.uuid4(),
+                        price_list_id=pl.id,
+                        price_list_version_id=new_ver.id,
+                        service_item_id=target_service_id,
+                        unit_price=new_price
+                    )
+                    db.add(detail)
+            else:
+                old_details = db.query(PriceListDetail).filter(
+                    PriceListDetail.price_list_version_id == current_ver.id
+                ).all()
+
+                for dt in old_details:
+                    new_dt = PriceListDetail(
+                        id=uuid.uuid4(),
+                        price_list_id=pl.id,
+                        price_list_version_id=new_ver.id,
+                        service_item_id=dt.service_item_id,
+                        unit_price=dt.unit_price
+                    )
+                    db.add(new_dt)
+
+            pl.updated_at = now
+            db.commit()
+
+            # Trả về Response chứa đúng tên của phiên bản mới
+            return {
+                "id": str(pl.id),
+                "priceCode": pl.price_list_code,
+                "priceName": new_version_name,
+                "price_list_name": new_version_name,
+                "price_name": new_version_name,
+                "versionId": str(new_ver.id),
+                "version": formatted_version,
+                "validFrom": new_ver.valid_from.isoformat() if new_ver.valid_from else None,
+                "validTo": new_ver.valid_to.isoformat() if new_ver.valid_to else None,
+                "message": f"Tạo thành công phiên bản mới {formatted_version} và đã gửi phê duyệt."
+            }
+
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Lỗi khi tạo phiên bản mới: {str(e)}")

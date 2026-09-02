@@ -8,6 +8,7 @@ import DashboardPage from './pages/HomePage';
 // Quản lý bảng giá
 import PriceManagementStaff from './pages/staff/PriceManagementPage.jsx';
 import CreatePriceListStaff from './pages/staff/CreatePriceListPage.jsx';
+import CreateNewVersionStaff from './pages/staff/CreateNewVersionPage.jsx';
 import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
 import PriceListHistoryDetail from './pages/PriceListHistoryDetail.jsx';
 
@@ -80,6 +81,7 @@ export default function App() {
           {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
           <Route path="/staff/price-lists" element={<PriceManagementStaff user={user} />} />
           <Route path="/staff/price-lists/create" element={<CreatePriceListStaff user={user} />} />
+          <Route path="/staff/price-lists/:id/create-version" element={<CreateNewVersionStaff user={user} />} />
           <Route path="/staff/price-lists/:id" element={<PriceListDetailStaff user={user} />} />
           <Route path="/staff/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
 

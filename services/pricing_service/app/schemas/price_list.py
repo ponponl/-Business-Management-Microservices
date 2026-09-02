@@ -71,7 +71,27 @@ class PriceListCreate(BaseModel):
     effective_from: date = Field(..., alias="effectiveFrom")
     effective_to: Optional[date] = Field(None, alias="effectiveTo")
     status: str = Field("DRAFT")
-    version: str = "1.0"
+    version: str = "v1.0"
     services: List[PriceListItemCreate]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class CreateNewVersionRequest(BaseModel):
+    price_name: Optional[str] = Field(None, alias="priceName")
+    valid_from: Optional[date] = Field(None, alias="validFrom")
+    valid_to: Optional[date] = Field(None, alias="validTo")
+    services: Optional[List[PriceListItemCreate]] = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class CreateNewVersionResponse(BaseModel):
+    id: str
+    price_code: str = Field(..., alias="priceCode")
+    price_name: Optional[str] = Field(None, alias="priceName")
+    version_id: str = Field(..., alias="versionId")
+    version: str
+    message: str
 
     model_config = ConfigDict(populate_by_name=True)

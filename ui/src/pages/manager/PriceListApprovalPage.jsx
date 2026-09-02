@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Layers, Hourglass, CheckCircle2, XCircle, Eye, Search, 
   Download, Check, X, AlertCircle, Loader2,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 
 const BASE_URL = 'http://localhost:8082/api/v1';
+const CONTRACT_SERVICE_URL = 'http://localhost:8083';
 
 export default function PriceListApprovalPage({ user }) {
   const token = localStorage.getItem('token');
@@ -25,6 +26,10 @@ export default function PriceListApprovalPage({ user }) {
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
+  const [customersMap, setCustomersMap] = useState({});
+  const [contractsMap, setContractsMap] = useState({});
+  const pendingFetches = useRef(new Set());
+
   const [activeStatusTab, setActiveStatusTab] = useState('Tất cả');
   const [selectedType, setSelectedType] = useState('Tất cả');
   const [searchInput, setSearchInput] = useState('');
@@ -36,6 +41,156 @@ export default function PriceListApprovalPage({ user }) {
   const [modalLoading, setModalLoading] = useState(false);
   const [rejectModal, setRejectModal] = useState({ isOpen: false, item: null, reason: '' });
   const [modalConfig, setModalConfig] = useState({ isOpen: false, type: '', title: '', message: '' });
+
+  // Hàm bóc tách mảng từ bất kỳ cấu trúc JSON nào
+  const extractList = (resData) => {
+    if (!resData) return [];
+    if (Array.isArray(resData)) return resData;
+    if (Array.isArray(resData.data)) return resData.data;
+    if (Array.isArray(resData.content)) return resData.content;
+    if (Array.isArray(resData.items)) return resData.items;
+    if (resData.data && Array.isArray(resData.data.items)) return resData.data.items;
+    if (resData.data && Array.isArray(resData.data.content)) return resData.data.content;
+    return [];
+  };
+
+  // 1. Tải toàn bộ Khách hàng & Hợp đồng từ API 8083
+  useEffect(() => {
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+    fetch(`${CONTRACT_SERVICE_URL}/api/v1/customers`, { headers })
+      .then(res => res.json())
+      .then(resData => {
+        const list = extractList(resData);
+        const map = {};
+        list.forEach((item) => {
+          const id = String(item.customer_id || item.id || item.customerId || '').trim().toLowerCase();
+          const code = String(item.customer_code || item.customerCode || item.code || '').trim();
+          const name = String(item.customer_name || item.customerName || item.full_name || item.name || '').trim();
+          
+          if (id) map[id] = { code, name };
+          if (code) map[code.toLowerCase()] = { code, name };
+        });
+        setCustomersMap(prev => ({ ...prev, ...map }));
+      })
+      .catch(err => console.error("Lỗi lấy danh sách khách hàng:", err));
+
+    fetch(`${CONTRACT_SERVICE_URL}/api/v1/contracts`, { headers })
+      .then(res => res.json())
+      .then(resData => {
+        const list = extractList(resData);
+        const map = {};
+        list.forEach((item) => {
+          const id = String(item.contract_id || item.id || '').trim().toLowerCase();
+          const code = String(item.contract_number || item.contract_code || item.code || '').trim();
+          const name = String(item.contract_name || item.title || '').trim();
+          
+          if (id) map[id] = { code, name };
+          if (code) map[code.toLowerCase()] = { code, name };
+        });
+        setContractsMap(prev => ({ ...prev, ...map }));
+      })
+      .catch(err => console.error("Lỗi lấy danh sách hợp đồng:", err));
+  }, [token]);
+
+  // 2. Fetch lẻ thông tin theo ID nếu không tìm thấy trong danh sách tổng
+  const fetchSingleItem = async (type, id) => {
+    if (!id || pendingFetches.current.has(`${type}_${id}`)) return;
+    pendingFetches.current.add(`${type}_${id}`);
+
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const endpoint = type === 'CUSTOMER' ? `customers/${id}` : `contracts/${id}`;
+
+    try {
+      const res = await fetch(`${CONTRACT_SERVICE_URL}/api/v1/${endpoint}`, { headers });
+      if (!res.ok) return;
+      const resData = await res.json();
+      const item = resData.data || resData.item || resData;
+
+      if (type === 'CUSTOMER') {
+        const name = item.customer_name || item.customerName || item.full_name || item.name || '';
+        const code = item.customer_code || item.customerCode || item.code || '';
+        setCustomersMap(prev => ({ ...prev, [id.toLowerCase()]: { name, code } }));
+      } else {
+        const name = item.contract_name || item.title || '';
+        const code = item.contract_number || item.contract_code || item.code || '';
+        setContractsMap(prev => ({ ...prev, [id.toLowerCase()]: { name, code } }));
+      }
+    } catch (err) {
+      console.error(`Lỗi fetch ${type} lẻ:`, err);
+    }
+  };
+
+  // 3. Hàm hiển thị Scope
+  const renderScopeInfo = (item) => {
+    if (!item) return null;
+
+    const scopeType = String(
+      item.target_type || item.targetType || item.scope_type || item.scopeType || item.type || ""
+    ).toUpperCase();
+
+    const scopeId = String(
+      item.specific_target || item.specificTarget || item.target || item.scope_id || item.scopeId || ""
+    ).trim();
+
+    if (!scopeId || scopeId === "null" || scopeId === "N/A" || scopeType === "GENERAL") {
+      return <span className="font-medium text-slate-400">Tất cả (Chung)</span>;
+    }
+
+    const key = scopeId.toLowerCase();
+
+    if (scopeType === "CUSTOMER") {
+      const customer = customersMap[key];
+      if (customer) {
+        const displayName = customer.name || customer.code;
+        const showCode = customer.code && customer.code.toLowerCase() !== displayName.toLowerCase();
+        return (
+          <span className="font-medium text-slate-400">
+            {displayName} {showCode ? `(${customer.code})` : ''}
+          </span>
+        );
+      }
+      fetchSingleItem('CUSTOMER', scopeId);
+    }
+
+    if (scopeType === "CONTRACT") {
+      const contract = contractsMap[key];
+      if (contract) {
+        const displayName = contract.name || contract.code;
+        const showCode = contract.code && contract.code.toLowerCase() !== displayName.toLowerCase();
+        return (
+          <span className="font-medium text-slate-400">
+            {displayName} {showCode ? `(${contract.code})` : ''}
+          </span>
+        );
+      }
+      fetchSingleItem('CONTRACT', scopeId);
+    }
+
+    const shortId = scopeId.length > 18 ? `${scopeId.substring(0, 8)}...${scopeId.substring(scopeId.length - 4)}` : scopeId;
+    return (
+      <span className="font-medium text-slate-400 font-mono">
+        {shortId}
+      </span>
+    );
+  };
+
+  // Helper lấy tên chính xác của Version / Bảng giá
+  const extractVersionName = (obj) => {
+    if (!obj) return '';
+    return (
+      obj.version_price_name ||
+      obj.versionPriceName ||
+      obj.version_name ||
+      obj.versionName ||
+      obj.price_list_name ||
+      obj.priceListName ||
+      obj.price_name ||
+      obj.priceName ||
+      obj.name ||
+      ''
+    );
+  };
 
   // Debounce tìm kiếm
   useEffect(() => {
@@ -125,7 +280,7 @@ export default function PriceListApprovalPage({ user }) {
         const term = debouncedSearch.trim().toLowerCase();
         rawList = rawList.filter(item => {
           const code = getItemCode(item).toLowerCase();
-          const name = (item.price_name || item.priceName || item.name || '').toLowerCase();
+          const name = extractVersionName(item).toLowerCase();
           const target = (item.specific_target || item.specificTarget || item.target || '').toLowerCase();
           return code.includes(term) || name.includes(term) || target.includes(term);
         });
@@ -411,7 +566,7 @@ export default function PriceListApprovalPage({ user }) {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/50 text-[11px] font-semibold text-slate-500">
                 <th className="py-3 px-4">Mã bảng giá</th>
-                <th className="py-3 px-4">Tên bảng giá / Đối tượng</th>
+                <th className="py-3 px-4">Tên phiên bản / Bảng giá</th>
                 <th className="py-3 px-4">Loại áp dụng</th>
                 <th className="py-3 px-4">Phiên bản</th>
                 <th className="py-3 px-4">Thời gian hiệu lực</th>
@@ -433,22 +588,21 @@ export default function PriceListApprovalPage({ user }) {
               ) : priceLists.length > 0 ? (
                 priceLists.map((item, index) => {
                   const code = getItemCode(item) || `PL-${index + 1}`;
-                  const name = item.price_name || item.priceName || item.name || 'Bảng giá dịch vụ';
-                  const subTarget = item.specific_target || item.specificTarget || item.target || 'N/A';
+                  const name = extractVersionName(item) || 'Bảng giá dịch vụ';
                   const targetType = item.target_type || item.targetType || 'GENERAL';
                   const effectiveFrom = item.effective_from || item.effectiveFrom || '-';
                   const effectiveTo = item.effective_to || item.effectiveTo || '-';
                   const updatedBy = item.updated_by || item.updatedBy || item.created_by || item.createdBy || 'Staff';
                   const updatedAt = item.updated_at || item.updatedAt || item.created_at || item.createdAt || '-';
                   const status = (item.status || 'DRAFT').toUpperCase();
-                  const versionStr = formatVersion(item.version);
+                  const versionStr = formatVersion(item.version || item.version_number);
 
                   return (
                     <tr key={code + index} className="hover:bg-slate-50/70 transition">
                       <td className="py-3 px-4 font-mono font-bold text-slate-900">{code}</td>
                       <td className="py-3 px-4 max-w-[220px]">
-                        <div className="font-bold text-slate-800 leading-snug truncate">{name}</div>
-                        <div className="text-[10px] font-mono text-slate-400 truncate leading-none mt-0.5">{subTarget}</div>
+                        <div className="font-bold text-slate-800 leading-snug truncate" title={name}>{name}</div>
+                        <div>{renderScopeInfo(item)}</div>
                       </td>
                       <td className="py-3 px-4">
                         <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px] font-semibold">{targetType}</span>
@@ -509,6 +663,7 @@ export default function PriceListApprovalPage({ user }) {
         const isSubmitted = (selectedItem.status || '').toUpperCase() === 'SUBMITTED';
         const isRejected = (selectedItem.status || '').toUpperCase() === 'REJECTED';
         const rejectReason = selectedItem.rejected_reason || selectedItem.reject_reason || selectedItem.comment || '';
+        const modalVersionName = extractVersionName(selectedItem) || 'Chi tiết bảng giá';
 
         return (
           <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
@@ -516,7 +671,7 @@ export default function PriceListApprovalPage({ user }) {
               <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                 <div className="flex items-center space-x-2">
                   <span className="text-[11px] font-mono text-sky-600 font-bold bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">{getItemCode(selectedItem)}</span>
-                  <h3 className="text-sm font-bold text-slate-900 truncate max-w-[300px]">{selectedItem.price_name || selectedItem.priceName || selectedItem.name || 'Chi tiết bảng giá'}</h3>
+                  <h3 className="text-sm font-bold text-slate-900 truncate max-w-[300px]" title={modalVersionName}>{modalVersionName}</h3>
                   {renderStatusBadge(selectedItem.status)}
                 </div>
                 <button onClick={() => setSelectedItem(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded transition cursor-pointer">
@@ -545,14 +700,14 @@ export default function PriceListApprovalPage({ user }) {
                   </div>
                   <div>
                     <span className="block text-slate-400 text-[10px] mb-0.5">Đối tượng cụ thể</span>
-                    <span className="font-semibold text-slate-800 bg-white px-2 py-1 rounded border border-slate-200 block truncate text-xs">
-                      {selectedItem.specific_target || selectedItem.specificTarget || selectedItem.target || 'N/A'}
+                    <span className="bg-white px-2 py-1 rounded border border-slate-200 block truncate text-xs">
+                      {renderScopeInfo(selectedItem)}
                     </span>
                   </div>
                   <div>
                     <span className="block text-slate-400 text-[10px] mb-0.5">Phiên bản</span>
                     <span className="font-semibold text-slate-800 font-mono bg-white px-2 py-1 rounded border border-slate-200 block text-xs">
-                      {formatVersion(selectedItem.version)}
+                      {formatVersion(selectedItem.version || selectedItem.version_number)}
                     </span>
                   </div>
                   <div className="col-span-2 sm:col-span-3 flex items-center space-x-3 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
