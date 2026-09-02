@@ -36,6 +36,24 @@ const formatDate = (dateString, includeTime = false) => {
   }
 };
 
+const formatLogValue = (value, fieldName, entityType) => {
+  if (value === null || value === undefined || value === "---" || value === "") {
+    return "---";
+  }
+  const isUnitPrice =
+    fieldName === "unit_price" ||
+    fieldName === "unitPrice" ||
+    entityType === "SERVICE_ITEM";
+
+  if (isUnitPrice) {
+    const num = Number(value);
+    if (!isNaN(num)) {
+      return `${num.toLocaleString("vi-VN")} VND`;
+    }
+  }
+  return value;
+};
+
 export const PriceListHistoryDetail = ({
   priceListId: propPriceListId,
   priceListCode: propPriceListCode,
@@ -743,13 +761,13 @@ export const PriceListHistoryDetail = ({
                             <div>
                               <p className="text-xs text-slate-400 mb-1">Giá trị cũ:</p>
                               <p className="text-sm font-semibold text-slate-600 line-through">
-                                {log.old_value || "---"}
+                                {formatLogValue(log.old_value, log.field_name, log.entity_type)}
                               </p>
                             </div>
                             <div>
                               <p className="text-xs text-slate-400 mb-1">Giá trị mới:</p>
                               <p className="text-sm font-bold text-[#3B6E66]">
-                                {log.new_value || "---"}
+                                {formatLogValue(log.new_value, log.field_name, log.entity_type)}
                               </p>
                             </div>
                           </div>
