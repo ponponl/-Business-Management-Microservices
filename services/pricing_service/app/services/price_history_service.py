@@ -20,6 +20,9 @@ from app.schemas.price_history import (
     PriceDetailItem,
     ChangeHistoryItem,
     UsageLogItem,
+    VersionCompareHeader,
+    PriceComparisonItem,
+    VersionComparisonResponse,
 )
 
 
@@ -213,3 +216,113 @@ class PriceHistoryService:
             )
             for log, srv in logs
         ]
+
+    @staticmethod
+    def compare_versions(
+        db: Session, 
+        source_version_id: UUID, 
+        target_version_id: UUID
+    ) -> VersionComparisonResponse:
+        """So sánh chênh lệch đơn giá giữa 2 phiên bản (Ví dụ: v3.0 Cũ vs v3.1 Mới)."""
+        source_ver = db.query(PriceListVersion).filter(PriceListVersion.id == source_version_id).first()
+        target_ver = db.query(PriceListVersion).filter(PriceListVersion.id == target_version_id).first()
+
+        if not source_ver or not target_ver:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Một trong hai phiên bản không tồn tại."
+            )
+
+        # 1. Truy vấn danh sách chi tiết đơn giá kèm thông tin Dịch vụ của cả 2 phiên bản
+        source_details = (
+            db.query(PriceListDetail, ServiceItem)
+            .join(ServiceItem, PriceListDetail.service_item_id == ServiceItem.id)
+            .filter(PriceListDetail.price_list_version_id == source_version_id)
+            .all()
+        )
+
+        target_details = (
+            db.query(PriceListDetail, ServiceItem)
+            .join(ServiceItem, PriceListDetail.service_item_id == ServiceItem.id)
+            .filter(PriceListDetail.price_list_version_id == target_version_id)
+            .all()
+        )
+
+        # 2. Gom nhóm thông tin đơn giá theo từng service_item_id
+        services_map: Dict[UUID, dict] = {}
+
+        for detail, service in source_details:
+            services_map[service.id] = {
+                "service_code": service.service_code,
+                "service_name": service.service_name,
+                "unit": service.unit,
+                "old_price": float(detail.unit_price or 0.0),
+                "new_price": None
+            }
+
+        for detail, service in target_details:
+            if service.id in services_map:
+                services_map[service.id]["new_price"] = float(detail.unit_price or 0.0)
+            else:
+                services_map[service.id] = {
+                    "service_code": service.service_code,
+                    "service_name": service.service_name,
+                    "unit": service.unit,
+                    "old_price": None,
+                    "new_price": float(detail.unit_price or 0.0)
+                }
+
+        # 3. Tính toán chênh lệch số tiền, % chênh lệch và trạng thái
+        comparison_items: List[PriceComparisonItem] = []
+
+        for service_id, data in services_map.items():
+            old_p = data["old_price"]
+            new_p = data["new_price"]
+            diff = None
+            pct = None
+            item_status = "UNCHANGED"
+
+            if old_p is not None and new_p is not None:
+                diff = round(new_p - old_p, 2)
+                if old_p > 0:
+                    pct = round((diff / old_p) * 100, 2)
+                
+                if diff > 0:
+                    item_status = "INCREASED"
+                elif diff < 0:
+                    item_status = "DECREASED"
+                else:
+                    item_status = "UNCHANGED"
+            elif old_p is None and new_p is not None:
+                item_status = "ADDED"
+            elif old_p is not None and new_p is None:
+                item_status = "REMOVED"
+
+            comparison_items.append(
+                PriceComparisonItem(
+                    service_item_id=service_id,
+                    service_code=data["service_code"],
+                    service_name=data["service_name"],
+                    unit=data["unit"],
+                    old_price=old_p,
+                    new_price=new_p,
+                    price_difference=diff,
+                    percentage_change=pct,
+                    status=item_status
+                )
+            )
+
+        # Lấy tên bảng giá hiển thị
+        price_list_name = (
+            getattr(target_ver, "price_list_name", None) or 
+            getattr(source_ver, "price_list_name", None) or 
+            (source_ver.price_list.price_list_name if source_ver.price_list else "")
+        )
+
+        return VersionComparisonResponse(
+            price_list_id=source_ver.price_list_id,
+            price_list_name=price_list_name,
+            source_version=VersionCompareHeader.model_validate(source_ver),
+            target_version=VersionCompareHeader.model_validate(target_ver),
+            comparison_items=comparison_items
+        )

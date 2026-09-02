@@ -249,6 +249,17 @@ export const PriceListHistoryDetail = ({
     }
   };
 
+  const handleCompareClick = () => {
+    if (selectedVersionsForCompare.length === 2) {
+      navigate('/staff/price-lists/compare', {
+        state: {
+          version1Id: selectedVersionsForCompare[0],
+          version2Id: selectedVersionsForCompare[1],
+        },
+      });
+    }
+  };
+
   const handleCreateNewVersionClick = () => {
     if (!isCreateVersionAllowed) return;
 
@@ -442,6 +453,7 @@ export const PriceListHistoryDetail = ({
 
           <button
             disabled={selectedVersionsForCompare.length !== 2}
+            onClick={handleCompareClick}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg font-medium text-sm transition ${
               selectedVersionsForCompare.length === 2
                 ? "bg-white text-slate-700 border border-slate-300 shadow-sm cursor-pointer hover:bg-slate-50"
