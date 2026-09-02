@@ -66,54 +66,62 @@ class ApprovalService:
 
     @staticmethod
     def get_approval_stats(db: Session) -> Dict[str, int]:
-        results = (
-            db.query(PriceListVersion.status, func.count(PriceListVersion.id))
-            .join(PriceList, PriceList.id == PriceListVersion.price_list_id)
-            .filter(or_(PriceList.is_deleted == False, PriceList.is_deleted == None))
-            .group_by(PriceListVersion.status)
-            .all()
-        )
+        price_lists = db.query(PriceList).options(
+            joinedload(PriceList.versions)
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
+        ).all()
 
         stats = {"total": 0, "submitted": 0, "approved": 0, "effective": 0, "rejected": 0}
 
-        for st_raw, count in results:
-            st = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
-            stats["total"] += count
+        for pl in price_lists:
+            latest_v = ApprovalService._get_latest_version(pl)
+            if not latest_v:
+                continue
+
+            stats["total"] += 1
+            st = str(getattr(latest_v, "status", "")).strip().upper()
+            if hasattr(latest_v.status, "value"):
+                st = str(latest_v.status.value).strip().upper()
+
             if st == "SUBMITTED":
-                stats["submitted"] = count
+                stats["submitted"] += 1
             elif st == "APPROVED":
-                stats["approved"] = count
+                stats["approved"] += 1
             elif st == "EFFECTIVE":
-                stats["effective"] = count
+                stats["effective"] += 1
             elif st == "REJECTED":
-                stats["rejected"] = count
+                stats["rejected"] += 1
 
         return stats
 
     @staticmethod
     def get_director_approval_stats(db: Session) -> Dict[str, int]:
-        results = (
-            db.query(PriceListVersion.status, func.count(PriceListVersion.id))
-            .join(PriceList, PriceList.id == PriceListVersion.price_list_id)
-            .filter(
-                or_(PriceList.is_deleted == False, PriceList.is_deleted == None),
-                PriceListVersion.status.in_(["APPROVED", "EFFECTIVE", "REJECTED"])
-            )
-            .group_by(PriceListVersion.status)
-            .all()
-        )
+        price_lists = db.query(PriceList).options(
+            joinedload(PriceList.versions)
+        ).filter(
+            or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
+        ).all()
 
         stats = {"total": 0, "approved": 0, "effective": 0, "rejected": 0}
 
-        for st_raw, count in results:
-            st = str(st_raw.value if hasattr(st_raw, "value") else st_raw).strip().upper()
-            stats["total"] += count
-            if st == "APPROVED":
-                stats["approved"] = count
-            elif st == "EFFECTIVE":
-                stats["effective"] = count
-            elif st == "REJECTED":
-                stats["rejected"] = count
+        for pl in price_lists:
+            latest_v = ApprovalService._get_latest_version(pl)
+            if not latest_v:
+                continue
+
+            st = str(getattr(latest_v, "status", "")).strip().upper()
+            if hasattr(latest_v.status, "value"):
+                st = str(latest_v.status.value).strip().upper()
+
+            if st in ["APPROVED", "EFFECTIVE", "REJECTED"]:
+                stats["total"] += 1
+                if st == "APPROVED":
+                    stats["approved"] += 1
+                elif st == "EFFECTIVE":
+                    stats["effective"] += 1
+                elif st == "REJECTED":
+                    stats["rejected"] += 1
 
         return stats
 
@@ -214,48 +222,50 @@ class ApprovalService:
 
     @staticmethod
     def get_approval_list(db: Session, status: Optional[str] = None) -> List[ApprovalResponse]:
-        versions = db.query(PriceListVersion).join(
-            PriceList, PriceList.id == PriceListVersion.price_list_id
-        ).options(
-            joinedload(PriceListVersion.price_list)
+        price_lists = db.query(PriceList).options(
+            joinedload(PriceList.versions)
         ).filter(
             or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
-        ).order_by(desc(PriceListVersion.created_at)).all()
+        ).all()
 
         clean_status = status.strip().upper() if status and status.strip() else None
 
         results = []
-        for ver in versions:
-            pl = ver.price_list
-            if not pl:
+        for pl in price_lists:
+            latest_ver = ApprovalService._get_latest_version(pl)
+            if not latest_ver:
                 continue
-            res = ApprovalService._build_version_approval_response(db=db, price_list=pl, version=ver, message="Lấy thông tin thành công")
+            
+            res = ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_ver, message="Lấy thông tin thành công")
             if not clean_status or clean_status in ["TẤT CẢ", "ALL"] or res.status.upper() == clean_status:
                 results.append(res)
+                
+        results.sort(key=lambda x: x.updated_at or "", reverse=True)
         return results
 
     @staticmethod
     def get_director_approval_list(db: Session, status: Optional[str] = None) -> List[ApprovalResponse]:
-        versions = db.query(PriceListVersion).join(
-            PriceList, PriceList.id == PriceListVersion.price_list_id
-        ).options(
-            joinedload(PriceListVersion.price_list)
+        price_lists = db.query(PriceList).options(
+            joinedload(PriceList.versions)
         ).filter(
             or_(PriceList.is_deleted == False, PriceList.is_deleted == None)
-        ).order_by(desc(PriceListVersion.created_at)).all()
+        ).all()
 
         clean_status = status.strip().upper() if status and status.strip() else None
         ALLOWED_STATUSES = ["APPROVED", "EFFECTIVE", "REJECTED"]
 
         results = []
-        for ver in versions:
-            pl = ver.price_list
-            if not pl:
+        for pl in price_lists:
+            latest_ver = ApprovalService._get_latest_version(pl)
+            if not latest_ver:
                 continue
-            res = ApprovalService._build_version_approval_response(db=db, price_list=pl, version=ver, message="Lấy thông tin thành công")
+
+            res = ApprovalService._build_version_approval_response(db=db, price_list=pl, version=latest_ver, message="Lấy thông tin thành công")
             if res.status in ALLOWED_STATUSES:
                 if not clean_status or clean_status in ["TẤT CẢ", "ALL"] or res.status.upper() == clean_status:
                     results.append(res)
+
+        results.sort(key=lambda x: x.updated_at or "", reverse=True)
         return results
 
     @staticmethod
@@ -365,7 +375,6 @@ class ApprovalService:
                 created_at=now_vn
             )
             
-            # Gán lại tên nếu model có hỗ trợ
             if hasattr(active_version, "price_list_name"):
                 active_version.price_list_name = getattr(latest_v, "price_list_name", pl.price_list_name)
 

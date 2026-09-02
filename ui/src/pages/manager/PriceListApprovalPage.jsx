@@ -258,16 +258,33 @@ export default function PriceListApprovalPage({ user }) {
       const data = await res.json();
       let rawList = Array.isArray(data) ? data : (data.items || data.data || []);
 
-      // Lọc loại bỏ trùng mã
-      const seenCodes = new Set();
-      rawList = rawList.filter(item => {
+      // Gom nhóm và chỉ lấy phiên bản mới nhất của mỗi mã bảng giá
+      const latestVersionsMap = new Map();
+
+      rawList.forEach(item => {
         const code = getItemCode(item);
-        if (!code || seenCodes.has(code)) {
-          return false;
+        if (!code) return;
+
+        if (!latestVersionsMap.has(code)) {
+          latestVersionsMap.set(code, item);
+        } else {
+          const existing = latestVersionsMap.get(code);
+          const existingVer = parseFloat(String(existing.version || existing.version_number || 0).replace(/[^\d.]/g, '')) || 0;
+          const currentVer = parseFloat(String(item.version || item.version_number || 0).replace(/[^\d.]/g, '')) || 0;
+
+          if (currentVer > existingVer) {
+            latestVersionsMap.set(code, item);
+          } else if (currentVer === existingVer) {
+            const existingTime = new Date(existing.created_at || existing.createdAt || 0).getTime();
+            const currentTime = new Date(item.created_at || item.createdAt || 0).getTime();
+            if (currentTime > existingTime) {
+              latestVersionsMap.set(code, item);
+            }
+          }
         }
-        seenCodes.add(code);
-        return true;
       });
+
+      rawList = Array.from(latestVersionsMap.values());
 
       if (selectedType !== 'Tất cả') {
         rawList = rawList.filter(item => {
