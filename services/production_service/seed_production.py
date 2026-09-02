@@ -14,13 +14,15 @@ Base.metadata.create_all(bind=engine)
 def seed_data():
     db = SessionLocal()
     try:
-        print("Đang xóa dữ liệu cũ (Production)...")
-        db.query(UnlockPeriodRequest).delete()
-        db.query(VolumeAuditLog).delete()
-        db.query(OperationOutboxEvent).delete()
-        db.query(OperationVolume).delete()
-        db.query(OperationPeriod).delete()
-        db.commit()
+        print("Đang xóa dữ liệu và tạo lại bảng (Production)...")
+        UnlockPeriodRequest.__table__.drop(engine, checkfirst=True)
+        VolumeAuditLog.__table__.drop(engine, checkfirst=True)
+        OperationOutboxEvent.__table__.drop(engine, checkfirst=True)
+        OperationVolume.__table__.drop(engine, checkfirst=True)
+        OperationPeriod.__table__.drop(engine, checkfirst=True)
+        
+        # Tạo lại các bảng với schema mới nhất
+        Base.metadata.create_all(bind=engine)
 
         print("Đang tạo kỳ sản lượng (Periods)...")
         # Kỳ quá khứ xa (Đã khóa)
