@@ -16,7 +16,7 @@ from models.payment import (
     PaymentWorkflow,
     PaymentWorkflowStep,
 )
-from schemas.payment import ActionInput, PaymentBoardInput
+from schemas.payment import ActionInput, CreateAdjustmentRequest, PaymentBoardInput
 from services.source_validation import validate_payment_sources
 from services.workflow import create_workflow, current_step
 from utils.calculations import calculate_totals
@@ -58,6 +58,16 @@ def serialize(statement: PaymentBoard):
         "periodStart": statement.period_start.isoformat(),
         "periodEnd": statement.period_end.isoformat(),
         "status": statement.status,
+        "paymentType": statement.payment_type,
+        "parentPaymentId": statement.parent_payment_id,
+        "isSuperseded": statement.status == "SUPERSEDED",
+        "adjustmentReason": statement.adjustment_reason,
+        "adjustments": [{
+            "id": adjustment.id,
+            "code": adjustment.code,
+            "status": adjustment.status,
+            "paymentType": adjustment.payment_type,
+        } for adjustment in statement.adjustments],
         "taxPercent": float(statement.tax_percent),
         "subTotal": float(subtotal),
         "taxAmount": float(tax),
@@ -104,7 +114,17 @@ def make_items(items):
     ) for item in items]
 
 
-def create_board(payload: PaymentBoardInput, items, code: str, created_by: str, reference_id: str | None = None):
+def create_board(
+    payload: PaymentBoardInput,
+    items,
+    code: str,
+    created_by: str,
+    reference_id: str | None = None,
+    payment_type: str = "STANDARD",
+    parent_payment_id: str | None = None,
+    status: str = "CALCULATED",
+    adjustment_reason: str | None = None,
+):
     statement = PaymentBoard(
         code=code,
         customer_id=payload.customer_id,
@@ -115,7 +135,10 @@ def create_board(payload: PaymentBoardInput, items, code: str, created_by: str, 
         tax_percent=payload.tax_percent,
         reference_id=reference_id or payload.reference_id or payload.period_id,
         created_by=created_by,
-        status="CALCULATED",
+        status=status,
+        payment_type=payment_type,
+        parent_payment_id=parent_payment_id,
+        adjustment_reason=adjustment_reason,
     )
     statement.items = make_items(items)
     statement.sub_total, statement.tax_amount, statement.total_amount = calculate_totals(statement)
@@ -126,7 +149,7 @@ def change_status(payment_id: str, next_status: str, payload: ActionInput, db: S
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
-    allowed = {"RECONCILED": {"CALCULATED", "REVISION_REQUESTED"}, "SUBMITTED": {"RECONCILED"}, "APPROVED": {"SUBMITTED"}, "REJECTED": {"SUBMITTED"}, "REVISION_REQUESTED": {"SUBMITTED"}}
+    allowed = {"RECONCILED": {"DRAFT", "CALCULATED", "REVISION_REQUESTED"}, "SUBMITTED": {"RECONCILED"}, "APPROVED": {"SUBMITTED"}, "REJECTED": {"SUBMITTED"}, "REVISION_REQUESTED": {"SUBMITTED"}}
     if statement.status not in allowed[next_status]:
         raise HTTPException(409, f"Không thể chuyển từ {statement.status} sang {next_status}")
     subtotal, tax, total = calculate_totals(statement)
@@ -221,10 +244,20 @@ def production_volumes(contract_id: str, period_key: str):
 
 
 @router.get("/payments")
-def list_payments(status_filter: str | None = Query(None, alias="status"), search: str | None = None, db: Session = Depends(get_db)):
+def list_payments(
+    status_filter: str | None = Query(None, alias="status"),
+    payment_type: str | None = Query(None, alias="paymentType"),
+    include_superseded: bool = Query(True, alias="includeSuperseded"),
+    search: str | None = None,
+    db: Session = Depends(get_db),
+):
     query = select(PaymentBoard).order_by(PaymentBoard.created_at.desc())
     if status_filter and status_filter != "Tất cả":
         query = query.where(PaymentBoard.status == status_filter.upper())
+    if payment_type:
+        query = query.where(PaymentBoard.payment_type == payment_type.upper())
+    if not include_superseded:
+        query = query.where(PaymentBoard.status != "SUPERSEDED")
     if search:
         query = query.where(PaymentBoard.code.ilike(f"%{search.strip()}%"))
     items = db.scalars(query).all()
@@ -352,8 +385,26 @@ def issue_payment(payment_id: str, request: Request, db: Session = Depends(get_d
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
     if statement.status != "SIGNED":
         raise HTTPException(409, "Chỉ bảng thanh toán đã ký mới được phát hành")
+    active_adjustment = db.scalar(select(PaymentBoard.id).where(
+        PaymentBoard.parent_payment_id == statement.id,
+        PaymentBoard.payment_type == "ADJUSTMENT",
+        PaymentBoard.status.not_in({"REJECTED", "CANCELLED"}),
+    ).limit(1))
+    if active_adjustment:
+        raise HTTPException(409, "Bảng thanh toán đã có hồ sơ điều chỉnh và không thể phát hành")
+    actor = request.headers.get("X-User", "STAFF")
+    username = request.headers.get("X-Username", "")
+    if statement.created_by not in {actor, username}:
+        raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được phát hành")
     statement.status = "ISSUED"
     add_event(db, "payment.issued", statement)
+    if statement.payment_type == "ADJUSTMENT" and statement.parent_payment_id:
+        parent = db.execute(select(PaymentBoard).where(
+            PaymentBoard.id == statement.parent_payment_id
+        ).with_for_update()).scalar_one_or_none()
+        if parent and parent.status in {"SIGNED", "ISSUED"}:
+            parent.status = "SUPERSEDED"
+            add_event(db, "payment.superseded", parent)
     db.commit()
     db.refresh(statement)
     return serialize(statement)
@@ -393,20 +444,72 @@ def get_workflow(payment_id: str, db: Session = Depends(get_db)):
     } for step in sorted(workflow.steps, key=lambda item: item.step_no)]}
 
 
-@router.post("/payments/{payment_id}/adjustment", status_code=status.HTTP_201_CREATED)
-def create_adjustment(payment_id: str, payload: PaymentBoardInput, request: Request, db: Session = Depends(get_db)):
-    original = db.get(PaymentBoard, payment_id)
+@router.post("/payments/{payment_id}/adjustments", status_code=status.HTTP_201_CREATED)
+@router.post("/payments/{payment_id}/adjustment", status_code=status.HTTP_201_CREATED, include_in_schema=False)
+def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request: Request, db: Session = Depends(get_db)):
+    original = db.execute(select(PaymentBoard).where(
+        PaymentBoard.id == payment_id
+    ).with_for_update()).scalar_one_or_none()
     if not original:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán gốc")
-    if original.status not in {"APPROVED", "SIGNED", "ISSUED"}:
-        raise HTTPException(409, "Chỉ hồ sơ đã duyệt hoặc đã ký mới được tạo điều chỉnh")
-    code = payload.code or f"ADJ-{datetime.utcnow():%Y%m%d%H%M%S}"
+    if original.status not in {"SIGNED", "ISSUED"}:
+        raise HTTPException(409, "Chỉ hồ sơ đã ký mới được tạo điều chỉnh")
+    existing_adjustment = db.scalar(select(PaymentBoard.id).where(
+        PaymentBoard.parent_payment_id == original.id,
+        PaymentBoard.payment_type == "ADJUSTMENT",
+        PaymentBoard.status.in_({"DRAFT", "SUBMITTED", "APPROVED", "SIGNING", "PENDING_SIGN", "SIGNED", "ISSUED"}),
+    ).limit(1))
+    if existing_adjustment:
+        raise HTTPException(409, "Đã tồn tại hồ sơ điều chỉnh đang xử lý hoặc đã có hiệu lực")
+    actor = request.headers.get("X-User", "STAFF")
+    username = request.headers.get("X-Username", "")
+    if original.created_by not in {actor, username}:
+        raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được tạo điều chỉnh")
+    adjustment_count = db.scalar(select(func.count(PaymentBoard.id)).where(
+        PaymentBoard.parent_payment_id == original.id,
+        PaymentBoard.payment_type == "ADJUSTMENT",
+    )) or 0
+    code = f"{original.code}-ADJ{adjustment_count + 1}"
     if db.scalar(select(PaymentBoard).where(PaymentBoard.code == code)):
         raise HTTPException(409, "Mã bảng điều chỉnh đã tồn tại")
-    items = validate_payment_sources(payload, request.headers.get("Authorization"))
-    statement = create_board(payload, items, code, request.headers.get("X-User", "STAFF"), original.id)
+    items = [{
+        "service_code": item.service_code,
+        "service_name": item.service_name,
+        "unit": item.unit,
+        "quantity": item.quantity,
+        "unit_price": item.unit_price,
+    } for item in original.items]
+    adjustment_payload = PaymentBoardInput(
+        customerId=original.customer_id,
+        contractId=original.contract_id,
+        priceTableId=original.price_table_id,
+        periodStart=original.period_start,
+        periodEnd=original.period_end,
+        taxPercent=original.tax_percent,
+        referenceId=original.reference_id,
+        periodId=original.period_start.strftime("%Y-%m"),
+        items=[{
+            "serviceCode": item["service_code"],
+            "serviceName": item["service_name"],
+            "unit": item["unit"],
+            "quantity": item["quantity"],
+            "unitPrice": item["unit_price"],
+        } for item in items],
+    )
+    statement = create_board(
+        adjustment_payload,
+        items,
+        code,
+        request.headers.get("X-User", "STAFF"),
+        original.id,
+        payment_type="ADJUSTMENT",
+        parent_payment_id=original.id,
+        status="DRAFT",
+        adjustment_reason=payload.adjustment_reason,
+    )
     db.add(statement)
     db.flush()
+    add_event(db, "payment.adjustment_created", statement)
     db.commit()
     db.refresh(statement)
     return serialize(statement)

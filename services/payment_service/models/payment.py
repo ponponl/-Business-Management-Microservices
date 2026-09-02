@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.orm import relationship
 
 from models.database import Base
@@ -23,12 +23,21 @@ class PaymentBoard(Base):
     tax_amount = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
     total_amount = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
     status = Column(String(30), default="DRAFT", nullable=False)
+    payment_type = Column(String(30), default="STANDARD", nullable=False)
+    parent_payment_id = Column(String(36), ForeignKey("payment_boards.id", ondelete="SET NULL"), nullable=True, index=True)
+    adjustment_reason = Column(Text, nullable=True)
     reference_id = Column(String(36), nullable=True)
     created_by = Column(String(36), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     items = relationship("PaymentDetail", back_populates="statement", cascade="all, delete-orphan")
     signatures = relationship("PaymentSignature", back_populates="statement", cascade="all, delete-orphan")
+    parent_payment = relationship("PaymentBoard", remote_side=[id], back_populates="adjustments")
+    adjustments = relationship("PaymentBoard", back_populates="parent_payment", passive_deletes=True)
+
+    __table_args__ = (
+        Index("ix_payment_boards_parent_status", "parent_payment_id", "status"),
+    )
 
 
 class PaymentSignature(Base):
