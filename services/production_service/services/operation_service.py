@@ -1,11 +1,10 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from models.operation import OperationVolume, OperationPeriod, VolumeAuditLog, OperationOutboxEvent
 from models.cache import ContractCache
 from schemas.operation import VolumeCreate, VolumeUpdate
 from producers.event_producer import publish_volume_recorded
 import json
-from datetime import datetime
 
 class OperationService:
     @staticmethod
@@ -36,16 +35,13 @@ class OperationService:
         if not period:
             period = OperationPeriod(period_key=volume_in.period_key, status="OPEN")
             db.add(period)
-            db.commit()
-            db.refresh(period)
 
         new_volume = OperationVolume(
             **volume_in.model_dump(),
             recorded_by=user_id
         )
         db.add(new_volume)
-        db.commit()
-        db.refresh(new_volume)
+        db.flush()  # Dùng flush để lấy new_volume.id mà không cần commit sớm
 
         audit = VolumeAuditLog(
             volume_id=new_volume.id,
@@ -105,8 +101,7 @@ class OperationService:
         if volume_in.service_code:
             volume.service_code = volume_in.service_code
             
-        db.commit()
-        db.refresh(volume)
+        db.flush()  # Dùng flush để đánh dấu thay đổi thay vì commit sớm
         
         new_data = {
             "quantity": volume.quantity,

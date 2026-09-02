@@ -1,6 +1,5 @@
 from aiokafka import AIOKafkaConsumer
 import json
-import asyncio
 from core.config import settings
 from core.database import SessionLocal
 from models.cache import ContractCache

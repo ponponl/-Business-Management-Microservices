@@ -27,9 +27,6 @@ class VolumeUpdate(BaseModel):
     unit: Optional[str] = None
     service_code: Optional[str] = None
 
-class PeriodLockRequest(BaseModel):
-    pass 
-
 class UnlockRequestCreate(BaseModel):
     reason: str
     target_type: Optional[str] = "PERIOD"

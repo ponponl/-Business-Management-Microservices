@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 // Common Modal Backdrop
 const Modal = ({ isOpen, onClose, title, children }) => {
@@ -143,6 +143,13 @@ export const EditVolumeModal = ({ isOpen, onClose, volume, onRefresh }) => {
 export const UnlockRequestModal = ({ isOpen, onClose, volume, onRefresh }) => {
     const [reason, setReason] = useState('');
     const [loading, setLoading] = useState(false);
+    const idempotencyKey = useRef(null);
+
+    useEffect(() => {
+        if (isOpen) {
+            idempotencyKey.current = crypto.randomUUID();
+        }
+    }, [isOpen]);
 
     const handleSubmit = async () => {
         if (!volume || !reason.trim()) return;
@@ -153,7 +160,8 @@ export const UnlockRequestModal = ({ isOpen, onClose, volume, onRefresh }) => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${token}`,
+                    'Idempotency-Key': idempotencyKey.current
                 },
                 body: JSON.stringify({ reason })
             });
@@ -280,12 +288,14 @@ export const UnlockVolumeModal = ({ isOpen, onClose, volume, onRefresh }) => {
     const [proposedQuantity, setProposedQuantity] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const idempotencyKey = useRef(null);
 
     useEffect(() => {
         if (isOpen && volume) {
             setProposedQuantity(volume.quantity);
             setReason('');
             setError(null);
+            idempotencyKey.current = crypto.randomUUID();
         }
     }, [isOpen, volume]);
 
@@ -300,7 +310,8 @@ export const UnlockVolumeModal = ({ isOpen, onClose, volume, onRefresh }) => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${token}`,
+                    'Idempotency-Key': idempotencyKey.current
                 },
                 body: JSON.stringify({
                     reason,

@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
-from models.operation import OperationPeriod, UnlockPeriodRequest, OperationVolume, OperationOutboxEvent
+from models.operation import OperationPeriod, UnlockPeriodRequest, OperationVolume, OperationOutboxEvent, VolumeAuditLog
 from schemas.operation import UnlockRequestCreate, UnlockApprove
 from producers.event_producer import publish_period_unlocked
 import json
@@ -12,6 +12,19 @@ class UnlockService:
         period = db.query(OperationPeriod).filter(OperationPeriod.period_key == period_key).first()
         if not period or period.status != "LOCKED":
             raise HTTPException(status_code=400, detail="Period not locked or not found")
+            
+        # Chặn tạo nhiều Request PENDING cho cùng 1 đối tượng
+        query = db.query(UnlockPeriodRequest).filter(
+            UnlockPeriodRequest.period_key == period_key,
+            UnlockPeriodRequest.status == "PENDING",
+            UnlockPeriodRequest.target_type == request_in.target_type
+        )
+        if request_in.target_type == "VOLUME":
+            query = query.filter(UnlockPeriodRequest.target_volume_id == request_in.target_volume_id)
+            
+        existing_request = query.first()
+        if existing_request:
+            raise HTTPException(status_code=400, detail="Đã có yêu cầu đang chờ duyệt cho đối tượng này")
             
         req = UnlockPeriodRequest(
             period_key=period_key,
@@ -49,7 +62,7 @@ class UnlockService:
             if req.target_type == "VOLUME" and req.target_volume_id:
                 volume = db.query(OperationVolume).filter(OperationVolume.id == req.target_volume_id).first()
                 if volume:
-                    from models.operation import VolumeAuditLog
+
                     old_data = json.dumps({"quantity": volume.quantity}, default=str)
                     volume.quantity = req.proposed_quantity
                     new_data = json.dumps({"quantity": volume.quantity}, default=str)

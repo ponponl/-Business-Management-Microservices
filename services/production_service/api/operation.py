@@ -2,24 +2,25 @@ from typing import List
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from core.database import get_db
-from core.security import require_role
+from core.security import require_role, get_username
 from schemas.operation import VolumeCreate, VolumeUpdate, VolumeResponse, UnlockRequestCreate, UnlockApprove, UnlockRequestResponse, BillingSyncResponse
 from services.operation_service import OperationService
 from services.period_service import PeriodService
 from services.unlock_service import UnlockService
 from services.integration_service import IntegrationService
-from core.idempotency import check_idempotency
+from core.idempotency import IdempotentRoute
 
 router = APIRouter()
+idempotent_router = APIRouter(route_class=IdempotentRoute)
 
-@router.post("/volumes", response_model=VolumeResponse, dependencies=[Depends(check_idempotency)])
+@idempotent_router.post("/volumes", response_model=VolumeResponse)
 async def create_volume(volume_in: VolumeCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "STAFF", "MANAGER"]))):
-    username = user.get("preferred_username") or user.get("username") or user.get("sub")
+    username = get_username(user)
     return await OperationService.create_volume(db, volume_in, username)
 
 @router.put("/volumes/{volume_id}", response_model=VolumeResponse)
 async def update_volume(volume_id: int, volume_in: VolumeUpdate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "STAFF", "MANAGER"]))):
-    username = user.get("preferred_username") or user.get("username") or user.get("sub")
+    username = get_username(user)
     return await OperationService.update_volume(db, volume_id, volume_in, username)
 
 @router.get("/volumes")
@@ -46,12 +47,12 @@ def get_periods(db: Session = Depends(get_db), user: dict = Depends(require_role
 
 @router.post("/periods/{period_key}/lock")
 async def lock_period(period_key: str, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_MANAGER", "MANAGER"]))):
-    username = user.get("preferred_username") or user.get("username") or user.get("sub")
+    username = get_username(user)
     return await PeriodService.lock_period(db, period_key, username)
 
-@router.post("/periods/{period_key}/unlock-request", response_model=UnlockRequestResponse, dependencies=[Depends(check_idempotency)])
+@idempotent_router.post("/periods/{period_key}/unlock-request", response_model=UnlockRequestResponse)
 def request_unlock(period_key: str, request_in: UnlockRequestCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_MANAGER", "MANAGER"]))):
-    username = user.get("preferred_username") or user.get("username") or user.get("sub")
+    username = get_username(user)
     return UnlockService.create_request(db, period_key, request_in, username)
 
 @router.get("/periods/unlock-requests")
@@ -60,7 +61,7 @@ def get_unlock_requests(db: Session = Depends(get_db), user: dict = Depends(requ
 
 @router.put("/periods/unlock-requests/{request_id}/approve", response_model=UnlockRequestResponse)
 async def approve_unlock(request_id: int, approve_in: UnlockApprove, db: Session = Depends(get_db), user: dict = Depends(require_role(["DIRECTOR"]))):
-    username = user.get("preferred_username") or user.get("username") or user.get("sub")
+    username = get_username(user)
     return await UnlockService.approve_request(db, request_id, approve_in, username)
 
 # Lấy dữ liệu cho Payment Service
@@ -75,3 +76,5 @@ def get_billing_volumes(
     return OperationService.get_billing_volumes(
         db, contract_id, period_start, period_end, service_code
     )
+
+router.include_router(idempotent_router)

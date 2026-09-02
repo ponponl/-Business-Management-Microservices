@@ -31,3 +31,6 @@ def require_role(allowed_roles: list):
             )
         return user
     return role_checker
+
+def get_username(user: dict) -> str:
+    return user.get("preferred_username") or user.get("username") or user.get("sub") or "Unknown"
