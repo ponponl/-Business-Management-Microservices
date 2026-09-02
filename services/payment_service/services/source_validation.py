@@ -8,9 +8,23 @@ from utils.http_client import call_json
 
 PRICING_SERVICE_URL = "http://pricing-service:8000"
 PRODUCTION_SERVICE_URL = "http://production-service:8000"
+CONTRACT_SERVICE_URL = "http://contract-service:8000"
 
 
 def validate_payment_sources(payload: PaymentBoardInput, authorization: str | None):
+    contract_result = call_json(
+        "GET",
+        f"{CONTRACT_SERVICE_URL}/api/v1/contracts/{payload.contract_id}/payment-validation",
+        query={
+            "customer_id": payload.customer_id,
+            "period_start": payload.period_start.isoformat(),
+            "period_end": payload.period_end.isoformat(),
+        },
+        authorization=authorization,
+    )
+    if not contract_result.get("valid"):
+        raise HTTPException(422, contract_result.get("reason", "Hợp đồng không hợp lệ"))
+    
     price_result = call_json(
         "POST",
         f"{PRICING_SERVICE_URL}/api/v1/payment-integration/validate-for-payment",

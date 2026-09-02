@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Check,
   CheckCircle2,
@@ -12,9 +12,17 @@ import {
   ShieldCheck,
   X,
   XCircle,
+  Download,
+  Users,
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8085/api/payments";
+const API_CONTRACT_URL = "http://localhost:8080/api/v1/contracts";
+const API_CUSTOMER_URL = "http://localhost:8080/api/v1/customers";
+const API_PRICELIST_URL = "http://localhost:8080/api/v1/price-lists";
+const API_VOLUMES_URL = "http://localhost:8080/api/v1/volumes";
+const API_USERS_URL = "http://localhost:8080/api/v1/users";
+
 const EMPTY_ITEM = {
   serviceCode: "",
   serviceName: "",
@@ -44,6 +52,91 @@ const authHeaders = (token) => {
   return headers;
 };
 
+// Helper: Fetch customers with search
+const fetchCustomers = async (search = "", token) => {
+  try {
+    const params = new URLSearchParams();
+    if (search) params.append("search", search);
+    const response = await fetch(`${API_CUSTOMER_URL}?${params}`, {
+      headers: authHeaders(token),
+    });
+    return (await response.json()) || [];
+  } catch (err) {
+    console.error("Fetch customers error:", err);
+    return [];
+  }
+};
+
+// Helper: Fetch contracts by customer
+const fetchContracts = async (customerId, token) => {
+  try {
+    const params = new URLSearchParams({ customer_id: customerId, status: "Active" });
+    const response = await fetch(`${API_CONTRACT_URL}?${params}`, {
+      headers: authHeaders(token),
+    });
+    const data = await response.json();
+    return data.items || data || [];
+  } catch (err) {
+    console.error("Fetch contracts error:", err);
+    return [];
+  }
+};
+
+// Helper: Find effective price table
+const findEffectivePrice = async (periodStart, periodEnd, token) => {
+  try {
+    const response = await fetch(`${API_PRICELIST_URL}`, {
+      headers: authHeaders(token),
+    });
+    const data = await response.json();
+    const tables = data.items || data || [];
+    const effective = tables.find(
+      (t) =>
+        t.status === "Effective" &&
+        t.validFrom <= periodStart &&
+        t.validTo >= periodEnd
+    );
+    return effective;
+  } catch (err) {
+    console.error("Fetch price tables error:", err);
+    return null;
+  }
+};
+
+// Helper: Fetch volumes
+const fetchVolumes = async (customerId, contractId, periodStart, periodEnd, token) => {
+  try {
+    const params = new URLSearchParams({
+      customer_id: customerId,
+      contract_id: contractId,
+      period_key: periodStart.slice(0, 7), // YYYY-MM
+    });
+    const response = await fetch(`${API_VOLUMES_URL}?${params}`, {
+      headers: authHeaders(token),
+    });
+    const data = await response.json();
+    return data.items || data || [];
+  } catch (err) {
+    console.error("Fetch volumes error:", err);
+    return [];
+  }
+};
+
+// Helper: Fetch users for assignee search
+const fetchUsers = async (search = "", token) => {
+  try {
+    const params = new URLSearchParams();
+    if (search) params.append("search", search);
+    const response = await fetch(`${API_USERS_URL}?${params}`, {
+      headers: authHeaders(token),
+    });
+    return (await response.json()) || [];
+  } catch (err) {
+    console.error("Fetch users error:", err);
+    return [];
+  }
+};
+
 function StatusBadge({ status }) {
   const colors = {
     CALCULATED: "bg-slate-100 text-slate-700",
@@ -67,6 +160,7 @@ function StatusBadge({ status }) {
 }
 
 function PaymentEditor({ payment, user, onClose, onSaved }) {
+  const token = user?.token || localStorage.getItem("token");
   const [form, setForm] = useState(
     payment || {
       customerId: "",
@@ -80,6 +174,18 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  
+  // Dropdowns & search states
+  const [customers, setCustomers] = useState([]);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  
+  const [contracts, setContracts] = useState([]);
+  const [showContractDropdown, setShowContractDropdown] = useState(false);
+  
+  const [priceTableInfo, setPriceTableInfo] = useState(null);
+  const [fetchingVolumes, setFetchingVolumes] = useState(false);
+
   const subtotal = form.items.reduce(
     (sum, item) =>
       sum + Number(item.quantity || 0) * Number(item.unitPrice || 0),
@@ -87,8 +193,42 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
   );
   const total = subtotal * (1 + Number(form.taxPercent || 0) / 100);
 
+  // Fetch customers on search
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const data = await fetchCustomers(customerSearch, token);
+      setCustomers(data);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [customerSearch, token]);
+
+  // Fetch contracts when customer selected
+  useEffect(() => {
+    if (form.customerId) {
+      (async () => {
+        const data = await fetchContracts(form.customerId, token);
+        setContracts(data);
+      })();
+    } else {
+      setContracts([]);
+      setForm((p) => ({ ...p, contractId: "" }));
+    }
+  }, [form.customerId, token]);
+
+  // Auto-detect price table
+  useEffect(() => {
+    if (form.contractId && form.periodStart && form.periodEnd) {
+      (async () => {
+        const pt = await findEffectivePrice(form.periodStart, form.periodEnd, token);
+        setPriceTableInfo(pt);
+        setForm((p) => ({ ...p, priceTableId: pt?.priceCode || "" }));
+      })();
+    }
+  }, [form.contractId, form.periodStart, form.periodEnd, token]);
+
   const update = (field, value) =>
     setForm((previous) => ({ ...previous, [field]: value }));
+  
   const updateItem = (index, field, value) =>
     setForm((previous) => ({
       ...previous,
@@ -96,6 +236,55 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
         itemIndex === index ? { ...item, [field]: value } : item,
       ),
     }));
+
+  const handleFetchVolumes = async () => {
+    if (!form.customerId || !form.contractId || !form.periodStart || !form.periodEnd) {
+      setError("Vui lòng chọn khách hàng, hợp đồng và kỳ tính phí");
+      return;
+    }
+    setFetchingVolumes(true);
+    setError("");
+    try {
+      const volumes = await fetchVolumes(
+        form.customerId,
+        form.contractId,
+        form.periodStart,
+        form.periodEnd,
+        token
+      );
+      if (volumes.length === 0) {
+        setError("Không tìm thấy sản lượng cho kỳ này");
+        setFetchingVolumes(false);
+        return;
+      }
+
+      // Group volumes by service_code and aggregate
+      const grouped = {};
+      volumes.forEach((v) => {
+        if (!grouped[v.service_code]) {
+          grouped[v.service_code] = {
+            serviceCode: v.service_code,
+            serviceName: v.service_name || v.service_code,
+            unit: v.unit || "container",
+            quantity: 0,
+            unitPrice: priceTableInfo?.details?.find(
+              (d) => d.service_code === v.service_code
+            )?.unit_price || 0,
+          };
+        }
+        grouped[v.service_code].quantity += Number(v.quantity || 0);
+      });
+
+      setForm((p) => ({
+        ...p,
+        items: Object.values(grouped),
+      }));
+    } catch (err) {
+      setError(`Lỗi khi lấy sản lượng: ${err.message}`);
+    } finally {
+      setFetchingVolumes(false);
+    }
+  };
 
   const save = async (event) => {
     event.preventDefault();
@@ -106,7 +295,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
         payment ? `${API_BASE_URL}/${payment.id}` : API_BASE_URL,
         {
           method: payment ? "PUT" : "POST",
-          headers: authHeaders(user?.token || localStorage.getItem("token")),
+          headers: authHeaders(token),
           body: JSON.stringify({
             ...form,
             items: form.items.map((item) => ({
@@ -156,22 +345,70 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
             {error}
           </div>
         )}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {["customerId", "contractId", "priceTableId"].map((field) => (
-            <label key={field} className="text-xs font-medium text-slate-600">
-              {field === "customerId"
-                ? "Customer ID *"
-                : field === "contractId"
-                  ? "Contract ID *"
-                  : "Price table ID *"}
+        
+        {/* Header Inputs Row */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Customer Select */}
+          <div className="relative text-xs font-medium text-slate-600">
+            <label className="block mb-1">Khách hàng *</label>
+            <div className="relative">
               <input
-                required
-                value={form[field]}
-                onChange={(event) => update(field, event.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#2b727d]"
+                type="text"
+                placeholder="Tìm kiếm khách hàng..."
+                value={showCustomerDropdown ? customerSearch : form.customerId}
+                onChange={(e) => {
+                  setCustomerSearch(e.target.value);
+                  setShowCustomerDropdown(true);
+                }}
+                onFocus={() => setShowCustomerDropdown(true)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#2b727d]"
               />
-            </label>
-          ))}
+              {showCustomerDropdown && customers.length > 0 && (
+                <div className="absolute top-full left-0 right-0 z-50 mt-1 rounded-lg border border-slate-200 bg-white shadow-lg">
+                  {customers.slice(0, 5).map((c) => (
+                    <button
+                      key={c.customer_id || c.id}
+                      type="button"
+                      onClick={() => {
+                        update("customerId", c.customer_id || c.id);
+                        setCustomerSearch("");
+                        setShowCustomerDropdown(false);
+                      }}
+                      className="w-full px-3 py-2 text-left text-xs hover:bg-slate-50 border-b last:border-b-0"
+                    >
+                      <div className="font-semibold text-slate-800">
+                        {c.customer_id || c.id}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {c.customer_name || c.name}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Contract Select */}
+          <div className="text-xs font-medium text-slate-600">
+            <label className="block mb-1">Hợp đồng (Active) *</label>
+            <select
+              required
+              value={form.contractId}
+              onChange={(e) => update("contractId", e.target.value)}
+              disabled={!form.customerId}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#2b727d] disabled:bg-slate-50"
+            >
+              <option value="">-- Chọn hợp đồng --</option>
+              {contracts.map((c) => (
+                <option key={c.contract_id || c.id} value={c.contract_id || c.id}>
+                  {c.contract_number || c.contract_id} - {c.contract_id}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Date Range */}
           <label className="text-xs font-medium text-slate-600">
             Từ ngày *
             <input
@@ -192,6 +429,21 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
           </label>
+
+          {/* Price Table - Read Only */}
+          <div className="text-xs font-medium text-slate-600">
+            <label className="block mb-1">Bảng giá (Effective) *</label>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 font-semibold">
+              {form.priceTableId || "-- Auto-detect --"}
+            </div>
+            {priceTableInfo && (
+              <div className="mt-1 text-[11px] text-slate-500">
+                Hiệu lực: {priceTableInfo.validFrom} - {priceTableInfo.validTo}
+              </div>
+            )}
+          </div>
+
+          {/* Tax Percent */}
           <label className="text-xs font-medium text-slate-600">
             Thuế VAT (%)
             <input
@@ -204,6 +456,28 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
             />
           </label>
         </div>
+
+        {/* Fetch Volumes Button */}
+        <div className="mt-5 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleFetchVolumes}
+            disabled={fetchingVolumes || !form.customerId || !form.contractId}
+            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {fetchingVolumes ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            Lấy sản lượng kỳ này
+          </button>
+          <span className="text-xs text-slate-500">
+            Dữ liệu từ Sản lượng Khai thác - Tự động tính thành tiền
+          </span>
+        </div>
+
+        {/* Service Items Table */}
         <div className="mt-6 overflow-x-auto rounded-lg border border-slate-200">
           <table className="w-full min-w-[700px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-500">
@@ -212,7 +486,8 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
                 <th className="p-3">Tên dịch vụ</th>
                 <th className="p-3">ĐVT</th>
                 <th className="p-3">Sản lượng</th>
-                <th className="p-3">Đơn giá</th>
+                <th className="p-3">Đơn giá (Snapshot)</th>
+                <th className="p-3 text-right">Thành tiền</th>
                 <th className="p-3" />
               </tr>
             </thead>
@@ -226,7 +501,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
                       onChange={(event) =>
                         updateItem(index, "serviceCode", event.target.value)
                       }
-                      className="w-full rounded border border-slate-200 px-2 py-1.5"
+                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
                   <td className="p-2">
@@ -236,7 +511,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
                       onChange={(event) =>
                         updateItem(index, "serviceName", event.target.value)
                       }
-                      className="w-full rounded border border-slate-200 px-2 py-1.5"
+                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
                   <td className="p-2">
@@ -246,7 +521,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
                       onChange={(event) =>
                         updateItem(index, "unit", event.target.value)
                       }
-                      className="w-24 rounded border border-slate-200 px-2 py-1.5"
+                      className="w-20 rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
                   <td className="p-2">
@@ -258,7 +533,7 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
                       onChange={(event) =>
                         updateItem(index, "quantity", event.target.value)
                       }
-                      className="w-24 rounded border border-slate-200 px-2 py-1.5"
+                      className="w-20 rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
                   <td className="p-2">
@@ -266,12 +541,16 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
                       required
                       min="0"
                       type="number"
+                      step="0.01"
                       value={item.unitPrice}
                       onChange={(event) =>
                         updateItem(index, "unitPrice", event.target.value)
                       }
-                      className="w-32 rounded border border-slate-200 px-2 py-1.5"
+                      className="w-24 rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
+                  </td>
+                  <td className="p-2 text-right font-semibold text-slate-800">
+                    {money(Number(item.quantity || 0) * Number(item.unitPrice || 0))}
                   </td>
                   <td className="p-2">
                     <button
@@ -350,15 +629,24 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
 
 export default function PaymentManagementPage({ user }) {
   const role = user?.role || "STAFF";
+  const token = user?.token || localStorage.getItem("token");
   const [payments, setPayments] = useState([]);
   const [stats, setStats] = useState({});
   const [selected, setSelected] = useState(null);
+  const [workflow, setWorkflow] = useState(null);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
   const [editor, setEditor] = useState(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [actionDialog, setActionDialog] = useState(null);
   const [actionComment, setActionComment] = useState("");
+  
+  // Assignee selection dialog
+  const [assigneeDialog, setAssigneeDialog] = useState(null);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [availableAssignees, setAvailableAssignees] = useState([]);
+  const [selectedAssignees, setSelectedAssignees] = useState([]);
 
   const load = async () => {
     setLoading(true);
@@ -379,10 +667,36 @@ export default function PaymentManagementPage({ user }) {
     load();
   }, [search]);
 
+  useEffect(() => {
+    if (selected?.id) {
+      setWorkflowLoading(true);
+      fetch(`${API_BASE_URL}/${selected.id}/workflow`, {
+        headers: authHeaders(token),
+      })
+        .then((r) => r.json())
+        .then((data) => setWorkflow(data))
+        .catch(() => setWorkflow(null))
+        .finally(() => setWorkflowLoading(false));
+    } else {
+      setWorkflow(null);
+    }
+  }, [selected?.id, token]);
+
+  // Fetch assignees on search
+  useEffect(() => {
+    if (assigneeDialog && assigneeSearch) {
+      const timer = setTimeout(async () => {
+        const users = await fetchUsers(assigneeSearch, token);
+        setAvailableAssignees(users);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [assigneeSearch, assigneeDialog, token]);
+
   const action = async (id, endpoint, comment = "", assignees = []) => {
     try {
       const headers = {
-        ...authHeaders(user?.token || localStorage.getItem("token")),
+        ...authHeaders(token),
         "X-User": user?.username || role,
       };
       if (assignees.length) {
@@ -415,15 +729,38 @@ export default function PaymentManagementPage({ user }) {
     });
   };
 
+  const openAssigneeDialog = (paymentId) => {
+    setAssigneeDialog({
+      paymentId,
+      title: "Chỉ định người duyệt"
+    });
+    setAssigneeSearch("");
+    setSelectedAssignees([]);
+    setAvailableAssignees([]);
+  };
+
   const confirmAction = async (event) => {
     event.preventDefault();
     const comment = actionComment.trim();
-    if (!comment) return;
     const { id, endpoint } = actionDialog;
+    if (endpoint === "reject" && !comment) return;
     setActionDialog(null);
     setActionComment("");
     await action(id, endpoint, comment);
   };
+
+  const confirmAssignees = async () => {
+    if (!selectedAssignees.length) {
+      setMessage("Vui lòng chọn ít nhất một người duyệt");
+      return;
+    }
+    const { paymentId } = assigneeDialog;
+    setAssigneeDialog(null);
+    setSelectedAssignees([]);
+    setAssigneeSearch("");
+    await action(paymentId, "submit", "", selectedAssignees);
+  };
+
   const canEdit =
     selected &&
     ["CALCULATED", "RECONCILED", "REVISION_REQUESTED"].includes(
@@ -505,6 +842,7 @@ export default function PaymentManagementPage({ user }) {
                 <th className="p-3">Khách hàng / hợp đồng</th>
                 <th className="p-3">Kỳ thanh toán</th>
                 <th className="p-3">Tổng tiền</th>
+                <th className="p-3">Người tạo</th>
                 <th className="p-3">Trạng thái</th>
                 <th className="p-3 text-right">Thao tác</th>
               </tr>
@@ -537,6 +875,11 @@ export default function PaymentManagementPage({ user }) {
                     </td>
                     <td className="p-3 font-semibold">
                       {money(payment.totalAmount)}
+                    </td>
+                    <td className="p-3 text-slate-600">
+                      <span className="text-[11px] font-semibold">
+                        {payment.createdBy}
+                      </span>
                     </td>
                     <td className="p-3">
                       <StatusBadge status={payment.status} />
@@ -652,6 +995,69 @@ export default function PaymentManagementPage({ user }) {
                 Tổng: {money(selected.totalAmount)}
               </p>
             </div>
+            {workflow && workflow.steps && workflow.steps.length > 0 && (
+              <div className="mt-6">
+                <h3 className="mb-3 text-xs font-semibold uppercase text-slate-500">
+                  Lịch sử phê duyệt
+                </h3>
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr>
+                        <th className="p-2 text-left">STT</th>
+                        <th className="p-2 text-left">Người xử lý</th>
+                        <th className="p-2 text-left">Trạng thái</th>
+                        <th className="p-2 text-left">Lý do</th>
+                        <th className="p-2 text-left">Thời gian</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {workflow.steps.map((step) => (
+                        <tr key={step.stepNo}>
+                          <td className="p-2 font-semibold text-slate-700">
+                            {step.stepNo}
+                          </td>
+                          <td className="p-2 text-slate-600">{step.assigneeId}</td>
+                          <td className="p-2">
+                            <span
+                              className={`rounded px-2 py-1 text-[10px] font-bold ${
+                                step.status === "COMPLETED"
+                                  ? step.action === "APPROVED"
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-rose-100 text-rose-700"
+                                  : "bg-amber-100 text-amber-700"
+                              }`}
+                            >
+                              {step.status === "PENDING"
+                                ? "Chờ xử lý"
+                                : step.action === "APPROVED"
+                                  ? "Đã duyệt"
+                                  : step.action === "REJECTED"
+                                    ? "Từ chối"
+                                    : "Yêu cầu sửa"}
+                            </span>
+                          </td>
+                          <td className="p-2 text-slate-500">
+                            {step.comment ? (
+                              <span title={step.comment} className="truncate block">
+                                {step.comment}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+                          <td className="p-2 text-slate-500">
+                            {step.completedAt
+                              ? new Date(step.completedAt).toLocaleString("vi-VN")
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
             <div className="mt-6 flex flex-wrap justify-end gap-2">
               {role === "STAFF" && canEdit && (
                 <>
@@ -675,18 +1081,7 @@ export default function PaymentManagementPage({ user }) {
               )}
               {role === "STAFF" && selected.status === "RECONCILED" && (
                 <button
-                  onClick={() => {
-                    const assigneeText = window.prompt(
-                      "Nhập ID người duyệt, cách nhau bằng dấu phẩy:",
-                    );
-                    const assignees = assigneeText
-                      ?.split(",")
-                      .map((value) => value.trim())
-                      .filter(Boolean);
-                    if (assignees?.length) {
-                      action(selected.id, "submit", "", assignees);
-                    }
-                  }}
+                  onClick={() => openAssigneeDialog(selected.id)}
                   className="flex items-center gap-1 rounded-lg bg-[#2b727d] px-3 py-2 text-xs font-semibold text-white"
                 >
                   <Send className="h-3.5 w-3.5" /> Gửi duyệt
@@ -798,13 +1193,132 @@ export default function PaymentManagementPage({ user }) {
               </button>
               <button
                 type="submit"
-                disabled={!actionComment.trim()}
-                className={`rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${actionDialog.endpoint === "reject" ? "bg-rose-600 hover:bg-rose-700" : "bg-orange-500 hover:bg-orange-600"}`}
+                disabled={actionDialog?.endpoint === "reject" && !actionComment.trim()}
+                className={`rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${actionDialog?.endpoint === "reject" ? "bg-rose-600 hover:bg-rose-700" : "bg-orange-500 hover:bg-orange-600"}`}
               >
                 Xác nhận
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {assigneeDialog && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/45 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                  Workflow
+                </p>
+                <h2 className="mt-1 text-lg font-bold text-slate-800">
+                  {assigneeDialog.title}
+                </h2>
+                <p className="mt-2 text-xs text-slate-500">
+                  Chọn những người sẽ phê duyệt hồ sơ này (theo từng bước workflow)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAssigneeDialog(null)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"
+                aria-label="Đóng"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            
+            {/* Search Input */}
+            <div className="mt-5 relative">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Tìm kiếm người duyệt (nhập tên hoặc ID)
+              </label>
+              <input
+                type="text"
+                placeholder="Nhập tên hoặc ID..."
+                value={assigneeSearch}
+                onChange={(e) => setAssigneeSearch(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#2b727d]"
+              />
+              {assigneeSearch && availableAssignees.length > 0 && (
+                <div className="absolute top-full left-0 right-0 z-50 mt-1 rounded-lg border border-slate-200 bg-white shadow-lg max-h-40 overflow-y-auto">
+                  {availableAssignees.slice(0, 5).map((user) => (
+                    <button
+                      key={user.user_id || user.id}
+                      type="button"
+                      onClick={() => {
+                        const userId = user.user_id || user.id;
+                        if (!selectedAssignees.includes(userId)) {
+                          setSelectedAssignees([...selectedAssignees, userId]);
+                        }
+                        setAssigneeSearch("");
+                        setAvailableAssignees([]);
+                      }}
+                      className="w-full px-3 py-2 text-left text-xs hover:bg-slate-50 border-b last:border-b-0"
+                    >
+                      <div className="font-semibold text-slate-800">
+                        {user.username || user.name}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {user.user_id || user.id} · {user.role}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Selected Assignees */}
+            {selectedAssignees.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Người được chỉ định ({selectedAssignees.length})
+                </label>
+                <div className="space-y-1">
+                  {selectedAssignees.map((id, idx) => (
+                    <div
+                      key={id}
+                      className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs"
+                    >
+                      <div>
+                        <span className="font-semibold text-slate-700">Bước {idx + 1}:</span>
+                        <span className="ml-2 text-slate-600">{id}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedAssignees(
+                            selectedAssignees.filter((_, i) => i !== idx)
+                          )
+                        }
+                        className="text-slate-400 hover:text-rose-600"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setAssigneeDialog(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={confirmAssignees}
+                disabled={!selectedAssignees.length}
+                className="rounded-lg bg-[#2b727d] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                <Users className="inline h-3.5 w-3.5 mr-1" />
+                Xác nhận ({selectedAssignees.length})
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
