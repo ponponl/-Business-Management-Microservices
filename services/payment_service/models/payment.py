@@ -28,6 +28,19 @@ class PaymentBoard(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     items = relationship("PaymentDetail", back_populates="statement", cascade="all, delete-orphan")
+    signatures = relationship("PaymentSignature", back_populates="statement", cascade="all, delete-orphan")
+
+
+class PaymentSignature(Base):
+    __tablename__ = "payment_signatures"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    payment_board_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False, index=True)
+    assignee_id = Column(String(36), nullable=False)
+    status = Column(String(20), default="PENDING", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+    statement = relationship("PaymentBoard", back_populates="signatures")
 
 
 class PaymentDetail(Base):
