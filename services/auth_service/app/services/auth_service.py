@@ -1,6 +1,8 @@
+# app/services/auth_service.py
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.auth import UserRegisterRequest, LoginRequest, TokenResponse, UserResponse
 from app.core.security import verify_password, get_password_hash, create_access_token
 from app.core.events import publish_user_login_event, publish_user_sync_event
@@ -66,7 +68,6 @@ class AuthService:
             data={"sub": str(user.id), "role": role_value, "username": user.username}
         )
 
-        # Đã cập nhật: Truyền đủ user_id, username và role
         await publish_user_login_event(
             user_id=str(user.id),
             username=user.username,
@@ -77,3 +78,25 @@ class AuthService:
             access_token=access_token,
             role=role_value
         )
+
+    @staticmethod
+    def get_all_users(db: Session, role: Optional[UserRole] = None) -> List[UserResponse]:
+        """
+        Lấy danh sách người dùng. Nếu có truyền role sẽ lọc theo role đó.
+        """
+        query = db.query(User)
+        if role:
+            query = query.filter(User.role == role)
+        
+        users = query.all()
+
+        return [
+            UserResponse(
+                id=str(user.id),
+                username=user.username,
+                email=user.email,
+                role=user.role.value if hasattr(user.role, 'value') else str(user.role),
+                is_active=user.is_active
+            )
+            for user in users
+        ]

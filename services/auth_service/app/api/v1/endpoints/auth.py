@@ -1,7 +1,15 @@
-from fastapi import APIRouter, Depends, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
+
 from app.db.session import get_db
-from app.schemas.auth import LoginRequest, TokenResponse, UserRegisterRequest, UserResponse
+from app.models.user import UserRole
+from app.schemas.auth import (
+    LoginRequest, 
+    TokenResponse, 
+    UserRegisterRequest, 
+    UserResponse
+)
 from app.services.auth_service import AuthService
 
 router = APIRouter()
@@ -17,3 +25,14 @@ async def register(user_in: UserRegisterRequest, db: Session = Depends(get_db)):
 async def login(login_in: LoginRequest, db: Session = Depends(get_db)):
     """API Đăng nhập (Bắn Kafka event kèm thông tin username)"""
     return await AuthService.authenticate_user(db=db, login_in=login_in)
+
+
+@router.get("/users", response_model=List[UserResponse], summary="Lấy danh sách tất cả Users")
+def get_users(
+    role: Optional[UserRole] = Query(None, description="Lọc danh sách theo vai trò (STAFF, MANAGER, DIRECTOR)"),
+    db: Session = Depends(get_db)
+):
+    """
+    API trả về danh sách người dùng trong hệ thống (Staff, Manager, Director...).
+    """
+    return AuthService.get_all_users(db=db, role=role)
