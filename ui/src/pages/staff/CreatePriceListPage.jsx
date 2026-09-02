@@ -48,7 +48,7 @@ export default function CreatePriceListPage() {
     const fetchTargets = async () => {
       try {
         setIsLoadingTargets(true);
-        
+
         let endpoint = '';
         if (formData.targetType === 'CUSTOMER') {
           endpoint = `${CONTRACT_SERVICE_URL}/api/v1/customers`;
@@ -444,11 +444,10 @@ export default function CreatePriceListPage() {
                   setFormData({ ...formData, priceName: e.target.value });
                   if (errors.priceName) setErrors({ ...errors, priceName: null });
                 }}
-                className={`w-full px-3 py-2 rounded-lg border focus:outline-none bg-white placeholder:text-slate-400 ${
-                  errors.priceName 
-                    ? 'border-rose-500 ring-1 ring-rose-500' 
+                className={`w-full px-3 py-2 rounded-lg border focus:outline-none bg-white placeholder:text-slate-400 ${errors.priceName
+                    ? 'border-rose-500 ring-1 ring-rose-500'
                     : 'border-slate-200 focus:border-sky-500'
-                }`}
+                  }`}
               />
               {errors.priceName && (
                 <p className="text-rose-500 text-[11px] font-medium mt-1">
@@ -513,11 +512,10 @@ export default function CreatePriceListPage() {
                   setFormData({ ...formData, effectiveFrom: e.target.value });
                   if (errors.effectiveFrom) setErrors({ ...errors, effectiveFrom: null });
                 }}
-                className={`w-full px-3 py-2 rounded-lg border focus:outline-none bg-white text-slate-700 ${
-                  errors.effectiveFrom 
-                    ? 'border-rose-500 ring-1 ring-rose-500' 
+                className={`w-full px-3 py-2 rounded-lg border focus:outline-none bg-white text-slate-700 ${errors.effectiveFrom
+                    ? 'border-rose-500 ring-1 ring-rose-500'
                     : 'border-slate-200 focus:border-sky-500'
-                }`}
+                  }`}
               />
               {errors.effectiveFrom && (
                 <p className="text-rose-500 text-[11px] font-medium mt-1">
@@ -537,11 +535,10 @@ export default function CreatePriceListPage() {
                   setFormData({ ...formData, effectiveTo: e.target.value });
                   if (errors.effectiveTo) setErrors({ ...errors, effectiveTo: null });
                 }}
-                className={`w-full px-3 py-2 rounded-lg border focus:outline-none bg-white text-slate-700 ${
-                  errors.effectiveTo 
-                    ? 'border-rose-500 ring-1 ring-rose-500' 
+                className={`w-full px-3 py-2 rounded-lg border focus:outline-none bg-white text-slate-700 ${errors.effectiveTo
+                    ? 'border-rose-500 ring-1 ring-rose-500'
                     : 'border-slate-200 focus:border-sky-500'
-                }`}
+                  }`}
               />
               {errors.effectiveTo && (
                 <p className="text-rose-500 text-[11px] font-medium mt-1">
@@ -612,11 +609,10 @@ export default function CreatePriceListPage() {
                           <select
                             value={service.serviceItemId || ''}
                             onChange={(e) => handleSelectServiceOption(service.id, e.target.value)}
-                            className={`w-full px-3 py-1.5 rounded-lg border focus:outline-none bg-white font-medium text-slate-800 ${
-                              isRowInvalid && !service.serviceItemId
+                            className={`w-full px-3 py-1.5 rounded-lg border focus:outline-none bg-white font-medium text-slate-800 ${isRowInvalid && !service.serviceItemId
                                 ? 'border-rose-500'
                                 : 'border-slate-200 focus:border-sky-500'
-                            }`}
+                              }`}
                           >
                             <option value="" disabled>-- Chọn dịch vụ --</option>
                             {serviceOptions.map((opt) => {
@@ -666,9 +662,8 @@ export default function CreatePriceListPage() {
                               inputMode="numeric"
                               value={service.price}
                               onChange={(e) => handleServiceChange(service.id, 'price', e.target.value)}
-                              className={`w-32 px-3 py-1.5 rounded-lg border text-right font-bold text-slate-800 focus:outline-none bg-white ${
-                                isRowInvalid && parseCurrency(service.price) <= 0 ? 'border-rose-500' : 'border-slate-200 focus:border-sky-500'
-                              }`}
+                              className={`w-32 px-3 py-1.5 rounded-lg border text-right font-bold text-slate-800 focus:outline-none bg-white ${isRowInvalid && parseCurrency(service.price) <= 0 ? 'border-rose-500' : 'border-slate-200 focus:border-sky-500'
+                                }`}
                             />
                             <span className="text-[11px] font-semibold text-slate-400">VND</span>
                           </div>
@@ -725,13 +720,12 @@ export default function CreatePriceListPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] p-4">
           <div className="bg-white rounded-2xl shadow-xl border border-slate-100 max-w-md w-full p-6 text-center space-y-4">
             <div className="flex justify-center">
-              <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
-                modalConfig.type === 'draft'
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center ${modalConfig.type === 'draft'
                   ? 'bg-sky-100/70 text-sky-500'
                   : modalConfig.type === 'error'
-                  ? 'bg-rose-100/70 text-rose-500'
-                  : 'bg-emerald-100/70 text-emerald-500'
-              }`}>
+                    ? 'bg-rose-100/70 text-rose-500'
+                    : 'bg-emerald-100/70 text-emerald-500'
+                }`}>
                 {modalConfig.type === 'error' ? (
                   <AlertCircle className="w-8 h-8 stroke-[2.5]" />
                 ) : (
@@ -747,13 +741,12 @@ export default function CreatePriceListPage() {
 
             <button
               onClick={handleConfirmModal}
-              className={`w-full py-2.5 px-4 rounded-lg text-xs font-semibold text-white shadow-xs transition cursor-pointer ${
-                modalConfig.type === 'draft'
+              className={`w-full py-2.5 px-4 rounded-lg text-xs font-semibold text-white shadow-xs transition cursor-pointer ${modalConfig.type === 'draft'
                   ? 'bg-sky-600 hover:bg-sky-700'
                   : modalConfig.type === 'error'
-                  ? 'bg-rose-600 hover:bg-rose-700'
-                  : 'bg-[#4b8882] hover:bg-[#3f756f]'
-              }`}
+                    ? 'bg-rose-600 hover:bg-rose-700'
+                    : 'bg-[#4b8882] hover:bg-[#3f756f]'
+                }`}
             >
               {modalConfig.btnText}
             </button>

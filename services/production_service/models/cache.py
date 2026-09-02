@@ -11,6 +11,7 @@ from core.database import Base
 class ContractCache(Base):
     __tablename__ = "contracts_cache"
     id = Column(Integer, primary_key=True, index=True)
+    contract_id = Column(String, unique=True, index=True)
     contract_number = Column(String, unique=True, index=True)
     start_date = Column(DateTime)
     end_date = Column(DateTime)

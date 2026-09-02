@@ -42,7 +42,7 @@ export const EditVolumeModal = ({ isOpen, onClose, volume, onRefresh }) => {
                 try {
                     setLoadingServices(true);
                     const token = localStorage.getItem('token');
-                    const res = await fetch('http://localhost:8084/api/v1/services', {
+                    const res = await fetch(`http://localhost:8084/api/v1/contracts/${volume.contract_id}/services`, {
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
                     if (res.ok) {

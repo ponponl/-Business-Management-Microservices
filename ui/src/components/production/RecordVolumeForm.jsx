@@ -27,23 +27,11 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                 };
 
                 // Production service runs on 8084 on host
-                const [contractsRes, servicesRes] = await Promise.all([
-                    fetch('http://localhost:8084/api/v1/contracts', { headers }),
-                    fetch('http://localhost:8084/api/v1/services', { headers })
-                ]);
+                const res = await fetch('http://localhost:8084/api/v1/contracts', { headers });
                 
-                if (contractsRes.ok) {
-                    const data = await contractsRes.json();
+                if (res.ok) {
+                    const data = await res.json();
                     setContracts(data);
-                }
-                
-                if (servicesRes.ok) {
-                    const data = await servicesRes.json();
-                    setServices(data.map(s => ({
-                        code: s.service_code || s.code,
-                        name: s.service_name || s.name,
-                        unit: s.default_unit || s.unit || 'Tự động'
-                    })));
                 }
             } catch (error) {
                 console.error("Error fetching data:", error);
@@ -53,6 +41,38 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
         };
         fetchData();
     }, []);
+
+    useEffect(() => {
+        if (!contractId) {
+            setServices([]);
+            setServiceCode('');
+            setSelectedUnit('');
+            return;
+        }
+
+        const fetchServices = async () => {
+            try {
+                const token = localStorage.getItem('token') || '';
+                const headers = {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                };
+                const res = await fetch(`http://localhost:8084/api/v1/contracts/${contractId}/services`, { headers });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    setServices(data.map(s => ({
+                        code: s.service_code || s.code,
+                        name: s.service_name || s.name,
+                        unit: s.default_unit || s.unit || 'Tự động'
+                    })));
+                }
+            } catch (error) {
+                console.error("Error fetching services:", error);
+            }
+        };
+        fetchServices();
+    }, [contractId]);
 
     const handleServiceChange = (e) => {
         const srvCode = e.target.value;
@@ -146,7 +166,7 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                                         <option value="" disabled>Đang tải...</option>
                                     ) : (
                                         contracts.map(c => (
-                                            <option key={c.contract_number} value={c.contract_number}>
+                                            <option key={c.contract_number} value={c.contract_id || c.contract_number}>
                                                 {c.contract_number}
                                             </option>
                                         ))

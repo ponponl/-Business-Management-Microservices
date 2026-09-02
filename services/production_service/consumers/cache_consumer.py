@@ -30,6 +30,7 @@ def handle_event(topic, event_data):
             if event_data.get("event_name") in ["CONTRACT_CREATED", "CONTRACT_UPDATED", "CONTRACT_APPROVED", "CONTRACT_ACTIVATED"]:
                 payload = event_data.get("payload", {})
                 contract_number = payload.get("contract_number")
+                contract_id = payload.get("contract_id")
                 
                 if not contract_number:
                     logger.warning(f"No contract_number in payload: {event_data}")
@@ -39,6 +40,7 @@ def handle_event(topic, event_data):
                 
                 # Transform data from payload to match ContractCache columns
                 cache_data = {
+                    "contract_id": contract_id,
                     "contract_number": contract_number,
                     "start_date": payload.get("effective_from"),
                     "end_date": payload.get("effective_to"),

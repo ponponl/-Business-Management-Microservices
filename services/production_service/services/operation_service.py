@@ -12,8 +12,14 @@ class OperationService:
         if volume_in.quantity <= 0:
             raise HTTPException(status_code=400, detail="Quantity must be > 0")
 
-        # Tìm contract trong danh bạ cache bằng contract_number
-        contract = db.query(ContractCache).filter(ContractCache.contract_number == volume_in.contract_id).first()
+        from sqlalchemy import or_
+        # Tìm contract trong danh bạ cache bằng contract_id (UUID) hoặc contract_number
+        contract = db.query(ContractCache).filter(
+            or_(
+                ContractCache.contract_id == volume_in.contract_id,
+                ContractCache.contract_number == volume_in.contract_id
+            )
+        ).first()
         if not contract:
             raise HTTPException(status_code=404, detail="Contract not found in cache")
             

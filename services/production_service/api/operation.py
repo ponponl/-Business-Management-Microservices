@@ -36,6 +36,11 @@ async def get_services(request: Request, user: dict = Depends(require_role(["OPE
     auth_header = request.headers.get("Authorization")
     return await IntegrationService.get_pricing_services(auth_header)
 
+@router.get("/contracts/{contract_id}/services")
+async def get_services_by_contract(contract_id: str, request: Request, user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR", "STAFF", "MANAGER"]))):
+    auth_header = request.headers.get("Authorization")
+    return await IntegrationService.get_pricing_services_by_contract(contract_id, auth_header)
+
 
 @router.get("/volumes/{volume_id}/audit-logs")
 def get_audit_logs(volume_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR", "STAFF", "MANAGER"]))):
