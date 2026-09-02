@@ -33,6 +33,7 @@ const EMPTY_ITEM = {
   unitPrice: 0,
 };
 const STATUS_LABELS = {
+  DRAFT: "Soạn thảo",
   PENDING: "Chờ xử lý",
   SIGNING: "Đang ký",
   FAILED: "Thất bại",
@@ -48,6 +49,7 @@ const STATUS_LABELS = {
   SIGNED: "Đã ký",
   SIGN_FAILED: "Ký thất bại",
   ISSUED: "Đã phát hành",
+  SUPERSEDED: "Đình chỉ",
 };
 
 const money = (value) => Number(value || 0).toLocaleString("vi-VN") + " đ";
@@ -236,6 +238,7 @@ function StatusBadge({ status }) {
     SIGNED: "bg-emerald-100 text-emerald-700",
     SIGN_FAILED: "bg-rose-100 text-rose-700",
     ISSUED: "bg-emerald-100 text-emerald-700",
+    SUPERSEDED: "bg-slate-200 text-slate-700",
   };
   return (
     <span
@@ -246,14 +249,23 @@ function StatusBadge({ status }) {
   );
 }
 
-function PaymentEditor({ payment, user, onClose, onSaved }) {
+function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
   const token = user?.token || localStorage.getItem("token");
   const paymentPeriodId = payment
     ? payment.periodId || payment.referenceId || payment.periodStart?.slice(0, 7)
-    : "";
+    : adjustmentOf?.periodId || adjustmentOf?.periodStart?.slice(0, 7) || "";
   const [form, setForm] = useState(
     payment
       ? { ...payment, periodId: paymentPeriodId }
+      : adjustmentOf
+        ? {
+            ...adjustmentOf,
+            code: "",
+            periodId: paymentPeriodId,
+            referenceId: "",
+            adjustmentReason: "",
+            items: adjustmentOf.items?.map(({ id, ...item }) => item) || [{ ...EMPTY_ITEM }],
+          }
       : {
       customerId: "",
       contractId: "",
@@ -456,10 +468,18 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
     setError("");
     try {
       const response = await fetch(
-        payment ? `${API_BASE_URL}/${payment.id}` : API_BASE_URL,
+        payment
+          ? `${API_BASE_URL}/${payment.id}`
+          : adjustmentOf
+            ? `${API_BASE_URL}/${adjustmentOf.id}/adjustments`
+            : API_BASE_URL,
         {
           method: payment ? "PUT" : "POST",
-          headers: authHeaders(token),
+          headers: {
+            ...authHeaders(token),
+            "X-User": user?.user_id || user?.id || getTokenSubject(token) || user?.username || "STAFF",
+            "X-Username": user?.username || "",
+          },
           body: JSON.stringify({
             ...form,
             items: form.items.map((item) => ({
@@ -490,7 +510,11 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
         <div className="mb-5 flex items-start justify-between">
           <div>
             <h2 className="text-lg font-bold text-slate-800">
-              {payment ? "Chỉnh sửa bảng thanh toán" : "Lập bảng thanh toán"}
+              {payment
+                ? "Chỉnh sửa bảng thanh toán"
+                : adjustmentOf
+                  ? "Tạo hồ sơ điều chỉnh"
+                  : "Lập bảng thanh toán"}
             </h2>
             <p className="mt-1 text-xs text-slate-500">
               Đơn giá được lưu thành snapshot tại thời điểm tính phí.
@@ -788,15 +812,18 @@ function PaymentEditor({ payment, user, onClose, onSaved }) {
         >
           + Thêm dòng dịch vụ
         </button>
-        <label className="mt-4 block text-xs font-medium text-slate-600">
-          Ghi chú
-          <textarea
-            value={form.note || ""}
-            onChange={(event) => update("note", event.target.value)}
-            rows="2"
-            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          />
-        </label>
+        {adjustmentOf && (
+          <label className="mt-4 block text-xs font-medium text-slate-600">
+            Lý do điều chỉnh *
+            <textarea
+              required
+              value={form.adjustmentReason || ""}
+              onChange={(event) => update("adjustmentReason", event.target.value)}
+              rows="2"
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+          </label>
+        )}
         <div className="mt-5 flex flex-col items-end gap-1 border-t border-slate-100 pt-4 text-sm">
           <span>
             Tạm tính: <b>{money(subtotal)}</b>
@@ -842,7 +869,9 @@ export default function PaymentManagementPage({ user }) {
   const [signaturesOpen, setSignaturesOpen] = useState(false);
   const [signaturesLoading, setSignaturesLoading] = useState(false);
   const [signLoading, setSignLoading] = useState(false);
+  const [issueLoading, setIssueLoading] = useState(false);
   const [editor, setEditor] = useState(null);
+  const [adjustmentEditor, setAdjustmentEditor] = useState(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -1007,6 +1036,25 @@ export default function PaymentManagementPage({ user }) {
       setSignLoading(false);
     }
   };
+
+  const issuePayment = async () => {
+    setIssueLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/${selected.id}/issue`, {
+        method: "POST",
+        headers: { ...authHeaders(token), "X-User": actorId, "X-Username": user?.username || "" },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Không thể phát hành");
+      setSelected(data);
+      setMessage("Đã phát hành bảng thanh toán.");
+      load();
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setIssueLoading(false);
+    }
+  };
   const openActionDialog = (id, endpoint) => {
     setActionComment("");
     setActionDialog({
@@ -1056,7 +1104,7 @@ export default function PaymentManagementPage({ user }) {
 
   const canEdit =
     selected &&
-    ["CALCULATED", "RECONCILED", "REVISION_REQUESTED"].includes(
+    ["DRAFT", "CALCULATED", "RECONCILED", "REVISION_REQUESTED"].includes(
       selected.status,
     );
   const currentApprovalStep = workflow?.steps?.find(
@@ -1071,6 +1119,10 @@ export default function PaymentManagementPage({ user }) {
   const canApprove = selected?.status === "SUBMITTED" &&
     ["MANAGER", "DIRECTOR"].includes(role) &&
     currentApprovalStep?.assigneeId === actorId;
+  const isPaymentCreator = selected && [actorId, user?.username].includes(selected.createdBy);
+  const hasActiveAdjustment = selected?.adjustments?.some(
+    (adjustment) => !["REJECTED", "CANCELLED"].includes(adjustment.status),
+  );
 
   return (
     <div className="space-y-5 pb-10 text-slate-700">
@@ -1393,6 +1445,7 @@ export default function PaymentManagementPage({ user }) {
                   </button>
                   <button
                     disabled={
+                      selected.status !== "DRAFT" &&
                       selected.status !== "CALCULATED" &&
                       selected.status !== "REVISION_REQUESTED"
                     }
@@ -1444,6 +1497,23 @@ export default function PaymentManagementPage({ user }) {
                   {signLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Ký điện tử
                 </button>
               )}
+              {role === "STAFF" && isPaymentCreator && !hasActiveAdjustment && selected.status === "SIGNED" && (
+                <button
+                  onClick={issuePayment}
+                  disabled={issueLoading}
+                  className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {issueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Phát hành
+                </button>
+              )}
+              {role === "STAFF" && isPaymentCreator && !hasActiveAdjustment && ["SIGNED", "ISSUED"].includes(selected.status) && (
+                <button
+                  onClick={() => setAdjustmentEditor(selected)}
+                  className="flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-700"
+                >
+                  <FilePlus2 className="h-3.5 w-3.5" /> Tạo hồ sơ điều chỉnh
+                </button>
+              )}
             </div>
           </section>
         </div>
@@ -1455,6 +1525,18 @@ export default function PaymentManagementPage({ user }) {
           onClose={() => setEditor(null)}
           onSaved={(data) => {
             setEditor(null);
+            setSelected(data);
+            load();
+          }}
+        />
+      )}
+      {adjustmentEditor && (
+        <PaymentEditor
+          adjustmentOf={adjustmentEditor}
+          user={user}
+          onClose={() => setAdjustmentEditor(null)}
+          onSaved={(data) => {
+            setAdjustmentEditor(null);
             setSelected(data);
             load();
           }}

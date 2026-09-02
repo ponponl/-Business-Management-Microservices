@@ -40,3 +40,10 @@ class PaymentBoardInput(BaseModel):
 
 class ActionInput(BaseModel):
     comment: str | None = None
+
+
+class CreateAdjustmentRequest(BaseModel):
+    adjustment_reason: str = Field(..., min_length=1, alias="adjustmentReason")
+
+    class Config:
+        populate_by_name = True

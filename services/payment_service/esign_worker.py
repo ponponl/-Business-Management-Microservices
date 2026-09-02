@@ -45,7 +45,7 @@ async def process(message):
         success = random.random() < 0.9
         signature.status = "SIGNED" if success else "FAILED"
         signature.resolved_at = datetime.utcnow()
-        board.status = "ISSUED" if success else "SIGN_FAILED"
+        board.status = "SIGNED" if success else "SIGN_FAILED"
         if success:
             db.add(PaymentOutboxEvent(
                 event_type="payment.signing.succeeded",
