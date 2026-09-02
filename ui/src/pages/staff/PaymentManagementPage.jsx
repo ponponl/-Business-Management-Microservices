@@ -208,7 +208,7 @@ const fetchProductionPeriods = async (contractId, token) => {
 const fetchUsers = async (search = "", token) => {
   try {
     const params = new URLSearchParams();
-    if (search) params.append("search", search);
+    if (search) params.append("q", search);
     const response = await fetch(`${API_USERS_URL}?${params}`, {
       headers: authHeaders(token),
     });
