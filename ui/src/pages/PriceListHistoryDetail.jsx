@@ -149,12 +149,11 @@ export const PriceListHistoryDetail = ({
     fetchContracts();
   }, []);
 
-  // Tìm phiên bản đang chọn từ danh sách Sidebar (bảng price_list_version)
+  // Tìm phiên bản đang chọn từ danh sách Sidebar
   const selectedVersion = versions.find(
     (v) => (v.id || v.version_id) === selectedVersionId
   );
 
-  // ÉP LẤY CHÍNH XÁC `price_list_name` TỪ PAYLOAD API DETAILS TRẢ VỀ TRƯỚC
   const displayPriceName =
     versionDetail?.price_list_name ||
     versionDetail?.price_name ||
@@ -205,7 +204,7 @@ export const PriceListHistoryDetail = ({
     if (!selectedVersionId) return;
 
     setLoading(true);
-    setVersionDetail(null); // Clear cache cũ khi chuyển phiên bản
+    setVersionDetail(null);
 
     const fetchDetails = fetch(`${API_BASE_URL}/versions/${selectedVersionId}/details`)
       .then((res) => res.json())
@@ -343,7 +342,6 @@ export const PriceListHistoryDetail = ({
     );
   };
 
-  // ĐÃ LOẠI BỎ TOÀN BỘ DẤU NGOẶC ĐƠN BÊN TRONG HÀM NÀY
   const renderScopeLabelAndValue = (detail) => {
     if (!detail) return { label: "Đối tượng áp dụng cụ thể *", value: "" };
 
@@ -379,30 +377,30 @@ export const PriceListHistoryDetail = ({
 
   const renderUsageStatusBadge = (status) => {
     const s = (status || "").toUpperCase();
-    if (s.includes("SETTLED") || s.includes("ĐÃ QUYẾT TOÁN")) {
+    if (s.includes("SETTLED") || s.includes("CALCULATED") || s.includes("ĐÃ QUYẾT TOÁN") || s.includes("SUBMITTED")) {
       return (
         <span className="px-2.5 py-0.5 rounded bg-[#E6F4EA] text-[#137333] text-xs font-semibold">
-          Đã quyết toán
+          {s === "SUBMITTED" ? "Chờ duyệt" : "Đã phát hành"}
         </span>
       );
     }
-    if (s.includes("PENDING") || s.includes("CHỜ QUYẾT TOÁN")) {
+    if (s.includes("PENDING") || s.includes("DRAFT") || s.includes("CHỜ QUYẾT TOÁN")) {
       return (
         <span className="px-2.5 py-0.5 rounded bg-[#FEF7E0] text-[#B06000] text-xs font-semibold">
-          Chờ quyết toán
+          Dự thảo
         </span>
       );
     }
-    if (s.includes("OLD") || s.includes("GỐC CŨ")) {
+    if (s.includes("REJECTED") || s.includes("TỪ CHỐI")) {
       return (
-        <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-xs font-semibold">
-          Hóa đơn gốc cũ
+        <span className="px-2.5 py-0.5 rounded bg-[#FCE8E6] text-[#C5221F] text-xs font-semibold">
+          Bị từ chối
         </span>
       );
     }
     return (
       <span className="px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 text-xs font-semibold">
-        {status || "Khác"}
+        {status || "Đã áp dụng"}
       </span>
     );
   };
@@ -484,7 +482,6 @@ export const PriceListHistoryDetail = ({
                 const rawVer = v.version_number || v.version || "1.0";
                 const verNum = String(rawVer).toLowerCase().startsWith("v") ? rawVer : `v${rawVer}`;
                 
-                // Nếu item đang chọn trùng id với versionDetail thì ưu tiên dùng tên từ versionDetail
                 const itemVersionName = isSelected && versionDetail?.price_list_name
                   ? versionDetail.price_list_name
                   : (v.price_list_name || v.price_name || "");
@@ -818,7 +815,7 @@ export const PriceListHistoryDetail = ({
                 </div>
               ))}
 
-            {/* === TAB 3: LỊCH SỬ ÁP DỤNG === */}
+            {/* === TAB 3: LỊCH SỬ ÁP DỤNG (ĐÃ CẬP NHẬT THEO KAFKA) === */}
             {activeTab === "usage" &&
               (loading ? (
                 <div className="py-12 text-center text-slate-400 text-sm">
@@ -827,58 +824,74 @@ export const PriceListHistoryDetail = ({
               ) : (
                 <div className="relative pl-6 space-y-6 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-100">
                   {usageLogs.length > 0 ? (
-                    usageLogs.map((log, index) => (
-                      <div key={log.id || index} className="relative">
-                        <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#508D83] ring-4 ring-white"></div>
+                    usageLogs.map((log, index) => {
+                      // Map thông tin Khách hàng từ customersMap
+                      const custKey = String(log.customer_id || log.customerId || "");
+                      const custData = customersMap[custKey];
+                      const displayCustomer = custData
+                        ? (custData.name ? `${custData.name} - ${custData.code || custKey}` : (custData.code || custKey))
+                        : (log.customer_name || log.customer_code || custKey || "---");
 
-                        <div className="border border-slate-200/80 rounded-2xl p-5 bg-white shadow-sm">
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                              <span className="px-3 py-1 bg-slate-100 text-slate-700 font-bold text-xs rounded-lg inline-block">
-                                {log.payment_board_code || log.payment_board_id || log.code || "BSTATEMENT-2026-000"}
+                      // Map thông tin Hợp đồng từ contractsMap
+                      const contractKey = String(log.contract_id || log.contractId || "");
+                      const contractData = contractsMap[contractKey];
+                      const displayContract = contractData
+                        ? (contractData.code ? `${contractData.code} - ${contractData.name}` : contractData.name)
+                        : (log.contract_code || log.contract_number || contractKey || "---");
+
+                      return (
+                        <div key={log.id || index} className="relative">
+                          <div className="absolute -left-[23px] top-4 w-2.5 h-2.5 rounded-full bg-[#508D83] ring-4 ring-white"></div>
+
+                          <div className="border border-slate-200/80 rounded-2xl p-5 bg-white shadow-sm">
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center gap-3">
+                                <span className="px-3 py-1 bg-slate-100 text-slate-800 font-mono font-bold text-xs rounded-lg inline-block">
+                                  {log.payment_code || log.payment_board_code || log.payment_board_id || "BSTATEMENT-2026-000"}
+                                </span>
+                                {renderUsageStatusBadge(log.status)}
+                              </div>
+                              <span className="text-xs text-slate-400">
+                                {formatDate(log.applied_at || log.created_at, true)}
                               </span>
-                              {renderUsageStatusBadge(log.status || "Đã quyết toán")}
                             </div>
-                            <span className="text-xs text-slate-400">
-                              {formatDate(log.applied_at || log.created_at || log.date, true)}
-                            </span>
-                          </div>
 
-                          <div className="grid grid-cols-2 gap-4 mb-4">
-                            <div>
-                              <p className="text-xs text-slate-400 mb-1">Khách hàng áp dụng</p>
-                              <p className="text-sm font-bold text-slate-800">
-                                {log.customer_name || log.customer_code || "---"}
-                              </p>
+                            <div className="grid grid-cols-2 gap-4 mb-4">
+                              <div>
+                                <p className="text-xs text-slate-400 mb-1">Khách hàng áp dụng</p>
+                                <p className="text-sm font-bold text-slate-800 truncate" title={displayCustomer}>
+                                  {displayCustomer}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-400 mb-1">Số hợp đồng liên kết</p>
+                                <p className="text-sm font-bold text-slate-800 truncate" title={displayContract}>
+                                  {displayContract}
+                                </p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-xs text-slate-400 mb-1">Số hợp đồng liên kết</p>
-                              <p className="text-sm font-bold text-slate-800">
-                                {log.contract_code || log.contract_number || "---"}
-                              </p>
-                            </div>
-                          </div>
 
-                          <div className="flex items-end justify-between pt-2 border-t border-slate-50">
-                            <div>
-                              <p className="text-xs text-slate-400 mb-1">
-                                {log.amount_type_label || "Giá trị quyết toán"}
-                              </p>
-                              <p className="text-lg font-bold text-slate-900">
-                                {(log.total_amount || log.amount || 0).toLocaleString("vi-VN")}{" "}
-                                <span className="text-xs font-normal text-slate-400">VND</span>
-                              </p>
-                            </div>
-                            <div className="text-right text-xs text-slate-400">
-                              {log.performed_by_label || "Người thực hiện quyết toán:"}{" "}
-                              <span className="font-semibold text-slate-700 block mt-0.5">
-                                {log.performed_by || log.created_by || "Trần Văn B (Kế toán bãi)"}
-                              </span>
+                            <div className="flex items-end justify-between pt-2 border-t border-slate-100">
+                              <div>
+                                <p className="text-xs text-slate-400 mb-1">
+                                  Giá trị bản kê phát hành
+                                </p>
+                                <p className="text-lg font-bold text-slate-900">
+                                  {(log.total_amount !== null && log.total_amount !== undefined ? log.total_amount : (log.amount || 0)).toLocaleString("vi-VN")}{" "}
+                                  <span className="text-xs font-normal text-slate-400">VND</span>
+                                </p>
+                              </div>
+                              <div className="text-right text-xs text-slate-400">
+                                Lập bởi:{" "}
+                                <span className="font-semibold text-slate-700 block mt-0.5">
+                                  {log.issued_by_name || log.issued_by || log.created_by || "Hệ thống"}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   ) : (
                     <div className="py-12 text-center">
                       <p className="text-slate-400 text-sm mb-3">
