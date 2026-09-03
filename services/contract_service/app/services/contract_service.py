@@ -389,6 +389,8 @@ class ContractService:
         db: Session,
         customer_id: UUID | None = None,
         status: str | None = None,
+        search: str | None = None,
+        effective_date: date | None = None,
         skip: int = 0,
         limit: int = 20,
     ):
@@ -397,6 +399,8 @@ class ContractService:
                 db=db,
                 customer_id=customer_id,
                 status=status,
+                search=search,
+                effective_date=effective_date,
                 skip=skip,
                 limit=limit,
             )
@@ -407,6 +411,8 @@ class ContractService:
                 db=db,
                 customer_id=customer_id,
                 status=status,
+                search=search,
+                effective_date=effective_date,
             )
         )
 
@@ -415,6 +421,19 @@ class ContractService:
             version = ContractRepository.get_current_version(
                 db,
                 contract,
+            )
+            revision_audits = [
+                audit
+                for audit in contract.audits
+                if audit.action in {
+                    "MANAGER_REQUEST_REVISION",
+                    "DIRECTOR_REQUEST_REVISION",
+                }
+            ]
+            latest_revision_audit = max(
+                revision_audits,
+                key=lambda audit: audit.created_at,
+                default=None,
             )
 
             serialized.append({
@@ -429,9 +448,18 @@ class ContractService:
                 "effective_from": version.effective_from if version else None,
                 "effective_to": version.effective_to if version else None,
                 "contract_value": version.contract_value if version else None,
+                "revision_requested_by_role": (
+                    "MANAGER"
+                    if latest_revision_audit
+                    and latest_revision_audit.action
+                    == "MANAGER_REQUEST_REVISION"
+                    else "DIRECTOR"
+                    if latest_revision_audit
+                    else None
+                ),
             })
 
-        return serialized, total
+        return serialized, total, ContractRepository.contract_summary(db)
 
     # =========================================================
     # UPDATE CONTRACT

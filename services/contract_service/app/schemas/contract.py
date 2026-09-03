@@ -115,17 +115,30 @@ class ContractListItem(BaseModel):
     effective_from: date | None = None
     effective_to: date | None = None
     contract_value: Decimal | None = None
+    revision_requested_by_role: str | None = None
 
     model_config = {
         "from_attributes": True
     }
     
+class ContractSummary(BaseModel):
+    approved: int = 0
+    active: int = 0
+    revision_requested: int = 0
+    revision_requested_by_manager: int = 0
+    revision_requested_by_director: int = 0
+    rejected: int = 0
+    expired: int = 0
+    cancelled: int = 0
+    director_review: int = 0
+
 class ContractListResponse(BaseModel):
     items: list[ContractListItem]
     
     total: int
     skip: int
     limit: int
+    summary: ContractSummary
     
 class RenewContractRequest(BaseModel):
     new_effective_to: date

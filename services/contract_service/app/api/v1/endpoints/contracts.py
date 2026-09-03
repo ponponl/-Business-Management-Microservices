@@ -1,3 +1,4 @@
+from datetime import date
 from uuid import UUID
 from fastapi.responses import FileResponse, JSONResponse
 import json
@@ -297,6 +298,10 @@ def list_contracts(
         le=100,
     ),
 
+    search: str | None = Query(default=None, max_length=100),
+
+    effective_date: date | None = Query(default=None),
+
     db: Session = Depends(get_db),
 
     current_user: CurrentUser = Depends(
@@ -304,11 +309,13 @@ def list_contracts(
     ),
 ):
 
-    items, total = (
+    items, total, summary = (
         ContractService.list_contracts(
             db=db,
             customer_id=customer_id,
             status=status_filter,
+            search=search,
+            effective_date=effective_date,
             skip=skip,
             limit=limit,
         )
@@ -319,6 +326,7 @@ def list_contracts(
         "total": total,
         "skip": skip,
         "limit": limit,
+        "summary": summary,
     }
 
 # Update contract endpoint

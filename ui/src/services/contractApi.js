@@ -43,10 +43,13 @@ const extractErrorMessage = async (response) => {
     }
 };
 
-export const fetchContracts = async (status = null) => {
+export const fetchContracts = async ({ status = null, skip = 0, limit = 20, search = '', effectiveDate = '' } = {}) => {
     const url = new URL(`${BASE_URL}/contracts`);
     if (status) url.searchParams.append('status', status);
-    // You can also append skip, limit, customer_id if needed
+    url.searchParams.append('skip', skip);
+    url.searchParams.append('limit', limit);
+    if (search.trim()) url.searchParams.append('search', search.trim());
+    if (effectiveDate) url.searchParams.append('effective_date', effectiveDate);
     
     const response = await fetch(url, {
         method: 'GET',
@@ -115,6 +118,35 @@ export const submitContract = async (contractId, idempotencyKey) => {
     }
     return response.json();
 };
+
+export const startContractReview = async (contractId) => {
+    const response = await fetch(`${BASE_URL}/contracts/${contractId}/start-review`, {
+        method: 'POST',
+        headers: getHeaders(),
+    });
+    if (!response.ok) {
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Failed to start contract review');
+    }
+    return response.json();
+};
+
+const postApprovalAction = async (contractId, action, comment = null) => {
+    const response = await fetch(`${BASE_URL}/contracts/${contractId}/${action}`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ comment }),
+    });
+    if (!response.ok) {
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Không thể xử lý hợp đồng');
+    }
+    return response.json();
+};
+
+export const approveContract = (contractId, comment = null) => postApprovalAction(contractId, 'approve', comment);
+export const requestContractRevision = (contractId, comment) => postApprovalAction(contractId, 'request-revision', comment);
+export const rejectContract = (contractId, comment) => postApprovalAction(contractId, 'reject', comment);
 
 export const cancelContract = async (contractId, reason) => {
     const response = await fetch(`${BASE_URL}/contracts/${contractId}/cancel`, {
