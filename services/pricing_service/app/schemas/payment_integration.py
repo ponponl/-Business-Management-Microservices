@@ -11,12 +11,24 @@ class PaymentValidationRequest(BaseModel):
     period_end: date = Field(..., description="Ngày kết thúc kỳ thanh toán")
 
 
+class PaymentPriceResolveRequest(BaseModel):
+    customer_id: Optional[str] = None
+    contract_id: Optional[str] = None
+    operation_dates: List[date] = Field(default_factory=list)
+    service_codes: List[str] = Field(default_factory=list)
+
+
 class PriceItemDetail(BaseModel):
     service_item_id: str
     service_code: str
     service_name: str
     unit: Optional[str] = None
     unit_price: float
+    operation_date: Optional[date] = None
+    price_list_id: Optional[str] = None
+    price_list_version_id: Optional[str] = None
+    version_number: Optional[str] = None
+    price_list_name: Optional[str] = None
 
 
 class PaymentValidationResponse(BaseModel):

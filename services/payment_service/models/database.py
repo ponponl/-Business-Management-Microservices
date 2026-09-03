@@ -46,6 +46,11 @@ def initialize_database():
                 existing_columns = {
                     column["name"] for column in inspect(engine).get_columns("payment_boards")
                 } if inspect(engine).has_table("payment_boards") else set()
+                detail_columns = {
+                    column["name"] for column in inspect(engine).get_columns("payment_details")
+                } if inspect(engine).has_table("payment_details") else set()
+                if "operation_date" not in detail_columns and inspect(engine).has_table("payment_details"):
+                    connection.execute(text("ALTER TABLE payment_details ADD COLUMN operation_date DATE"))
                 migrations = {
                     "payment_type": "ALTER TABLE payment_boards ADD COLUMN payment_type VARCHAR(30) NOT NULL DEFAULT 'STANDARD'",
                     "parent_payment_id": "ALTER TABLE payment_boards ADD COLUMN parent_payment_id VARCHAR(36) REFERENCES payment_boards(id) ON DELETE SET NULL",
