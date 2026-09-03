@@ -671,7 +671,6 @@ def start_review(
 ):
 
     try:
-
         actor_id = UUID(
             current_user.user_id
         )
@@ -683,26 +682,24 @@ def start_review(
             actor_role=current_user.role,
         )
 
-        return {
-            "contract_id":
-                str(contract.contract_id),
+        if current_user.role == "MANAGER":
+            message = "Manager review started"
+        else:
+            message = "Director review started"
 
+        return {
+            "contract_id": str(
+                contract.contract_id
+            ),
             "contract_number":
                 contract.contract_number,
-
             "status":
                 contract.status,
-
             "message":
-                (
-                    "Manager review started"
-                    if current_user.role == "MANAGER"
-                    else "Director review started"
-                ),
+                message,
         }
 
     except ValueError as exc:
-
         code = str(exc)
 
         if code == "CONTRACT_NOT_FOUND":
@@ -720,6 +717,8 @@ def start_review(
         if code in {
             "INVALID_STATE",
             "APPROVAL_ALREADY_EXISTS",
+            "APPROVAL_NOT_FOUND",
+            "MANAGER_APPROVAL_REQUIRED",
         }:
             raise HTTPException(
                 status_code=409,
@@ -747,7 +746,6 @@ def approve_contract(
 ):
 
     try:
-
         contract = ApprovalService.approve(
             db=db,
             contract_id=contract_id,
@@ -758,29 +756,26 @@ def approve_contract(
             comment=request.comment,
         )
 
+        message = (
+            "Manager approved successfully"
+            if current_user.role == "MANAGER"
+            else "Director approved successfully"
+        )
+
         return {
             "contract_id":
                 str(contract.contract_id),
-
             "contract_number":
                 contract.contract_number,
-
             "status":
                 contract.status,
-
             "row_version":
                 contract.row_version,
-
             "message":
-                (
-                    "Manager approved successfully"
-                    if current_user.role == "MANAGER"
-                    else "Director approved successfully"
-                ),
+                message,
         }
 
     except ValueError as exc:
-
         code = str(exc)
 
         if code == "CONTRACT_NOT_FOUND":
@@ -832,7 +827,6 @@ def reject_contract(
 ):
 
     try:
-
         contract = ApprovalService.reject(
             db=db,
             contract_id=contract_id,
@@ -843,29 +837,26 @@ def reject_contract(
             comment=request.comment,
         )
 
+        message = (
+            "Manager rejected the contract"
+            if current_user.role == "MANAGER"
+            else "Director rejected the contract"
+        )
+
         return {
             "contract_id":
                 str(contract.contract_id),
-
             "contract_number":
                 contract.contract_number,
-
             "status":
                 contract.status,
-
             "row_version":
                 contract.row_version,
-
             "message":
-                (
-                    "Manager rejected the contract"
-                    if current_user.role == "MANAGER"
-                    else "Director rejected the contract"
-                ),
+                message,
         }
 
     except ValueError as exc:
-
         code = str(exc)
 
         if code == "CONTRACT_NOT_FOUND":
@@ -923,7 +914,6 @@ def request_revision(
 ):
 
     try:
-
         contract = ApprovalService.request_revision(
             db=db,
             contract_id=contract_id,
@@ -934,29 +924,26 @@ def request_revision(
             comment=request.comment,
         )
 
+        message = (
+            "Manager requested revision"
+            if current_user.role == "MANAGER"
+            else "Director requested revision"
+        )
+
         return {
             "contract_id":
                 str(contract.contract_id),
-
             "contract_number":
                 contract.contract_number,
-
             "status":
                 contract.status,
-
             "row_version":
                 contract.row_version,
-
             "message":
-                (
-                    "Manager requested revision"
-                    if current_user.role == "MANAGER"
-                    else "Director requested revision"
-                ),
+                message,
         }
 
     except ValueError as exc:
-
         code = str(exc)
 
         if code == "CONTRACT_NOT_FOUND":
@@ -990,6 +977,72 @@ def request_revision(
         if code == "COMMENT_REQUIRED":
             raise HTTPException(
                 status_code=422,
+                detail=code,
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=code,
+        )
+        
+# =========================================================
+# FORWARD DIRECTOR REVISION TO STAFF
+# =========================================================
+@router.post(
+    "/{contract_id}/forward-revision",
+)
+def forward_revision(
+    contract_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(
+        get_current_user
+    ),
+):
+
+    try:
+        contract = ApprovalService.forward_revision(
+            db=db,
+            contract_id=contract_id,
+            actor_id=UUID(
+                current_user.user_id
+            ),
+            actor_role=current_user.role,
+        )
+
+        return {
+            "contract_id":
+                str(contract.contract_id),
+            "contract_number":
+                contract.contract_number,
+            "status":
+                contract.status,
+            "message":
+                "Director revision forwarded to Staff",
+        }
+
+    except ValueError as exc:
+        code = str(exc)
+
+        if code == "CONTRACT_NOT_FOUND":
+            raise HTTPException(
+                status_code=404,
+                detail=code,
+            )
+
+        if code == "FORBIDDEN":
+            raise HTTPException(
+                status_code=403,
+                detail=code,
+            )
+
+        if code in {
+            "INVALID_STATE",
+            "APPROVAL_NOT_FOUND",
+            "INVALID_REVISION_SOURCE",
+            "REVISION_ALREADY_FORWARDED",
+        }:
+            raise HTTPException(
+                status_code=409,
                 detail=code,
             )
 

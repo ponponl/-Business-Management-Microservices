@@ -33,9 +33,6 @@ class ApprovalService:
         actor_id: UUID,
         expected_status: ContractStatus,
     ) -> tuple[Contract, ContractApproval]:
-        """
-        Lock Contract + Approval và validate người được assign.
-        """
 
         # 1. Lock Contract
         contract = ContractRepository.get_by_id_for_update(
@@ -48,16 +45,18 @@ class ApprovalService:
                 "CONTRACT_NOT_FOUND"
             )
 
-        # 2. Validate state
+        # 2. Validate Contract state
         if contract.status != expected_status.value:
             raise ValueError(
                 "INVALID_STATE"
             )
 
-        # 3. Lock current approval
-        approval = ApprovalRepository.get_current_for_update(
-            db=db,
-            contract_id=contract_id,
+        # 3. Get current pending approval
+        approval = (
+            ApprovalRepository.get_current_for_update(
+                db=db,
+                contract_id=contract_id,
+            )
         )
 
         if approval is None:
@@ -65,13 +64,13 @@ class ApprovalService:
                 "APPROVAL_NOT_FOUND"
             )
 
-        # 4. Validate approval status
+        # 4. Ensure approval is pending
         if approval.status != "PENDING":
             raise ValueError(
                 "APPROVAL_ALREADY_PROCESSED"
             )
 
-        # 5. Validate approver
+        # 5. Ensure correct approver
         if approval.approver_id != actor_id:
             raise ValueError(
                 "NOT_ASSIGNED_APPROVER"
@@ -91,11 +90,12 @@ class ApprovalService:
     ) -> Contract:
 
         try:
-
             # 1. Lock Contract
-            contract = ContractRepository.get_by_id_for_update(
-                db=db,
-                contract_id=contract_id,
+            contract = (
+                ContractRepository.get_by_id_for_update(
+                    db=db,
+                    contract_id=contract_id,
+                )
             )
 
             if contract is None:
@@ -107,14 +107,17 @@ class ApprovalService:
             # MANAGER START REVIEW
             # SUBMITTED -> MANAGER_REVIEW
             # =================================================
-            if contract.status == ContractStatus.SUBMITTED.value:
+            if (
+                contract.status
+                == ContractStatus.SUBMITTED.value
+            ):
 
                 if actor_role != "MANAGER":
                     raise ValueError(
                         "FORBIDDEN"
                     )
 
-                # Không được có approval pending
+                # Không được có approval đang PENDING
                 current_approval = (
                     ApprovalRepository.get_current(
                         db=db,
@@ -127,6 +130,17 @@ class ApprovalService:
                         "APPROVAL_ALREADY_EXISTS"
                     )
 
+                # 2. Determine new approval round
+                latest_round = (
+                    ApprovalRepository.get_latest_round(
+                        db=db,
+                        contract_id=contract_id,
+                    )
+                )
+
+                new_round = latest_round + 1
+
+                # 3. State transition
                 previous_status = contract.status
 
                 new_status = (
@@ -141,9 +155,10 @@ class ApprovalService:
                 contract.status = new_status.value
                 contract.row_version += 1
 
-                # Tạo Manager approval
+                # 4. Create Manager approval
                 approval = ContractApproval(
                     contract_id=contract.contract_id,
+                    approval_round=new_round,
                     step_no=1,
                     approver_id=actor_id,
                     status="PENDING",
@@ -151,7 +166,7 @@ class ApprovalService:
 
                 db.add(approval)
 
-                # Audit
+                # 5. Audit
                 audit = ContractAudit(
                     contract_id=contract.contract_id,
                     version_id=None,
@@ -159,16 +174,21 @@ class ApprovalService:
                     action="START_MANAGER_REVIEW",
                     status_before=previous_status,
                     status_after=contract.status,
-                    note="Manager started contract review",
+                    note=(
+                        f"Manager started review "
+                        f"(approval round {new_round})"
+                    ),
                 )
 
                 db.add(audit)
 
-                # Outbox
+                # 6. Outbox
                 outbox_event = OutboxEvent(
                     aggregate_type="CONTRACT",
                     aggregate_id=contract.contract_id,
-                    event_type="CONTRACT_MANAGER_REVIEW_STARTED",
+                    event_type=(
+                        "CONTRACT_MANAGER_REVIEW_STARTED"
+                    ),
                     payload={
                         "contract_id": str(
                             contract.contract_id
@@ -181,9 +201,10 @@ class ApprovalService:
                         "approver_id": str(
                             actor_id
                         ),
+                        "approver_role": "MANAGER",
+                        "approval_round": new_round,
                         "step_no": 1,
-                        "status":
-                            contract.status,
+                        "status": contract.status,
                     },
                     status="PENDING",
                     retry_count=0,
@@ -200,29 +221,69 @@ class ApprovalService:
             # DIRECTOR START REVIEW
             # DIRECTOR_REVIEW -> DIRECTOR_REVIEW
             # =================================================
-            if contract.status == ContractStatus.DIRECTOR_REVIEW.value:
+            if (
+                contract.status
+                == ContractStatus.DIRECTOR_REVIEW.value
+            ):
 
                 if actor_role != "DIRECTOR":
                     raise ValueError(
                         "FORBIDDEN"
                     )
 
-                # Không được có approval pending
-                current_approval = (
-                    ApprovalRepository.get_current(
+                # 2. Get latest approval round
+                latest_round = (
+                    ApprovalRepository.get_latest_round(
                         db=db,
                         contract_id=contract_id,
                     )
                 )
 
-                if current_approval is not None:
+                if latest_round <= 0:
+                    raise ValueError(
+                        "APPROVAL_NOT_FOUND"
+                    )
+
+                # 3. Manager approval in current round
+                manager_approval = (
+                    ApprovalRepository.get_by_round_step(
+                        db=db,
+                        contract_id=contract_id,
+                        approval_round=latest_round,
+                        step_no=1,
+                    )
+                )
+
+                if manager_approval is None:
+                    raise ValueError(
+                        "APPROVAL_NOT_FOUND"
+                    )
+
+                if manager_approval.status != "APPROVED":
+                    raise ValueError(
+                        "MANAGER_APPROVAL_REQUIRED"
+                    )
+
+                # 4. Ensure Director approval
+                # does not already exist in this round
+                director_approval = (
+                    ApprovalRepository.get_by_round_step(
+                        db=db,
+                        contract_id=contract_id,
+                        approval_round=latest_round,
+                        step_no=2,
+                    )
+                )
+
+                if director_approval is not None:
                     raise ValueError(
                         "APPROVAL_ALREADY_EXISTS"
                     )
 
-                # Tạo Director approval
+                # 5. Create Director approval
                 approval = ContractApproval(
                     contract_id=contract.contract_id,
+                    approval_round=latest_round,
                     step_no=2,
                     approver_id=actor_id,
                     status="PENDING",
@@ -230,7 +291,7 @@ class ApprovalService:
 
                 db.add(approval)
 
-                # Audit
+                # 6. Audit
                 audit = ContractAudit(
                     contract_id=contract.contract_id,
                     version_id=None,
@@ -238,16 +299,21 @@ class ApprovalService:
                     action="START_DIRECTOR_REVIEW",
                     status_before=contract.status,
                     status_after=contract.status,
-                    note="Director started contract review",
+                    note=(
+                        f"Director started review "
+                        f"(approval round {latest_round})"
+                    ),
                 )
 
                 db.add(audit)
 
-                # Outbox
+                # 7. Outbox
                 outbox_event = OutboxEvent(
                     aggregate_type="CONTRACT",
                     aggregate_id=contract.contract_id,
-                    event_type="CONTRACT_DIRECTOR_REVIEW_STARTED",
+                    event_type=(
+                        "CONTRACT_DIRECTOR_REVIEW_STARTED"
+                    ),
                     payload={
                         "contract_id": str(
                             contract.contract_id
@@ -260,9 +326,11 @@ class ApprovalService:
                         "approver_id": str(
                             actor_id
                         ),
+                        "approver_role": "DIRECTOR",
+                        "approval_round":
+                            latest_round,
                         "step_no": 2,
-                        "status":
-                            contract.status,
+                        "status": contract.status,
                     },
                     status="PENDING",
                     retry_count=0,
@@ -298,7 +366,8 @@ class ApprovalService:
         try:
 
             # =================================================
-            # MANAGER APPROVAL
+            # MANAGER APPROVE
+            # MANAGER_REVIEW -> DIRECTOR_REVIEW
             # =================================================
             if actor_role == "MANAGER":
 
@@ -324,7 +393,7 @@ class ApprovalService:
                     )
                 )
 
-                # Approval record
+                # Approval
                 approval.status = "APPROVED"
                 approval.comment = comment
 
@@ -359,13 +428,15 @@ class ApprovalService:
                         "customer_id": str(
                             contract.customer_id
                         ),
-                        "version_no":
-                            contract.current_version,
+                        "approval_round":
+                            approval.approval_round,
+                        "step_no":
+                            approval.step_no,
                         "approver_id": str(
                             actor_id
                         ),
-                        "status":
-                            contract.status,
+                        "approver_role": "MANAGER",
+                        "status": contract.status,
                         "comment": comment,
                     },
                     status="PENDING",
@@ -380,7 +451,8 @@ class ApprovalService:
                 return contract
 
             # =================================================
-            # DIRECTOR APPROVAL
+            # DIRECTOR APPROVE
+            # DIRECTOR_REVIEW -> APPROVED
             # =================================================
             if actor_role == "DIRECTOR":
 
@@ -406,7 +478,7 @@ class ApprovalService:
                     )
                 )
 
-                # Approval record
+                # Approval
                 approval.status = "APPROVED"
                 approval.comment = comment
 
@@ -441,13 +513,15 @@ class ApprovalService:
                         "customer_id": str(
                             contract.customer_id
                         ),
-                        "version_no":
-                            contract.current_version,
+                        "approval_round":
+                            approval.approval_round,
+                        "step_no":
+                            approval.step_no,
                         "approver_id": str(
                             actor_id
                         ),
-                        "status":
-                            contract.status,
+                        "approver_role": "DIRECTOR",
+                        "status": contract.status,
                         "comment": comment,
                     },
                     status="PENDING",
@@ -487,8 +561,6 @@ class ApprovalService:
             )
 
         try:
-
-            expected_status = None
 
             if actor_role == "MANAGER":
                 expected_status = (
@@ -560,15 +632,16 @@ class ApprovalService:
                     "customer_id": str(
                         contract.customer_id
                     ),
-                    "version_no":
-                        contract.current_version,
+                    "approval_round":
+                        approval.approval_round,
+                    "step_no":
+                        approval.step_no,
                     "approver_id": str(
                         actor_id
                     ),
                     "approver_role":
                         actor_role,
-                    "status":
-                        contract.status,
+                    "status": contract.status,
                     "comment":
                         comment.strip(),
                 },
@@ -605,8 +678,6 @@ class ApprovalService:
             )
 
         try:
-
-            expected_status = None
 
             if actor_role == "MANAGER":
                 expected_status = (
@@ -649,15 +720,17 @@ class ApprovalService:
             contract.status = new_status.value
             contract.row_version += 1
 
+            audit_action = (
+                "MANAGER_REQUEST_REVISION"
+                if actor_role == "MANAGER"
+                else "DIRECTOR_REQUEST_REVISION"
+            )
+
             audit = ContractAudit(
                 contract_id=contract.contract_id,
                 version_id=None,
                 actor_id=actor_id,
-                action=(
-                    "MANAGER_REQUEST_REVISION"
-                    if actor_role == "MANAGER"
-                    else "DIRECTOR_REQUEST_REVISION"
-                ),
+                action=audit_action,
                 status_before=previous_status,
                 status_after=contract.status,
                 note=comment.strip(),
@@ -678,8 +751,10 @@ class ApprovalService:
                     "customer_id": str(
                         contract.customer_id
                     ),
-                    "version_no":
-                        contract.current_version,
+                    "approval_round":
+                        approval.approval_round,
+                    "step_no":
+                        approval.step_no,
                     "approver_id": str(
                         actor_id
                     ),
@@ -689,6 +764,159 @@ class ApprovalService:
                         contract.status,
                     "comment":
                         comment.strip(),
+                },
+                status="PENDING",
+                retry_count=0,
+            )
+
+            db.add(outbox_event)
+
+            db.commit()
+            db.refresh(contract)
+
+            return contract
+
+        except Exception:
+            db.rollback()
+            raise
+
+    # =====================================================
+    # FORWARD DIRECTOR REVISION TO STAFF
+    # =====================================================
+    @staticmethod
+    def forward_revision(
+        db: Session,
+        contract_id: UUID,
+        actor_id: UUID,
+        actor_role: str,
+    ) -> Contract:
+
+        try:
+
+            # 1. Only Manager can forward
+            if actor_role != "MANAGER":
+                raise ValueError(
+                    "FORBIDDEN"
+                )
+
+            # 2. Lock Contract
+            contract = (
+                ContractRepository.get_by_id_for_update(
+                    db=db,
+                    contract_id=contract_id,
+                )
+            )
+
+            if contract is None:
+                raise ValueError(
+                    "CONTRACT_NOT_FOUND"
+                )
+
+            # 3. Must be in revision requested state
+            if (
+                contract.status
+                != ContractStatus.REVISION_REQUESTED.value
+            ):
+                raise ValueError(
+                    "INVALID_STATE"
+                )
+
+            # 4. Get latest approval round
+            latest_round = (
+                ApprovalRepository.get_latest_round(
+                    db=db,
+                    contract_id=contract_id,
+                )
+            )
+
+            if latest_round <= 0:
+                raise ValueError(
+                    "APPROVAL_NOT_FOUND"
+                )
+
+            # 5. Latest approval must be
+            # Director revision request
+            director_approval = (
+                ApprovalRepository.get_by_round_step(
+                    db=db,
+                    contract_id=contract_id,
+                    approval_round=latest_round,
+                    step_no=2,
+                )
+            )
+
+            if director_approval is None:
+                raise ValueError(
+                    "APPROVAL_NOT_FOUND"
+                )
+
+            if director_approval.status != (
+                "REVISION_REQUESTED"
+            ):
+                raise ValueError(
+                    "INVALID_REVISION_SOURCE"
+                )
+
+            # 6. Check if already forwarded
+            already_forwarded = (
+                db.query(ContractAudit)
+                .filter(
+                    ContractAudit.contract_id
+                    == contract.contract_id,
+                    ContractAudit.action
+                    == "MANAGER_FORWARD_REVISION",
+                    ContractAudit.created_at
+                    > director_approval.updated_at,
+                )
+                .first()
+            )
+
+            if already_forwarded is not None:
+                raise ValueError(
+                    "REVISION_ALREADY_FORWARDED"
+                )
+
+            # 7. Audit
+            audit = ContractAudit(
+                contract_id=contract.contract_id,
+                version_id=None,
+                actor_id=actor_id,
+                action="MANAGER_FORWARD_REVISION",
+                status_before=contract.status,
+                status_after=contract.status,
+                note=(
+                    "Manager reviewed Director's "
+                    "revision request and forwarded "
+                    "it to Staff"
+                ),
+            )
+
+            db.add(audit)
+
+            # 8. Outbox
+            outbox_event = OutboxEvent(
+                aggregate_type="CONTRACT",
+                aggregate_id=contract.contract_id,
+                event_type=(
+                    "CONTRACT_REVISION_FORWARDED_TO_STAFF"
+                ),
+                payload={
+                    "contract_id": str(
+                        contract.contract_id
+                    ),
+                    "contract_number":
+                        contract.contract_number,
+                    "customer_id": str(
+                        contract.customer_id
+                    ),
+                    "approval_round":
+                        latest_round,
+                    "requested_by_role":
+                        "DIRECTOR",
+                    "forwarded_by":
+                        str(actor_id),
+                    "status":
+                        contract.status,
                 },
                 status="PENDING",
                 retry_count=0,
