@@ -1,6 +1,7 @@
 import re
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional
 from uuid import UUID
+from datetime import datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -37,11 +38,57 @@ class PriceHistoryService:
         try:
             cached = db.query(UserCache).filter(func.lower(UserCache.user_id).in_(clean_ids)).all()
             return {
-                str(u.user_id).strip().lower(): (getattr(u, "full_name", None) or getattr(u, "username", None) or str(u.user_id))
+                str(u.user_id).strip().lower(): (
+                    getattr(u, "full_name", None) or getattr(u, "username", None) or str(u.user_id)
+                )
                 for u in cached
             }
         except Exception:
             return {}
+
+    @staticmethod
+    def log_price_usage(
+        db: Session,
+        price_list_version_id: UUID,
+        payment_board_id: Optional[UUID] = None,
+        payment_code: Optional[str] = None,
+        status_str: str = "CALCULATED",
+        total_amount: Optional[float] = None,
+        customer_id: Optional[UUID] = None,
+        contract_id: Optional[UUID] = None,
+        service_item_id: Optional[UUID] = None,
+        issued_by: Optional[str] = None,
+        applied_at: Optional[datetime] = None,
+    ) -> PriceListUsageLog:
+        """
+        Hàm ghi nhật ký áp dụng bảng giá vào CSDL.
+        Gọi hàm này từ Payment Service / Consumer Kafka khi một bản kê hoặc hóa đơn áp dụng bảng giá.
+        """
+        version = db.query(PriceListVersion).filter(PriceListVersion.id == price_list_version_id).first()
+        if not version:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Không tìm thấy phiên bản bảng giá với ID: {price_list_version_id}"
+            )
+
+        usage_log = PriceListUsageLog(
+            price_list_id=version.price_list_id,
+            price_list_version_id=version.id,
+            payment_board_id=payment_board_id,
+            payment_code=payment_code,
+            status=status_str,
+            total_amount=total_amount,
+            customer_id=customer_id,
+            contract_id=contract_id,
+            service_item_id=service_item_id,
+            issued_by=issued_by,
+            applied_at=applied_at or datetime.utcnow(),
+        )
+
+        db.add(usage_log)
+        db.commit()
+        db.refresh(usage_log)
+        return usage_log
 
     @staticmethod
     def get_version_history_list(
@@ -112,7 +159,6 @@ class PriceHistoryService:
         if not price_list:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bảng giá chứa phiên bản này không tồn tại.")
 
-        # LẤY TÊN TỪ BẢN GHI VERSION TRƯỚC (ƯU TIÊN TÊN RIÊNG CỦA VERSION NÀY)
         current_version_name = (
             getattr(version, "price_list_name", None) or 
             getattr(version, "price_name", None) or 
@@ -169,7 +215,6 @@ class PriceHistoryService:
             cid = str(log.changed_by or "").strip().lower()
             name_from_cache = users_map.get(cid)
             
-            # Fallback hiển thị tên hợp lý
             if name_from_cache:
                 display_name = name_from_cache
             elif re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", cid) or not cid:
@@ -196,26 +241,74 @@ class PriceHistoryService:
 
     @staticmethod
     def get_usage_logs(db: Session, version_id: UUID) -> List[UsageLogItem]:
-        """Tab 3: Lịch sử áp dụng của phiên bản (khớp payment_board_id với Payment Service)."""
+        """Tab 3: Lịch sử áp dụng của phiên bản (Tối ưu truy vấn không bị mất dữ liệu khi service_item_id bị NULL)."""
+        
+        # 1. Truy vấn trực tiếp nhật ký áp dụng theo version_id
         logs = (
-            db.query(PriceListUsageLog, ServiceItem)
-            .outerjoin(ServiceItem, ServiceItem.id == PriceListUsageLog.service_item_id)
+            db.query(PriceListUsageLog)
             .filter(PriceListUsageLog.price_list_version_id == version_id)
             .order_by(PriceListUsageLog.applied_at.desc())
             .all()
         )
 
-        return [
-            UsageLogItem(
-                id=log.id,
-                payment_board_id=str(log.payment_board_id),
-                service_item_id=srv.id if srv else None,
-                service_code=srv.service_code if srv else None,
-                service_name=srv.service_name if srv else None,
-                applied_at=log.applied_at,
+        # 2. Fallback: Nếu không tìm thấy theo version_id, thử tra cứu theo price_list_id
+        if not logs:
+            version = db.query(PriceListVersion).filter(PriceListVersion.id == version_id).first()
+            if version:
+                logs = (
+                    db.query(PriceListUsageLog)
+                    .filter(PriceListUsageLog.price_list_id == version.price_list_id)
+                    .order_by(PriceListUsageLog.applied_at.desc())
+                    .all()
+                )
+
+        if not logs:
+            return []
+
+        # 3. Lấy tên hiển thị của người thực hiện từ UserCache
+        user_ids = {str(log.issued_by).strip() for log in logs if log.issued_by}
+        users_map = PriceHistoryService._get_users_map(db, user_ids)
+
+        # 4. Map thông tin ServiceItem nếu có service_item_id
+        service_ids = {log.service_item_id for log in logs if getattr(log, "service_item_id", None)}
+        services_map = {}
+        if service_ids:
+            services = db.query(ServiceItem).filter(ServiceItem.id.in_(service_ids)).all()
+            services_map = {srv.id: srv for srv in services}
+
+        result = []
+        for log in logs:
+            issued_by_id = str(log.issued_by or "").strip().lower()
+            name_from_cache = users_map.get(issued_by_id)
+            
+            if name_from_cache:
+                issued_by_name = name_from_cache
+            elif re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", issued_by_id) or not issued_by_id:
+                issued_by_name = "Hệ thống"
+            else:
+                issued_by_name = str(log.issued_by)
+
+            srv = services_map.get(getattr(log, "service_item_id", None))
+
+            result.append(
+                UsageLogItem(
+                    id=log.id,
+                    payment_board_id=getattr(log, "payment_board_id", None),
+                    payment_code=getattr(log, "payment_code", None),
+                    status=getattr(log, "status", "CALCULATED"),
+                    total_amount=float(log.total_amount) if getattr(log, "total_amount", None) is not None else None,
+                    customer_id=getattr(log, "customer_id", None),
+                    contract_id=getattr(log, "contract_id", None),
+                    issued_by=log.issued_by,
+                    issued_by_name=issued_by_name,
+                    service_item_id=srv.id if srv else None,
+                    service_code=srv.service_code if srv else None,
+                    service_name=srv.service_name if srv else None,
+                    applied_at=log.applied_at,
+                )
             )
-            for log, srv in logs
-        ]
+
+        return result
 
     @staticmethod
     def compare_versions(

@@ -65,11 +65,28 @@ class ChangeHistoryItem(BaseModel):
 # --- Tab 3: Lịch sử áp dụng ---
 class UsageLogItem(BaseModel):
     id: UUID
-    payment_board_id: str
+    payment_board_id: UUID
+    payment_code: Optional[str] = None
+    status: Optional[str] = None
+    total_amount: Optional[float] = None
+    customer_id: Optional[str] = None
+    contract_id: Optional[str] = None
+    issued_by: Optional[str] = None
+    issued_by_name: Optional[str] = None
     service_item_id: Optional[UUID] = None
     service_code: Optional[str] = None
     service_name: Optional[str] = None
     applied_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UsageLogPaginatedResponse(BaseModel):
+    total_records: int
+    page: int
+    page_size: int
+    items: List[UsageLogItem] = []
 
     class Config:
         from_attributes = True

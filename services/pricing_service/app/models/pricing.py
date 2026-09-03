@@ -59,7 +59,7 @@ class PriceListVersion(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     price_list_id = Column(UUID(as_uuid=True), ForeignKey("price_list.id"), nullable=False)
-    price_list_name = Column(String(255), nullable=True)  # Thêm cột lưu tên riêng cho từng phiên bản
+    price_list_name = Column(String(255), nullable=True)  # Lưu tên riêng cho từng phiên bản
     version_number = Column(String(20), nullable=False)
     valid_from = Column(Date, nullable=False)
     valid_to = Column(Date, nullable=True)
@@ -111,17 +111,28 @@ class PriceChangeHistory(Base):
     price_list_version = relationship("PriceListVersion", back_populates="change_histories")
 
 
-# 6. Bảng PRICE_LIST_USAGE_LOG (Nhật ký Áp dụng Bảng giá)
+# 6. Bảng PRICE_LIST_USAGE_LOG (Nhật ký Áp dụng Bảng giá - Đã bổ sung các trường từ Kafka payment.issued)
 class PriceListUsageLog(Base):
     __tablename__ = "price_list_usage_log"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     price_list_version_id = Column(UUID(as_uuid=True), ForeignKey("price_list_version.id"), nullable=False)
-    # payment_board_id thuộc Microservice khác nên chỉ lưu dạng UUID đơn thuần, không gắn ForeignKey DB
-    payment_board_id = Column(UUID(as_uuid=True), nullable=False)
+    
+    # ID & Mã bản kê thanh toán từ Payment Service
+    payment_board_id = Column(UUID(as_uuid=True), nullable=False, index=True)  # "id" trong Kafka payload
+    payment_code = Column(String(100), nullable=True)                         # "code" trong Kafka payload (VD: BSTATEMENT-2026-442)
+    
+    # Dữ liệu hiển thị chi tiết cho UI
+    status = Column(String(50), nullable=True)              # "status" (VD: ISSUED, PENDING)
+    total_amount = Column(Numeric(15, 2), nullable=True)     # "totalAmount"
+    customer_id = Column(String(100), nullable=True)         # "customerId"
+    contract_id = Column(String(100), nullable=True)         # "contractId"
+    issued_by = Column(String(100), nullable=True)           # "issuedBy"
+    
     service_item_id = Column(UUID(as_uuid=True), ForeignKey("service_item.id"), nullable=True)
-    applied_at = Column(DateTime, default=datetime.utcnow)
+    applied_at = Column(DateTime, default=datetime.utcnow)   # "occurredAt"
 
+    # Relationships
     price_list_version = relationship("PriceListVersion", back_populates="usage_logs")
     service_item = relationship("ServiceItem", back_populates="usage_logs")
 
