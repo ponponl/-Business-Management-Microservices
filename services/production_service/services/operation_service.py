@@ -150,7 +150,22 @@ class OperationService:
 
     @staticmethod
     def get_volumes(db: Session, contract_id: str = None, period_key: str = None):
-        query = db.query(OperationVolume)
+        query = db.query(
+            OperationVolume.id,
+            OperationVolume.contract_id,
+            ContractCache.contract_number,
+            OperationVolume.service_code,
+            OperationVolume.volume_date,
+            OperationVolume.period_key,
+            OperationVolume.quantity,
+            OperationVolume.unit,
+            OperationVolume.recorded_by,
+            OperationVolume.is_locked,
+            OperationVolume.created_at,
+            OperationVolume.updated_at
+        ).outerjoin(
+            ContractCache, OperationVolume.contract_id == ContractCache.contract_id
+        )
         if contract_id:
             query = query.filter(OperationVolume.contract_id == contract_id)
         if period_key:

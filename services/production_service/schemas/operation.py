@@ -46,6 +46,7 @@ class UnlockApprove(BaseModel):
 
 class VolumeResponse(VolumeBase):
     id: int
+    contract_number: Optional[str] = None
     recorded_by: str
     is_locked: bool
     created_at: datetime

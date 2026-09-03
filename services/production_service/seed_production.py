@@ -7,6 +7,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.database import SessionLocal, Base, engine
 from models.operation import OperationPeriod, OperationVolume, UnlockPeriodRequest, VolumeAuditLog, OperationOutboxEvent
+from models.cache import ContractCache
 
 # Đảm bảo các bảng đã được tạo
 Base.metadata.create_all(bind=engine)
@@ -20,6 +21,7 @@ def seed_data():
         OperationOutboxEvent.__table__.drop(engine, checkfirst=True)
         OperationVolume.__table__.drop(engine, checkfirst=True)
         OperationPeriod.__table__.drop(engine, checkfirst=True)
+        ContractCache.__table__.drop(engine, checkfirst=True)
         
         # Tạo lại các bảng với schema mới nhất
         Base.metadata.create_all(bind=engine)
@@ -52,11 +54,52 @@ def seed_data():
         db.add_all([period_jul, period_aug, period_sep])
         db.commit()
 
+        print("Đang tạo ContractCache...")
+        contracts = [
+            ContractCache(
+                contract_id="10000000-0000-0000-0000-000000000001",
+                contract_number="CTR-SEED-001",
+                status="ACTIVE",
+                start_date=datetime(2026, 1, 1),
+                end_date=datetime(2026, 12, 31)
+            ),
+            ContractCache(
+                contract_id="10000000-0000-0000-0000-000000000002",
+                contract_number="CTR-SEED-002",
+                status="ACTIVE",
+                start_date=datetime(2026, 1, 1),
+                end_date=datetime(2026, 12, 31)
+            ),
+            ContractCache(
+                contract_id="10000000-0000-0000-0000-000000000003",
+                contract_number="CTR-SEED-003",
+                status="ACTIVE",
+                start_date=datetime(2026, 1, 1),
+                end_date=datetime(2026, 12, 31)
+            ),
+            ContractCache(
+                contract_id="10000000-0000-0000-0000-000000000004",
+                contract_number="CTR-SEED-004",
+                status="ACTIVE",
+                start_date=datetime(2026, 1, 1),
+                end_date=datetime(2026, 12, 31)
+            ),
+            ContractCache(
+                contract_id="10000000-0000-0000-0000-000000000005",
+                contract_number="CTR-SEED-005",
+                status="ACTIVE",
+                start_date=datetime(2026, 1, 1),
+                end_date=datetime(2026, 12, 31)
+            )
+        ]
+        db.add_all(contracts)
+        db.commit()
+
         print("Đang tạo dữ liệu sản lượng (Volumes)...")
         volumes = [
             # Dữ liệu tháng 7 (Kỳ đã khóa)
             OperationVolume(
-                contract_id="CTR-SEED-001",
+                contract_id="10000000-0000-0000-0000-000000000001",
                 service_code="SRV-001",
                 volume_date=datetime.utcnow() - timedelta(days=45),
                 period_key="2026-07",
@@ -66,7 +109,7 @@ def seed_data():
                 is_locked=True
             ),
             OperationVolume(
-                contract_id="CTR-SEED-002",
+                contract_id="10000000-0000-0000-0000-000000000002",
                 service_code="SRV-002",
                 volume_date=datetime.utcnow() - timedelta(days=40),
                 period_key="2026-07",
@@ -76,7 +119,7 @@ def seed_data():
                 is_locked=True
             ),
             OperationVolume(
-                contract_id="CTR-SEED-003",
+                contract_id="10000000-0000-0000-0000-000000000003",
                 service_code="SRV-003",
                 volume_date=datetime.utcnow() - timedelta(days=38),
                 period_key="2026-07",
@@ -87,7 +130,7 @@ def seed_data():
             ),
             # Dữ liệu tháng 8 (Kỳ đã khóa)
             OperationVolume(
-                contract_id="CTR-SEED-001",
+                contract_id="10000000-0000-0000-0000-000000000001",
                 service_code="SRV-001",
                 volume_date=datetime.utcnow() - timedelta(days=15),
                 period_key="2026-08",
@@ -97,7 +140,7 @@ def seed_data():
                 is_locked=True
             ),
             OperationVolume(
-                contract_id="CTR-SEED-002",
+                contract_id="10000000-0000-0000-0000-000000000002",
                 service_code="SRV-002",
                 volume_date=datetime.utcnow() - timedelta(days=10),
                 period_key="2026-08",
@@ -107,7 +150,7 @@ def seed_data():
                 is_locked=True
             ),
             OperationVolume(
-                contract_id="CTR-TEST-004",
+                contract_id="10000000-0000-0000-0000-000000000004",
                 service_code="SRV-004",
                 volume_date=datetime.utcnow() - timedelta(days=5),
                 period_key="2026-08",
@@ -118,7 +161,7 @@ def seed_data():
             ),
             # Dữ liệu tháng 9 (Kỳ đang mở)
             OperationVolume(
-                contract_id="CTR-SEED-001",
+                contract_id="10000000-0000-0000-0000-000000000001",
                 service_code="SRV-001",
                 volume_date=datetime.utcnow() - timedelta(days=1),
                 period_key="2026-09",
@@ -128,7 +171,7 @@ def seed_data():
                 is_locked=False
             ),
             OperationVolume(
-                contract_id="CTR-SEED-003",
+                contract_id="10000000-0000-0000-0000-000000000003",
                 service_code="SRV-003",
                 volume_date=datetime.utcnow(),
                 period_key="2026-09",
@@ -138,7 +181,7 @@ def seed_data():
                 is_locked=False
             ),
             OperationVolume(
-                contract_id="CTR-SEED-001",
+                contract_id="10000000-0000-0000-0000-000000000001",
                 service_code="SRV-004",
                 volume_date=datetime.utcnow() - timedelta(hours=2),
                 period_key="2026-09",

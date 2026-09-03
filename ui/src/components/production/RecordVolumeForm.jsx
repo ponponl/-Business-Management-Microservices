@@ -183,6 +183,8 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                                     <option value="">-- Chọn Dịch vụ --</option>
                                     {loading ? (
                                         <option value="" disabled>Đang tải...</option>
+                                    ) : services.length === 0 && contractId ? (
+                                        <option value="" disabled>-- Vui lòng cấu hình Bảng giá cho Hợp đồng này trước --</option>
                                     ) : (
                                         services.map(srv => (
                                             <option key={srv.code} value={srv.code}>{srv.name} ({srv.code})</option>
