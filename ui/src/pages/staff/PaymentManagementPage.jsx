@@ -604,7 +604,7 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             >
               <option value="">-- Chọn hợp đồng --</option>
               {contracts.map((c) => (
-                <option key={c.contract_number} value={c.contract_number}>
+                <option key={c.contract_id} value={c.contract_id}>
                   {c.contract_number}
                 </option>
               ))}
