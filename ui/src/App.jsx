@@ -14,7 +14,11 @@ import PriceListHistoryDetail from './pages/PriceListHistoryDetail.jsx';
 import PriceVersionCompare from './pages/staff/PriceVersionCompare.jsx';
 
 import PriceListApprovalPage from './pages/manager/PriceListApprovalPage.jsx';
+import ContractManagementManagerPage from './pages/manager/ContractManagementPage.jsx';
+import ContractReviewPage from './pages/manager/ContractReviewPage.jsx';
 import DirectorPriceListApprovalPage from './pages/director/DirectorPriceListApprovalPage.jsx';
+import ContractManagementDirectorPage from './pages/director/ContractManagementPage.jsx';
+import ContractReviewDirectorPage from './pages/director/ContractReviewPage.jsx';
 
 // Quản lý sản lượng
 import ProductionManagementStaffPage from './pages/staff/ProductionManagementPage.jsx';
@@ -104,7 +108,8 @@ export default function App() {
           <Route path="/manager/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
 
           {/* SERVICE KHÁC */}
-          <Route path="/manager/contracts" element={<EmptyPage />} />
+          <Route path="/manager/contracts" element={<ContractManagementManagerPage user={user} />} />
+          <Route path="/manager/contracts/review" element={<ContractReviewPage user={user} />} />
           <Route path="/manager/volumes" element={<ProductionManagementManagerPage user={user} />} />
           <Route path="/manager/payments" element={<PaymentManagementPage user={user} />} />
         </Route>
@@ -120,7 +125,8 @@ export default function App() {
           <Route path="/director/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
 
           {/* SERVICE KHÁC */}
-          <Route path="/director/contracts" element={<EmptyPage />} />
+          <Route path="/director/contracts" element={<ContractManagementDirectorPage user={user} />} />
+          <Route path="/director/contracts/review" element={<ContractReviewDirectorPage user={user} />} />
           <Route path="/director/volumes" element={<ProductionManagementDirectorPage user={user} />} />
           <Route path="/director/payments" element={<PaymentManagementPage user={user} />} />
         </Route>

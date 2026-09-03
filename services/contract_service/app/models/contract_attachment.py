@@ -3,7 +3,6 @@ import uuid
 from sqlalchemy import (
     Column,
     String,
-    Text,
     BigInteger,
     DateTime,
     ForeignKey,
@@ -26,7 +25,9 @@ class ContractAttachment(Base):
 
     version_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("contract_versions.version_id"),
+        ForeignKey(
+            "contract_versions.version_id"
+        ),
         nullable=False,
         index=True,
     )
@@ -37,13 +38,14 @@ class ContractAttachment(Base):
     )
 
     object_key = Column(
-        Text,
+        String(500),
+        unique=True,
         nullable=False,
     )
 
     content_type = Column(
         String(100),
-        nullable=False,
+        nullable=True,
     )
 
     file_size = Column(
@@ -54,6 +56,7 @@ class ContractAttachment(Base):
     uploaded_by = Column(
         UUID(as_uuid=True),
         nullable=False,
+        index=True,
     )
 
     created_at = Column(
@@ -64,5 +67,5 @@ class ContractAttachment(Base):
 
     version = relationship(
         "ContractVersion",
-        backref="attachments",
+        back_populates="attachments",
     )

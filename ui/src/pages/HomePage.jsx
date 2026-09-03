@@ -52,7 +52,7 @@ export default function HomePage({ user }) {
           
           {/* Quản lý Hợp đồng */}
           <div 
-            onClick={() => navigate(`/${role}/contracts`)}
+            onClick={() => navigate(role === 'manager' ? '/manager/contracts/review' : `/${role}/contracts`)}
             className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:border-sky-500 hover:shadow-md transition cursor-pointer group"
           >
             <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center mb-3 group-hover:scale-110 transition">
