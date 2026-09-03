@@ -169,18 +169,17 @@ def change_status(
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
-    allowed = {"RECONCILED": {"DRAFT", "CALCULATED", "REVISION_REQUESTED"}, "SUBMITTED": {"RECONCILED"}, "APPROVED": {"SUBMITTED"}, "REJECTED": {"SUBMITTED"}, "REVISION_REQUESTED": {"SUBMITTED"}}
+    allowed = {"RECONCILED": {"DRAFT", "CALCULATED"}, "SUBMITTED": {"RECONCILED"}, "APPROVED": {"SUBMITTED"}, "REJECTED": {"SUBMITTED"}}
     if statement.status not in allowed[next_status]:
         raise HTTPException(409, f"Không thể chuyển từ {statement.status} sang {next_status}")
     subtotal, tax, total = calculate_totals(statement)
     statement.sub_total, statement.tax_amount, statement.total_amount = subtotal, tax, total
     if next_status == "SUBMITTED" and (total < 0 or not statement.items):
         raise HTTPException(422, "Bảng thanh toán phải có dòng dịch vụ và tổng tiền không âm")
-    if next_status in {"REJECTED", "REVISION_REQUESTED"} and not payload.comment:
-        raise HTTPException(422, "Bắt buộc nhập lý do khi từ chối hoặc yêu cầu chỉnh sửa")
-    previous_status = statement.status
+    if next_status == "REJECTED" and not payload.comment:
+        raise HTTPException(422, "Bắt buộc nhập lý do khi từ chối")
     final_status = next_status
-    if next_status in {"APPROVED", "REJECTED", "REVISION_REQUESTED"}:
+    if next_status in {"APPROVED", "REJECTED"}:
         workflow, step = current_step(db, statement)
         if step.assignee_id != actor:
             raise HTTPException(403, "Bạn không được giao xử lý bước phê duyệt hiện tại")
@@ -331,7 +330,7 @@ def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request
     statement = db.get(PaymentBoard, payment_id)
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
-    if statement.status not in {"DRAFT", "CALCULATED", "RECONCILED", "REVISION_REQUESTED"}:
+    if statement.status not in {"DRAFT", "CALCULATED", "RECONCILED"}:
         raise HTTPException(409, "Bảng thanh toán đã khóa, cần tạo hồ sơ điều chỉnh")
     validated = validate_payment_sources(payload, request.headers.get("Authorization"))
     statement.customer_id = payload.customer_id
@@ -371,11 +370,6 @@ def approve(payment_id: str, payload: ActionInput = ActionInput(), request: Requ
 @router.post("/payments/{payment_id}/reject")
 def reject(payment_id: str, payload: ActionInput, request: Request, db: Session = Depends(get_db)):
     return change_status(payment_id, "REJECTED", payload, db, request.headers.get("X-User", "MANAGER"), authorization=request.headers.get("Authorization"))
-
-
-@router.post("/payments/{payment_id}/request-revision")
-def request_revision(payment_id: str, payload: ActionInput, request: Request, db: Session = Depends(get_db)):
-    return change_status(payment_id, "REVISION_REQUESTED", payload, db, request.headers.get("X-User", "MANAGER"), authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/send-sign")
@@ -493,8 +487,8 @@ def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request
     ).with_for_update()).scalar_one_or_none()
     if not original:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán gốc")
-    if original.status not in {"SIGNED", "ISSUED"}:
-        raise HTTPException(409, "Chỉ hồ sơ đã ký mới được tạo điều chỉnh")
+    if original.status not in {"SIGNED", "ISSUED", "SIGN_FAILED"}:
+        raise HTTPException(409, "Chỉ hồ sơ đã ký hoặc ký thất bại mới được tạo điều chỉnh")
     existing_adjustment = db.scalar(select(PaymentBoard.id).where(
         PaymentBoard.parent_payment_id == original.id,
         PaymentBoard.payment_type == "ADJUSTMENT",
