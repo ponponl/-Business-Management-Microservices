@@ -30,9 +30,11 @@ async def login(login_in: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/users", response_model=List[UserResponse], summary="Lấy danh sách tất cả Users")
 def get_users(
     role: Optional[UserRole] = Query(None, description="Lọc danh sách theo vai trò (STAFF, MANAGER, DIRECTOR)"),
+    search: Optional[str] = Query(None, alias="q", description="Tìm kiếm người dùng theo tên (username) hoặc email"),
     db: Session = Depends(get_db)
 ):
     """
     API trả về danh sách người dùng trong hệ thống (Staff, Manager, Director...).
+    Hỗ trợ lọc theo vai trò (role) và tìm kiếm gần đúng theo tên/email (q hoặc search).
     """
-    return AuthService.get_all_users(db=db, role=role)
+    return AuthService.get_all_users(db=db, role=role, search_term=search)

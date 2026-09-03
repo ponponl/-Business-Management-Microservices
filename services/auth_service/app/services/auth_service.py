@@ -1,5 +1,6 @@
 # app/services/auth_service.py
 from typing import List, Optional
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.models.user import User, UserRole
@@ -80,13 +81,29 @@ class AuthService:
         )
 
     @staticmethod
-    def get_all_users(db: Session, role: Optional[UserRole] = None) -> List[UserResponse]:
+    def get_all_users(
+        db: Session, 
+        role: Optional[UserRole] = None, 
+        search_term: Optional[str] = None
+    ) -> List[UserResponse]:
         """
-        Lấy danh sách người dùng. Nếu có truyền role sẽ lọc theo role đó.
+        Lấy danh sách người dùng. 
+        - Nếu có truyền role sẽ lọc theo role đó.
+        - Nếu có truyền search_term sẽ tìm kiếm gần đúng (case-insensitive) theo username hoặc email.
         """
         query = db.query(User)
+
         if role:
             query = query.filter(User.role == role)
+        
+        if search_term:
+            keyword = f"%{search_term.strip()}%"
+            query = query.filter(
+                or_(
+                    User.username.ilike(keyword),
+                    User.email.ilike(keyword)
+                )
+            )
         
         users = query.all()
 

@@ -246,6 +246,22 @@ services:
     networks:
       - microservices-net
 
+  esign-worker:
+    build:
+      context: ./services/payment_service
+    container_name: esign-worker
+    command: ["python", "esign_worker.py"]
+    environment:
+      - DATABASE_URL=postgresql://admin:password123@postgres-payment:5432/db_payment
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    depends_on:
+      postgres-payment:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    networks:
+      - microservices-net
+
   # ==========================================
   # 4. API GATEWAY (Nginx)
   # ==========================================

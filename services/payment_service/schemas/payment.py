@@ -24,6 +24,7 @@ class PaymentBoardInput(BaseModel):
     period_end: date = Field(..., alias="periodEnd")
     tax_percent: Decimal = Field(Decimal("10"), ge=0, le=100, alias="taxPercent")
     reference_id: str | None = Field(None, alias="referenceId")
+    period_id: str | None = Field(None, alias="periodId")
     items: list[PaymentDetailInput] = Field(..., min_length=1)
 
     class Config:
@@ -39,3 +40,10 @@ class PaymentBoardInput(BaseModel):
 
 class ActionInput(BaseModel):
     comment: str | None = None
+
+
+class CreateAdjustmentRequest(BaseModel):
+    adjustment_reason: str = Field(..., min_length=1, alias="adjustmentReason")
+
+    class Config:
+        populate_by_name = True

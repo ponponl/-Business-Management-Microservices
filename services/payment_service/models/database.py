@@ -22,14 +22,10 @@ def initialize_database():
             board_columns = {
                 column["name"] for column in inspector.get_columns("payment_boards")
             } if inspector.has_table("payment_boards") else set()
-            history_columns = {
-                column["name"] for column in inspector.get_columns("payment_status_histories")
-            } if inspector.has_table("payment_status_histories") else set()
             needs_recreate = board_columns and (
                 "code" not in board_columns
                 or "customer_id" not in board_columns
                 or "total_amount" not in board_columns
-                or "action" not in history_columns
             )
             if needs_recreate:
                 with engine.begin() as connection:
@@ -46,6 +42,28 @@ def initialize_database():
                         "payment_workflow_instances, payment_status_histories, "
                         "payment_details, payment_boards CASCADE"
                     ))
+            with engine.begin() as connection:
+                existing_columns = {
+                    column["name"] for column in inspect(engine).get_columns("payment_boards")
+                } if inspect(engine).has_table("payment_boards") else set()
+                migrations = {
+                    "payment_type": "ALTER TABLE payment_boards ADD COLUMN payment_type VARCHAR(30) NOT NULL DEFAULT 'STANDARD'",
+                    "parent_payment_id": "ALTER TABLE payment_boards ADD COLUMN parent_payment_id VARCHAR(36) REFERENCES payment_boards(id) ON DELETE SET NULL",
+                    "adjustment_reason": "ALTER TABLE payment_boards ADD COLUMN adjustment_reason TEXT",
+                }
+                for column, statement in migrations.items():
+                    if column not in existing_columns:
+                        connection.execute(text(statement))
+                if "note" in existing_columns:
+                    connection.execute(text("ALTER TABLE payment_boards DROP COLUMN note"))
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_payment_boards_parent_payment_id "
+                    "ON payment_boards(parent_payment_id)"
+                ))
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_payment_boards_parent_status "
+                    "ON payment_boards(parent_payment_id, status)"
+                ))
             Base.metadata.create_all(bind=engine)
             return
         except Exception:

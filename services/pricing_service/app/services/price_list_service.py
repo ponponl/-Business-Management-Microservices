@@ -1025,7 +1025,7 @@ class PriceListService:
         current_user: Optional[Any] = None,
         price_list_name: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Tạo phiên bản mới (SUBMITTED) từ phiên bản EFFECTIVE hiện tại."""
+        """Tạo phiên bản mới (SUBMITTED) từ phiên bản EFFECTIVE hiện tại và lưu nhật ký thay đổi."""
         
         # 1. Tìm Bảng giá gốc (PriceList)
         conds = [PriceList.price_list_code == price_code]
@@ -1065,7 +1065,7 @@ class PriceListService:
             if isinstance(raw_data, dict):
                 inner_data = raw_data.get("data", raw_data) if isinstance(raw_data.get("data"), dict) else raw_data
 
-            # 1. Bắt tên mới dành riêng cho Phiên bản mới
+            # Bắt tên mới dành riêng cho Phiên bản mới
             extracted_new_name = (
                 price_list_name or
                 (getattr(payload, "price_name", None) if payload else None) or
@@ -1083,8 +1083,6 @@ class PriceListService:
 
             # Nếu Frontend gửi tên mới thì dùng tên mới cho VERSION MỚI, ngược lại mới dùng lại tên cũ
             new_version_name = str(extracted_new_name).strip() if extracted_new_name and str(extracted_new_name).strip() else current_ver_name
-
-            # GIỮ NGUYÊN pl.price_list_name (Không update bảng PriceList cha để bảo toàn tên gốc)
 
             valid_from = valid_from or inner_data.get("valid_from") or inner_data.get("effective_from") or inner_data.get("validFrom") or inner_data.get("effectiveFrom")
             valid_to = valid_to or inner_data.get("valid_to") or inner_data.get("effective_to") or inner_data.get("validTo") or inner_data.get("effectiveTo")
@@ -1120,11 +1118,11 @@ class PriceListService:
             # Cập nhật thời hạn của phiên bản EFFECTIVE cũ
             current_ver.valid_to = parsed_valid_from
 
-            # 4. CHỈ LƯU TÊN MỚI VÀO PHIÊN BẢN MỚI NÀY
+            # 4. TẠO BẢN GHI PHIÊN BẢN MỚI
             new_ver = PriceListVersion(
                 id=uuid.uuid4(),
                 price_list_id=pl.id,
-                price_list_name=new_version_name,  # Tên mới gán riêng biệt tại bản ghi version này
+                price_list_name=new_version_name,
                 version_number=formatted_version,
                 status="SUBMITTED",
                 approval_stage="MANAGER_PENDING",
@@ -1138,7 +1136,15 @@ class PriceListService:
             db.add(new_ver)
             db.flush()
 
-            # 5. LƯU DỊCH VỤ VÀO BẢNG price_list_detail
+            # --- ĐỌC DỮ LIỆU PHIÊN BẢN CŨ ĐỂ LÀM MỐC SO SÁNH LOG ---
+            old_details = db.query(PriceListDetail).filter(
+                PriceListDetail.price_list_version_id == current_ver.id
+            ).all()
+            old_service_map = {dt.service_item_id: safe_float(dt.unit_price) for dt in old_details}
+
+            # 5. LƯU DỊCH VỤ VÀO BẢNG price_list_detail & GHI LOG
+            new_service_ids = set()
+
             if services is not None and isinstance(services, list):
                 for item in services:
                     target_service_id = PriceListService._resolve_service_item_id(db, item)
@@ -1153,6 +1159,8 @@ class PriceListService:
                     
                     if not target_service_id:
                         continue
+
+                    new_service_ids.add(target_service_id)
 
                     if isinstance(item, dict):
                         price_raw = item.get("unit_price", item.get("unitPrice", item.get("price", 0.0)))
@@ -1169,11 +1177,38 @@ class PriceListService:
                         unit_price=new_price
                     )
                     db.add(detail)
-            else:
-                old_details = db.query(PriceListDetail).filter(
-                    PriceListDetail.price_list_version_id == current_ver.id
-                ).all()
 
+                    # Ghi log so sánh với phiên bản cũ
+                    srv_obj = db.query(ServiceItem).filter(ServiceItem.id == target_service_id).first()
+                    srv_name = srv_obj.service_name if srv_obj else "Dịch vụ"
+
+                    if target_service_id not in old_service_map:
+                        db.add(PriceChangeHistory(
+                            id=uuid.uuid4(),
+                            price_list_version_id=new_ver.id,
+                            entity_type="SERVICE_ITEM",
+                            entity_name=srv_name,
+                            field_name="unit_price",
+                            old_value=None,
+                            new_value=str(new_price),
+                            change_reason="Thêm dịch vụ mới ở phiên bản nâng cấp",
+                            changed_by=user_uuid,
+                            changed_at=now
+                        ))
+                    elif old_service_map[target_service_id] != new_price:
+                        db.add(PriceChangeHistory(
+                            id=uuid.uuid4(),
+                            price_list_version_id=new_ver.id,
+                            entity_type="SERVICE_ITEM",
+                            entity_name=srv_name,
+                            field_name="unit_price",
+                            old_value=str(old_service_map[target_service_id]),
+                            new_value=str(new_price),
+                            change_reason="Điều chỉnh đơn giá dịch vụ",
+                            changed_by=user_uuid,
+                            changed_at=now
+                        ))
+            else:
                 for dt in old_details:
                     new_dt = PriceListDetail(
                         id=uuid.uuid4(),
@@ -1183,11 +1218,76 @@ class PriceListService:
                         unit_price=dt.unit_price
                     )
                     db.add(new_dt)
+                    new_service_ids.add(dt.service_item_id)
+
+            # Ghi log dịch vụ bị loại bỏ ở phiên bản mới
+            for old_srv_id, old_price in old_service_map.items():
+                if old_srv_id not in new_service_ids:
+                    srv_obj = db.query(ServiceItem).filter(ServiceItem.id == old_srv_id).first()
+                    srv_name = srv_obj.service_name if srv_obj else "Dịch vụ"
+                    db.add(PriceChangeHistory(
+                        id=uuid.uuid4(),
+                        price_list_version_id=new_ver.id,
+                        entity_type="SERVICE_ITEM",
+                        entity_name=srv_name,
+                        field_name="unit_price",
+                        old_value=str(old_price),
+                        new_value=None,
+                        change_reason="Xóa dịch vụ ở phiên bản mới",
+                        changed_by=user_uuid,
+                        changed_at=now
+                    ))
+
+            # --- GHI LOG CÁC THAY ĐỔI CẤU HÌNH BẢNG GIÁ ---
+            if new_version_name != current_ver_name:
+                db.add(PriceChangeHistory(
+                    id=uuid.uuid4(),
+                    price_list_version_id=new_ver.id,
+                    entity_type="PRICE_LIST",
+                    entity_name=pl.price_list_code,
+                    field_name="price_list_name",
+                    old_value=str(current_ver_name or ""),
+                    new_value=str(new_version_name),
+                    change_reason="Cập nhật tên bảng giá ở phiên bản mới",
+                    changed_by=user_uuid,
+                    changed_at=now
+                ))
+
+            old_vf_str = current_ver.valid_from.strftime("%Y-%m-%d") if current_ver.valid_from else ""
+            new_vf_str = parsed_valid_from.strftime("%Y-%m-%d") if parsed_valid_from else ""
+            if old_vf_str != new_vf_str:
+                db.add(PriceChangeHistory(
+                    id=uuid.uuid4(),
+                    price_list_version_id=new_ver.id,
+                    entity_type="PRICE_LIST",
+                    entity_name=pl.price_list_code,
+                    field_name="valid_from",
+                    old_value=old_vf_str,
+                    new_value=new_vf_str,
+                    change_reason="Thay đổi ngày bắt đầu hiệu lực",
+                    changed_by=user_uuid,
+                    changed_at=now
+                ))
+
+            old_vt_str = current_ver.valid_to.strftime("%Y-%m-%d") if current_ver.valid_to else ""
+            new_vt_str = parsed_valid_to.strftime("%Y-%m-%d") if parsed_valid_to else ""
+            if old_vt_str != new_vt_str:
+                db.add(PriceChangeHistory(
+                    id=uuid.uuid4(),
+                    price_list_version_id=new_ver.id,
+                    entity_type="PRICE_LIST",
+                    entity_name=pl.price_list_code,
+                    field_name="valid_to",
+                    old_value=old_vt_str,
+                    new_value=new_vt_str,
+                    change_reason="Thay đổi ngày kết thúc hiệu lực",
+                    changed_by=user_uuid,
+                    changed_at=now
+                ))
 
             pl.updated_at = now
             db.commit()
 
-            # Trả về Response chứa đúng tên của phiên bản mới
             return {
                 "id": str(pl.id),
                 "priceCode": pl.price_list_code,
