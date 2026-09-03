@@ -142,12 +142,12 @@ const findEffectivePrice = async (contractId, customerId, periodStart, periodEnd
       const effectiveVersion = (detail.versions || []).find(
         (version) =>
           version.status?.toUpperCase() === "EFFECTIVE" &&
-          version.validFrom <= periodStart &&
-          version.validTo >= periodEnd,
+          (version.validFrom || version.valid_from) <= periodStart &&
+          (version.validTo || version.valid_to) >= periodEnd,
       );
       if (effectiveVersion) {
         const versionResponse = await fetch(
-          `${detailUrl}?version_id=${encodeURIComponent(effectiveVersion.versionId || effectiveVersion.id)}`,
+          `${detailUrl}?version_id=${encodeURIComponent(effectiveVersion.versionId || effectiveVersion.version_id || effectiveVersion.id)}`,
           { headers: authHeaders(token) },
         );
         if (!versionResponse.ok) continue;
@@ -159,8 +159,8 @@ const findEffectivePrice = async (contractId, customerId, periodStart, periodEnd
       }
       if (
         detail.status?.toUpperCase() === "EFFECTIVE" &&
-        detail.validFrom <= periodStart &&
-        detail.validTo >= periodEnd
+        (detail.validFrom || detail.valid_from) <= periodStart &&
+        (detail.validTo || detail.valid_to) >= periodEnd
       ) {
         return { ...detail, details: detail.items || detail.services || [] };
       }
@@ -411,6 +411,22 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
     setFetchingVolumes(true);
     setError("");
     try {
+      const currentPriceTable = await findEffectivePrice(
+        form.contractId,
+        selectedCustomer?.customer_code || form.customerId,
+        form.periodId,
+        form.periodId,
+        token,
+      );
+      if (!currentPriceTable) {
+        throw new Error("Không tìm thấy bảng giá hiệu lực cho kỳ này");
+      }
+      setPriceTableInfo(currentPriceTable);
+      setForm((previous) => ({
+        ...previous,
+        priceTableId: currentPriceTable.priceCode || currentPriceTable.price_code || currentPriceTable.id || "",
+      }));
+
       const volumes = await fetchVolumes(
         form.customerId,
         form.contractId,
@@ -426,27 +442,28 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
 
       // Group volumes by service_code and aggregate
       const grouped = {};
+      const priceDetails = currentPriceTable.items || currentPriceTable.details || currentPriceTable.services || [];
       volumes.forEach((v) => {
         if (!grouped[v.service_code]) {
-          const priceDetail = priceTableInfo?.details?.find(
+          const matchedPriceDetail = priceDetails.find(
             (detail) =>
-              (detail.serviceCode || detail.service_code || detail.code) ===
-              v.service_code,
+              String(detail.serviceCode || detail.service_code || detail.code || "").trim().toUpperCase() ===
+              String(v.service_code || "").trim().toUpperCase(),
           );
           grouped[v.service_code] = {
             serviceCode: v.service_code,
             serviceName:
               v.service_name ||
-              priceDetail?.serviceName ||
-              priceDetail?.service_name ||
-              priceDetail?.name ||
+              matchedPriceDetail?.serviceName ||
+              matchedPriceDetail?.service_name ||
+              matchedPriceDetail?.name ||
               v.service_code,
-            unit: v.unit || priceDetail?.unit || "container",
+            unit: v.unit || matchedPriceDetail?.unit || "container",
             quantity: 0,
             unitPrice: Number(
-              priceDetail?.unitPrice ||
-              priceDetail?.unit_price ||
-              priceDetail?.price ||
+              matchedPriceDetail?.unitPrice ??
+              matchedPriceDetail?.unit_price ??
+              matchedPriceDetail?.price ??
               0,
             ),
           };
