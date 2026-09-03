@@ -60,6 +60,7 @@ class PaymentDetail(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     payment_board_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False)
+    operation_date = Column(Date, nullable=True)
     service_code = Column(String(50), nullable=False)
     service_name = Column(String(255), nullable=False)
     unit = Column(String(50), nullable=False)

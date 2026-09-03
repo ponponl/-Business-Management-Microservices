@@ -21,6 +21,7 @@ const API_BASE_URL = "http://localhost:8085/api/v1/payments";
 const API_CONTRACT_URL = "http://localhost:8080/api/v1/contracts";
 const API_CUSTOMER_URL = "http://localhost:8080/api/v1/customers";
 const API_PRICELIST_URL = "http://localhost:8080/api/v1/price-lists";
+const API_PRICE_RESOLVE_URL = "http://localhost:8080/api/v1/payment-integration/resolve-for-payment";
 const API_VOLUMES_URL = `${API_BASE_URL}/production-volumes`;
 const API_PERIODS_URL = `${API_BASE_URL}/production-periods`;
 const API_USERS_URL = "http://localhost:8080/api/v1/auth/users";
@@ -157,6 +158,18 @@ const findEffectivePrice = async (contractId, customerId, periodStart, periodEnd
           details: effectiveDetail.items || effectiveDetail.services || [],
         };
       }
+      const overlappingVersion = (detail.versions || []).find(
+        (version) =>
+          version.status?.toUpperCase() === "EFFECTIVE" &&
+          (version.validFrom || version.valid_from) <= periodEnd &&
+          (!(version.validTo || version.valid_to) || (version.validTo || version.valid_to) >= periodStart),
+      );
+      if (overlappingVersion) {
+        return {
+          blocked: true,
+          message: `Kỳ thanh toán giao nhau với thời điểm đổi bảng giá (${overlappingVersion.validFrom || overlappingVersion.valid_from}). Hãy tách kỳ theo từng bảng giá.`,
+        };
+      }
       if (
         detail.status?.toUpperCase() === "EFFECTIVE" &&
         (detail.validFrom || detail.valid_from) <= periodStart &&
@@ -276,7 +289,7 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
           periodStart: today.slice(0, 8) + "01",
           periodEnd: today,
           taxPercent: 10,
-          items: [{ ...EMPTY_ITEM }],
+          items: [],
         },
   );
   const [saving, setSaving] = useState(false);
@@ -372,26 +385,6 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
       .finally(() => setPeriodsLoading(false));
   }, [form.contractId, token]);
 
-  // Auto-detect price table
-  useEffect(() => {
-    if (form.contractId && form.periodId && form.periodStart && form.periodEnd) {
-      (async () => {
-        const pt = await findEffectivePrice(
-          form.contractId,
-          selectedCustomer?.customer_code || form.customerId,
-          form.periodStart,
-          form.periodEnd,
-          token,
-        );
-        setPriceTableInfo(pt);
-        setForm((p) => ({ ...p, priceTableId: pt?.priceCode || "" }));
-      })();
-    } else {
-      setPriceTableInfo(null);
-      setForm((previous) => ({ ...previous, priceTableId: "" }));
-    }
-  }, [form.contractId, form.periodId, form.periodStart, form.periodEnd, token]);
-
   const update = (field, value) =>
     setForm((previous) => ({ ...previous, [field]: value }));
 
@@ -411,22 +404,6 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
     setFetchingVolumes(true);
     setError("");
     try {
-      const currentPriceTable = await findEffectivePrice(
-        form.contractId,
-        selectedCustomer?.customer_code || form.customerId,
-        form.periodId,
-        form.periodId,
-        token,
-      );
-      if (!currentPriceTable) {
-        throw new Error("Không tìm thấy bảng giá hiệu lực cho kỳ này");
-      }
-      setPriceTableInfo(currentPriceTable);
-      setForm((previous) => ({
-        ...previous,
-        priceTableId: currentPriceTable.priceCode || currentPriceTable.price_code || currentPriceTable.id || "",
-      }));
-
       const volumes = await fetchVolumes(
         form.customerId,
         form.contractId,
@@ -440,17 +417,64 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
         return;
       }
 
-      // Group volumes by service_code and aggregate
+      const selectedVolumes = volumes.filter((volume) => {
+        const operationDate = String(volume.volume_date || "").slice(0, 10);
+        return operationDate >= form.periodStart && operationDate <= form.periodEnd;
+      });
+      if (!selectedVolumes.length) {
+        setError("Không có sản lượng trong khoảng ngày đã chọn");
+        return;
+      }
+      const operationDates = [...new Set(
+        selectedVolumes.map((volume) => String(volume.volume_date).slice(0, 10)),
+      )];
+      const priceResponse = await fetch(API_PRICE_RESOLVE_URL, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify({
+          customer_id: selectedCustomer?.customer_id || form.customerId,
+          contract_id: form.contractId,
+          operation_dates: operationDates,
+          service_codes: [...new Set(selectedVolumes.map((volume) => volume.service_code))],
+        }),
+      });
+      const priceResult = await priceResponse.json();
+      if (!priceResponse.ok || !priceResult.is_valid) {
+        throw new Error(priceResult.detail || priceResult.message || "Không thể tự động xác định bảng giá");
+      }
+      const detectedPrices = operationDates.reduce((result, operationDate) => {
+        result[operationDate] = {
+          items: priceResult.items.filter((item) => item.operation_date === operationDate),
+        };
+        return result;
+      }, {});
+      const detectedPriceNames = [...new Set(
+        priceResult.items.map((item) => `${item.price_list_name || "Bảng giá"} (${item.price_list_id})`),
+      )];
+      setPriceTableInfo({
+        priceName: detectedPriceNames.length === 1 ? detectedPriceNames[0] : "Đã tự động phân bổ theo ngày vận hành",
+        priceCode: detectedPriceNames.join("; "),
+        details: [],
+      });
+      setForm((previous) => ({ ...previous, priceTableId: "AUTO_BY_OPERATION_DATE" }));
+
+      // Group volumes by operation date and service code.
       const grouped = {};
-      const priceDetails = currentPriceTable.items || currentPriceTable.details || currentPriceTable.services || [];
-      volumes.forEach((v) => {
-        if (!grouped[v.service_code]) {
+      selectedVolumes.forEach((v) => {
+        const operationDate = String(v.volume_date).slice(0, 10);
+        const priceDetails = detectedPrices[operationDate].items || detectedPrices[operationDate].details || detectedPrices[operationDate].services || [];
+        const groupKey = `${operationDate}|${v.service_code}`;
+        if (!grouped[groupKey]) {
           const matchedPriceDetail = priceDetails.find(
             (detail) =>
               String(detail.serviceCode || detail.service_code || detail.code || "").trim().toUpperCase() ===
               String(v.service_code || "").trim().toUpperCase(),
           );
-          grouped[v.service_code] = {
+          if (!matchedPriceDetail) {
+            throw new Error(`Dịch vụ ${v.service_code} chưa được khai báo trong bảng giá ngày ${operationDate}`);
+          }
+          grouped[groupKey] = {
+            operationDate,
             serviceCode: v.service_code,
             serviceName:
               v.service_name ||
@@ -466,9 +490,11 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
               matchedPriceDetail?.price ??
               0,
             ),
+            priceListName: matchedPriceDetail.price_list_name || "Bảng giá hiệu lực",
+            priceListCode: matchedPriceDetail.price_list_id || "",
           };
         }
-        grouped[v.service_code].quantity += Number(v.quantity || 0);
+        grouped[groupKey].quantity += Number(v.quantity || 0);
       });
 
       setForm((p) => ({
@@ -484,6 +510,14 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
 
   const save = async (event) => {
     event.preventDefault();
+    if (!form.periodStart || !form.periodEnd) {
+      setError("Vui lòng chọn khoảng ngày tính phí");
+      return;
+    }
+    if (!priceTableInfo || priceTableInfo.blocked || !form.priceTableId) {
+      setError(priceTableInfo?.message || "Không tìm thấy một bảng giá hiệu lực cho toàn bộ khoảng ngày đã chọn");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -652,43 +686,6 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             </select>
           </label>
 
-          {/* Date Range */}
-          <label className="text-xs font-medium text-slate-600">
-            Từ ngày *
-            <input
-              required
-              type="date"
-              value={form.periodStart}
-              readOnly
-              onChange={(event) => update("periodStart", event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="text-xs font-medium text-slate-600">
-            Đến ngày *
-            <input
-              required
-              type="date"
-              value={form.periodEnd}
-              readOnly
-              onChange={(event) => update("periodEnd", event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
-          </label>
-
-          {/* Price Table - Read Only */}
-          <div className="text-xs font-medium text-slate-600">
-            <label className="block mb-1">Bảng giá (Effective) *</label>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 font-semibold">
-              {priceTableInfo?.priceName || "-- Chưa xác định --"}
-            </div>
-            {priceTableInfo && (
-              <div className="mt-1 text-[11px] text-slate-500">
-                {priceTableInfo.priceCode} · Hiệu lực: {priceTableInfo.validFrom} - {priceTableInfo.validTo}
-              </div>
-            )}
-          </div>
-
           {/* Tax Percent */}
           <label className="text-xs font-medium text-slate-600">
             Thuế VAT (%)
@@ -716,20 +713,22 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             ) : (
               <Download className="h-4 w-4" />
             )}
-            Lấy sản lượng kỳ này
+            Lấy sản lượng và tự động áp bảng giá
           </button>
           <span className="text-xs text-slate-500">
-            Dữ liệu từ Sản lượng Khai thác - Tự động tính thành tiền
+            Tách theo ngày vận hành, dịch vụ và bảng giá hiệu lực tương ứng
           </span>
         </div>
 
         {/* Service Items Table */}
         <div className="mt-6 overflow-x-auto rounded-lg border border-slate-200">
-          <table className="w-full min-w-[700px] text-left text-xs">
+          <table className="w-full min-w-[800px] text-left text-xs">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
+                <th className="p-3">Ngày vận hành</th>
                 <th className="p-3">Mã dịch vụ</th>
                 <th className="p-3">Tên dịch vụ</th>
+                <th className="p-3">Bảng giá áp dụng</th>
                 <th className="p-3">ĐVT</th>
                 <th className="p-3">Sản lượng</th>
                 <th className="p-3">Đơn giá (Snapshot)</th>
@@ -743,10 +742,17 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
                   <td className="p-2">
                     <input
                       required
+                      type="date"
+                      value={item.operationDate || ""}
+                      readOnly
+                      className="w-32 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs"
+                    />
+                  </td>
+                  <td className="p-2">
+                    <input
+                      required
                       value={item.serviceCode}
-                      onChange={(event) =>
-                        updateItem(index, "serviceCode", event.target.value)
-                      }
+                      readOnly
                       className="w-full rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
@@ -754,19 +760,19 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
                     <input
                       required
                       value={item.serviceName}
-                      onChange={(event) =>
-                        updateItem(index, "serviceName", event.target.value)
-                      }
+                      readOnly
                       className="w-full rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
+                  </td>
+                  <td className="p-2 text-[11px] text-slate-600">
+                    <div className="font-semibold">{item.priceListName || "--"}</div>
+                    <div className="text-slate-400">{item.priceListCode || ""}</div>
                   </td>
                   <td className="p-2">
                     <input
                       required
                       value={item.unit}
-                      onChange={(event) =>
-                        updateItem(index, "unit", event.target.value)
-                      }
+                      readOnly
                       className="w-20 rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
@@ -776,9 +782,7 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
                       min="0"
                       type="number"
                       value={item.quantity}
-                      onChange={(event) =>
-                        updateItem(index, "quantity", event.target.value)
-                      }
+                      readOnly
                       className="w-20 rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
@@ -789,9 +793,7 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
                       type="number"
                       step="0.01"
                       value={item.unitPrice}
-                      onChange={(event) =>
-                        updateItem(index, "unitPrice", event.target.value)
-                      }
+                      readOnly
                       className="w-24 rounded border border-slate-200 px-2 py-1.5 text-xs"
                     />
                   </td>
@@ -820,18 +822,11 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             </tbody>
           </table>
         </div>
-        <button
-          type="button"
-          onClick={() =>
-            setForm((previous) => ({
-              ...previous,
-              items: [...previous.items, { ...EMPTY_ITEM }],
-            }))
-          }
-          className="mt-3 text-xs font-semibold text-[#2b727d]"
-        >
-          + Thêm dòng dịch vụ
-        </button>
+        {!form.items.length && (
+          <p className="mt-3 text-xs text-slate-400">
+            Chọn kỳ sản lượng, sau đó bấm lấy sản lượng để hệ thống tự tạo các dòng dịch vụ.
+          </p>
+        )}
         {adjustmentOf && (
           <label className="mt-4 block text-xs font-medium text-slate-600">
             Lý do điều chỉnh *
