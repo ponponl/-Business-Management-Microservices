@@ -11,10 +11,45 @@ const getHeaders = () => {
     };
 };
 
-export const fetchContracts = async (status = null) => {
+const buildMultipartFormData = (contractData, attachments = []) => {
+    const formData = new FormData();
+    formData.append('contract', JSON.stringify(contractData));
+
+    if (Array.isArray(attachments)) {
+        attachments.forEach((file) => {
+            if (file) {
+                formData.append('attachments', file);
+            }
+        });
+    }
+
+    return formData;
+};
+
+const extractErrorMessage = async (response) => {
+    try {
+        const errorPayload = await response.json();
+        if (errorPayload?.detail) {
+            if (typeof errorPayload.detail === 'string') {
+                return errorPayload.detail;
+            }
+            if (typeof errorPayload.detail === 'object') {
+                return errorPayload.detail.message || errorPayload.detail.code || 'Có lỗi xảy ra';
+            }
+        }
+        return 'Có lỗi xảy ra';
+    } catch {
+        return 'Có lỗi xảy ra';
+    }
+};
+
+export const fetchContracts = async ({ status = null, skip = 0, limit = 20, search = '', effectiveDate = '' } = {}) => {
     const url = new URL(`${BASE_URL}/contracts`);
     if (status) url.searchParams.append('status', status);
-    // You can also append skip, limit, customer_id if needed
+    url.searchParams.append('skip', skip);
+    url.searchParams.append('limit', limit);
+    if (search.trim()) url.searchParams.append('search', search.trim());
+    if (effectiveDate) url.searchParams.append('effective_date', effectiveDate);
     
     const response = await fetch(url, {
         method: 'GET',
@@ -33,28 +68,38 @@ export const fetchContractDetail = async (contractId) => {
     return response.json();
 };
 
-export const createContract = async (data) => {
+export const createContract = async (data, attachments = []) => {
+    const formData = buildMultipartFormData(data, attachments);
+    const token = localStorage.getItem('token') || JSON.parse(localStorage.getItem('user_info') || '{}').token || '';
+
     const response = await fetch(`${BASE_URL}/contracts`, {
         method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(data),
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
     });
     if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || 'Failed to create contract');
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Failed to create contract');
     }
     return response.json();
 };
 
-export const updateContract = async (contractId, data) => {
+export const updateContract = async (contractId, data, attachments = []) => {
+    const formData = buildMultipartFormData(data, attachments);
+    const token = localStorage.getItem('token') || JSON.parse(localStorage.getItem('user_info') || '{}').token || '';
+
     const response = await fetch(`${BASE_URL}/contracts/${contractId}`, {
         method: 'PUT',
-        headers: getHeaders(),
-        body: JSON.stringify(data),
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
     });
     if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.detail || 'Failed to update contract');
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Failed to update contract');
     }
     return response.json();
 };
@@ -73,6 +118,35 @@ export const submitContract = async (contractId, idempotencyKey) => {
     }
     return response.json();
 };
+
+export const startContractReview = async (contractId) => {
+    const response = await fetch(`${BASE_URL}/contracts/${contractId}/start-review`, {
+        method: 'POST',
+        headers: getHeaders(),
+    });
+    if (!response.ok) {
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Failed to start contract review');
+    }
+    return response.json();
+};
+
+const postApprovalAction = async (contractId, action, comment = null) => {
+    const response = await fetch(`${BASE_URL}/contracts/${contractId}/${action}`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ comment }),
+    });
+    if (!response.ok) {
+        const message = await extractErrorMessage(response);
+        throw new Error(message || 'Không thể xử lý hợp đồng');
+    }
+    return response.json();
+};
+
+export const approveContract = (contractId, comment = null) => postApprovalAction(contractId, 'approve', comment);
+export const requestContractRevision = (contractId, comment) => postApprovalAction(contractId, 'request-revision', comment);
+export const rejectContract = (contractId, comment) => postApprovalAction(contractId, 'reject', comment);
 
 export const cancelContract = async (contractId, reason) => {
     const response = await fetch(`${BASE_URL}/contracts/${contractId}/cancel`, {

@@ -10,11 +10,11 @@ export default function MainLayout({ user, onLogout }) {
   const getHeaderTitle = () => {
     const path = location.pathname;
     if (path === '/') return 'Tổng quan Dashboard';
-    if (path.startsWith('/contracts')) return 'Quản lý hợp đồng';
-    if (path.startsWith('/price-lists')) return 'Quản lý bảng giá';
-    if (path.startsWith('/volumes')) return 'Quản lý sản lượng';
-    if (path.startsWith('/payments')) return 'Quản lý thanh toán';
-    if (path.startsWith('/users')) return 'Quản lý người dùng';
+    if (path.includes('/contracts')) return 'Quản lý hợp đồng';
+    if (path.includes('/price-lists')) return 'Quản lý bảng giá';
+    if (path.includes('/volumes')) return 'Quản lý sản lượng';
+    if (path.includes('/payments')) return 'Quản lý thanh toán';
+    if (path.includes('/users')) return 'Quản lý người dùng';
     return 'Trang chủ';
   };
 

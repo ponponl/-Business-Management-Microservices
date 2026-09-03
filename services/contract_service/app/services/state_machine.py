@@ -4,7 +4,8 @@ from enum import Enum
 class ContractStatus(str, Enum):
     DRAFT = "DRAFT"
     SUBMITTED = "SUBMITTED"
-    UNDER_REVIEW = "UNDER_REVIEW"
+    MANAGER_REVIEW = "MANAGER_REVIEW"
+    DIRECTOR_REVIEW = "DIRECTOR_REVIEW"
     APPROVED = "APPROVED"
     ACTIVE = "ACTIVE"
     EXPIRED = "EXPIRED"
@@ -22,7 +23,7 @@ class ContractStateMachine:
         },
 
         ContractStatus.SUBMITTED: {
-            "start_review": ContractStatus.UNDER_REVIEW,
+            "start_manager_review": ContractStatus.MANAGER_REVIEW,
             "cancel": ContractStatus.CANCELLED,
         },
 
@@ -31,11 +32,16 @@ class ContractStateMachine:
             "cancel": ContractStatus.CANCELLED,
         },
 
-        ContractStatus.UNDER_REVIEW: {
-            "approve": ContractStatus.APPROVED,
+        ContractStatus.MANAGER_REVIEW: {
+            "approve_manager": ContractStatus.DIRECTOR_REVIEW,
             "reject": ContractStatus.REJECTED,
-            "request_revision":
-                ContractStatus.REVISION_REQUESTED,
+            "request_revision": ContractStatus.REVISION_REQUESTED,
+        },
+
+        ContractStatus.DIRECTOR_REVIEW: {
+            "approve_director": ContractStatus.APPROVED,
+            "reject": ContractStatus.REJECTED,
+            "request_revision": ContractStatus.REVISION_REQUESTED,
         },
 
         ContractStatus.APPROVED: {
