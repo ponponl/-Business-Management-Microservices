@@ -44,7 +44,6 @@ const STATUS_LABELS = {
   APPROVED: "Đã duyệt",
   PENDING_SIGN: "Chờ ký",
   REJECTED: "Từ chối",
-  REVISION_REQUESTED: "Yêu cầu sửa",
   SIGNING: "Đang ký",
   SIGNED: "Đã ký",
   SIGN_FAILED: "Ký thất bại",
@@ -238,7 +237,6 @@ function StatusBadge({ status }) {
     APPROVED: "bg-blue-100 text-blue-700",
     PENDING_SIGN: "bg-amber-100 text-amber-700",
     REJECTED: "bg-rose-100 text-rose-700",
-    REVISION_REQUESTED: "bg-orange-100 text-orange-700",
     SIGNING: "bg-violet-100 text-violet-700",
     SIGNED: "bg-emerald-100 text-emerald-700",
     SIGN_FAILED: "bg-rose-100 text-rose-700",
@@ -1109,7 +1107,7 @@ export default function PaymentManagementPage({ user }) {
 
   const canEdit =
     selected &&
-    ["DRAFT", "CALCULATED", "RECONCILED", "REVISION_REQUESTED"].includes(
+    ["DRAFT", "CALCULATED", "RECONCILED"].includes(
       selected.status,
     );
   const currentApprovalStep = workflow?.steps?.find(
@@ -1452,7 +1450,7 @@ export default function PaymentManagementPage({ user }) {
                     disabled={
                       selected.status !== "DRAFT" &&
                       selected.status !== "CALCULATED" &&
-                      selected.status !== "REVISION_REQUESTED"
+                      selected.status !== "RECONCILED"
                     }
                     onClick={() => action(selected.id, "reconcile")}
                     className="flex items-center gap-1 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
@@ -1476,14 +1474,6 @@ export default function PaymentManagementPage({ user }) {
                       className="flex items-center gap-1 rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700"
                     >
                       <XCircle className="h-3.5 w-3.5" /> Từ chối
-                    </button>
-                    <button
-                      onClick={() =>
-                        openActionDialog(selected.id, "request-revision")
-                      }
-                      className="flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-700"
-                    >
-                      Yêu cầu sửa
                     </button>
                     <button
                       onClick={() => action(selected.id, "approve")}
@@ -1511,7 +1501,7 @@ export default function PaymentManagementPage({ user }) {
                   {issueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Phát hành
                 </button>
               )}
-              {role === "STAFF" && isPaymentCreator && !hasActiveAdjustment && ["SIGNED", "ISSUED"].includes(selected.status) && (
+              {role === "STAFF" && isPaymentCreator && !hasActiveAdjustment && ["SIGNED", "ISSUED", "SIGN_FAILED"].includes(selected.status) && (
                 <button
                   onClick={() => setAdjustmentEditor(selected)}
                   className="flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-700"
