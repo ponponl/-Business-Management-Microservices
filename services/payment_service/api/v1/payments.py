@@ -83,6 +83,7 @@ def serialize(statement: PaymentBoard):
         "createdAt": statement.created_at.isoformat() if statement.created_at else None,
         "items": [{
             "id": item.id,
+            "operationDate": item.operation_date.isoformat() if item.operation_date else None,
             "serviceCode": item.service_code,
             "serviceName": item.service_name,
             "unit": item.unit,
@@ -112,6 +113,7 @@ def signature_assignee(db: Session, statement: PaymentBoard):
 def make_items(items):
     return [PaymentDetail(
         service_code=item["service_code"],
+        operation_date=item.get("operation_date"),
         service_name=item["service_name"],
         unit=item["unit"],
         quantity=item["quantity"],
