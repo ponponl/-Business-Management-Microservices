@@ -50,6 +50,9 @@ def initialize_database():
                     "payment_type": "ALTER TABLE payment_boards ADD COLUMN payment_type VARCHAR(30) NOT NULL DEFAULT 'STANDARD'",
                     "parent_payment_id": "ALTER TABLE payment_boards ADD COLUMN parent_payment_id VARCHAR(36) REFERENCES payment_boards(id) ON DELETE SET NULL",
                     "adjustment_reason": "ALTER TABLE payment_boards ADD COLUMN adjustment_reason TEXT",
+                    "price_list_id": "ALTER TABLE payment_boards ADD COLUMN price_list_id VARCHAR(36)",
+                    "price_list_version_id": "ALTER TABLE payment_boards ADD COLUMN price_list_version_id VARCHAR(36)",
+                    "price_list_version_number": "ALTER TABLE payment_boards ADD COLUMN price_list_version_number VARCHAR(50)",
                 }
                 for column, statement in migrations.items():
                     if column not in existing_columns:

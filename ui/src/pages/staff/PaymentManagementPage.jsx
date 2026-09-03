@@ -215,7 +215,12 @@ const fetchUsers = async (search = "", token) => {
       headers: authHeaders(token),
     });
     const data = (await response.json()) || [];
-    return Array.isArray(data) ? data : data.items || [];
+    const users = Array.isArray(data) ? data : data.items || [];
+    return users.filter(
+      (user) =>
+        user.is_active !== false &&
+        ["MANAGER", "DIRECTOR"].includes(String(user.role || "").toUpperCase()),
+    );
   } catch (err) {
     console.error("Fetch users error:", err);
     return [];
@@ -1639,7 +1644,14 @@ export default function PaymentManagementPage({ user }) {
               />
               {assigneeSearch && availableAssignees.length > 0 && (
                 <div className="absolute top-full left-0 right-0 z-50 mt-1 rounded-lg border border-slate-200 bg-white shadow-lg max-h-40 overflow-y-auto">
-                  {availableAssignees.slice(0, 5).map((user) => (
+                  {availableAssignees
+                    .filter(
+                      (user) =>
+                        String(user.id || user.user_id) !== String(selected?.createdBy) &&
+                        String(user.username || "") !== String(selected?.createdBy),
+                    )
+                    .slice(0, 5)
+                    .map((user) => (
                     <button
                       key={user.user_id || user.id}
                       type="button"
@@ -1664,7 +1676,7 @@ export default function PaymentManagementPage({ user }) {
                         {user.user_id || user.id} · {user.role}
                       </div>
                     </button>
-                  ))}
+                    ))}
                 </div>
               )}
             </div>
