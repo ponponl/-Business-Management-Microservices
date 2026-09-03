@@ -27,11 +27,14 @@ PRODUCTION_SERVICE_URL = "http://production-service:8000"
 router = APIRouter(prefix="/api/v1", tags=["payments"])
 
 
-def add_event(db: Session, event_type: str, statement: PaymentBoard):
+def add_event(db: Session, event_type: str, statement: PaymentBoard, extra: dict | None = None):
+    event_payload = serialize(statement)
+    if extra:
+        event_payload.update(extra)
     db.add(PaymentOutboxEvent(
         event_type=event_type,
         aggregate_id=statement.id,
-        payload=json.dumps(serialize(statement), default=str),
+        payload=json.dumps(event_payload, default=str),
     ))
 
 
@@ -55,6 +58,9 @@ def serialize(statement: PaymentBoard):
         "customerId": statement.customer_id,
         "contractId": statement.contract_id,
         "priceTableId": statement.price_table_id,
+        "priceListId": statement.price_list_id,
+        "priceListVersionId": statement.price_list_version_id,
+        "priceListVersionNumber": statement.price_list_version_number,
         "periodStart": statement.period_start.isoformat(),
         "periodEnd": statement.period_end.isoformat(),
         "status": statement.status,
@@ -124,12 +130,18 @@ def create_board(
     parent_payment_id: str | None = None,
     status: str = "CALCULATED",
     adjustment_reason: str | None = None,
+    price_list_id: str | None = None,
+    price_list_version_id: str | None = None,
+    price_list_version_number: str | None = None,
 ):
     statement = PaymentBoard(
         code=code,
         customer_id=payload.customer_id,
         contract_id=payload.contract_id,
         price_table_id=payload.price_table_id,
+        price_list_id=price_list_id,
+        price_list_version_id=price_list_version_id,
+        price_list_version_number=price_list_version_number,
         period_start=payload.period_start,
         period_end=payload.period_end,
         tax_percent=payload.tax_percent,
@@ -145,7 +157,15 @@ def create_board(
     return statement
 
 
-def change_status(payment_id: str, next_status: str, payload: ActionInput, db: Session, actor: str, assignees: list[str] | None = None):
+def change_status(
+    payment_id: str,
+    next_status: str,
+    payload: ActionInput,
+    db: Session,
+    actor: str,
+    assignees: list[str] | None = None,
+    authorization: str | None = None,
+):
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
@@ -177,7 +197,12 @@ def change_status(payment_id: str, next_status: str, payload: ActionInput, db: S
     statement.status = final_status
     add_event(db, f"payment.{next_status.lower()}", statement)
     if next_status == "SUBMITTED":
-        create_workflow(db, statement, assignees or [])
+        create_workflow(
+            db,
+            statement,
+            assignees or [],
+            authorization=authorization,
+        )
     db.commit()
     db.refresh(statement)
     return serialize(statement)
@@ -274,8 +299,16 @@ def create_payment(payload: PaymentBoardInput, request: Request, db: Session = D
     code = payload.code or f"PAY-{datetime.utcnow():%Y%m%d%H%M%S}"
     if db.scalar(select(PaymentBoard).where(PaymentBoard.code == code)):
         raise HTTPException(409, "Mã bảng thanh toán đã tồn tại")
-    items = validate_payment_sources(payload, request.headers.get("Authorization"))
-    statement = create_board(payload, items, code, request.headers.get("X-User", "STAFF"))
+    validated = validate_payment_sources(payload, request.headers.get("Authorization"))
+    statement = create_board(
+        payload,
+        validated["items"],
+        code,
+        request.headers.get("X-User", "STAFF"),
+        price_list_id=validated["price_list_id"],
+        price_list_version_id=validated["price_list_version_id"],
+        price_list_version_number=validated["price_list_version_number"],
+    )
     db.add(statement)
     db.flush()
     if key:
@@ -300,15 +333,18 @@ def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
     if statement.status not in {"DRAFT", "CALCULATED", "RECONCILED", "REVISION_REQUESTED"}:
         raise HTTPException(409, "Bảng thanh toán đã khóa, cần tạo hồ sơ điều chỉnh")
-    items = validate_payment_sources(payload, request.headers.get("Authorization"))
+    validated = validate_payment_sources(payload, request.headers.get("Authorization"))
     statement.customer_id = payload.customer_id
     statement.contract_id = payload.contract_id
     statement.price_table_id = payload.price_table_id
+    statement.price_list_id = validated["price_list_id"]
+    statement.price_list_version_id = validated["price_list_version_id"]
+    statement.price_list_version_number = validated["price_list_version_number"]
     statement.period_start = payload.period_start
     statement.period_end = payload.period_end
     statement.tax_percent = payload.tax_percent
     statement.reference_id = payload.reference_id or payload.period_id
-    statement.items = make_items(items)
+    statement.items = make_items(validated["items"])
     statement.status = "CALCULATED"
     statement.sub_total, statement.tax_amount, statement.total_amount = calculate_totals(statement)
     db.commit()
@@ -318,28 +354,28 @@ def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request
 
 @router.post("/payments/{payment_id}/reconcile")
 def reconcile(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
-    return change_status(payment_id, "RECONCILED", payload, db, request.headers.get("X-User", "STAFF"))
+    return change_status(payment_id, "RECONCILED", payload, db, request.headers.get("X-User", "STAFF"), authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/submit")
 def submit(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
     assignees = [value.strip() for value in request.headers.get("X-Approval-Assignees", "").split(",") if value.strip()]
-    return change_status(payment_id, "SUBMITTED", payload, db, request.headers.get("X-User", "STAFF"), assignees)
+    return change_status(payment_id, "SUBMITTED", payload, db, request.headers.get("X-User", "STAFF"), assignees, request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/approve")
 def approve(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
-    return change_status(payment_id, "APPROVED", payload, db, request.headers.get("X-User", "MANAGER"))
+    return change_status(payment_id, "APPROVED", payload, db, request.headers.get("X-User", "MANAGER"), authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/reject")
 def reject(payment_id: str, payload: ActionInput, request: Request, db: Session = Depends(get_db)):
-    return change_status(payment_id, "REJECTED", payload, db, request.headers.get("X-User", "MANAGER"))
+    return change_status(payment_id, "REJECTED", payload, db, request.headers.get("X-User", "MANAGER"), authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/request-revision")
 def request_revision(payment_id: str, payload: ActionInput, request: Request, db: Session = Depends(get_db)):
-    return change_status(payment_id, "REVISION_REQUESTED", payload, db, request.headers.get("X-User", "MANAGER"))
+    return change_status(payment_id, "REVISION_REQUESTED", payload, db, request.headers.get("X-User", "MANAGER"), authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/send-sign")
@@ -397,7 +433,12 @@ def issue_payment(payment_id: str, request: Request, db: Session = Depends(get_d
     if statement.created_by not in {actor, username}:
         raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được phát hành")
     statement.status = "ISSUED"
-    add_event(db, "payment.issued", statement)
+    add_event(db, "payment.issued", statement, {
+        "event": "PAYMENT_ISSUED",
+        "eventVersion": 1,
+        "occurredAt": datetime.utcnow().isoformat(),
+        "issuedBy": actor,
+    })
     if statement.payment_type == "ADJUSTMENT" and statement.parent_payment_id:
         parent = db.execute(select(PaymentBoard).where(
             PaymentBoard.id == statement.parent_payment_id
@@ -506,6 +547,9 @@ def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request
         parent_payment_id=original.id,
         status="DRAFT",
         adjustment_reason=payload.adjustment_reason,
+        price_list_id=original.price_list_id,
+        price_list_version_id=original.price_list_version_id,
+        price_list_version_number=original.price_list_version_number,
     )
     db.add(statement)
     db.flush()
