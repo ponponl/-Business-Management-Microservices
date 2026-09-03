@@ -14,49 +14,44 @@ router = APIRouter()
 idempotent_router = APIRouter(route_class=IdempotentRoute)
 
 @idempotent_router.post("/volumes", response_model=VolumeResponse)
-async def create_volume(volume_in: VolumeCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "STAFF", "MANAGER"]))):
+async def create_volume(volume_in: VolumeCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     username = get_username(user)
     return await OperationService.create_volume(db, volume_in, username)
 
 @router.put("/volumes/{volume_id}", response_model=VolumeResponse)
-async def update_volume(volume_id: int, volume_in: VolumeUpdate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "STAFF", "MANAGER"]))):
+async def update_volume(volume_id: int, volume_in: VolumeUpdate, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     username = get_username(user)
     return await OperationService.update_volume(db, volume_id, volume_in, username)
 
 @router.get("/volumes")
-def get_volumes(contract_id: str = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR", "STAFF", "MANAGER"]))):
+def get_volumes(contract_id: str = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     return OperationService.get_volumes(db, contract_id, period_key)
 
 @router.get("/contracts")
-def get_contracts(db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR", "STAFF", "MANAGER"]))):
+def get_contracts(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     return OperationService.get_active_contracts(db)
 
-@router.get("/services")
-async def get_services(request: Request, user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR", "STAFF", "MANAGER"]))):
-    auth_header = request.headers.get("Authorization")
-    return await IntegrationService.get_pricing_services(auth_header)
-
 @router.get("/contracts/{contract_id}/services")
-async def get_services_by_contract(contract_id: str, request: Request, user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR", "STAFF", "MANAGER"]))):
+async def get_services_by_contract(contract_id: str, request: Request, user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     auth_header = request.headers.get("Authorization")
     return await IntegrationService.get_pricing_services_by_contract(contract_id, auth_header)
 
 
 @router.get("/volumes/{volume_id}/audit-logs")
-def get_audit_logs(volume_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_STAFF", "OPERATION_MANAGER", "DIRECTOR", "STAFF", "MANAGER"]))):
+def get_audit_logs(volume_id: int, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     return OperationService.get_audit_logs(db, volume_id)
 
 @router.get("/periods")
-def get_periods(db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_MANAGER", "DIRECTOR", "MANAGER"]))):
+def get_periods(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     return PeriodService.get_periods(db)
 
 @router.post("/periods/{period_key}/lock")
-async def lock_period(period_key: str, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_MANAGER", "MANAGER"]))):
+async def lock_period(period_key: str, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     username = get_username(user)
     return await PeriodService.lock_period(db, period_key, username)
 
 @idempotent_router.post("/periods/{period_key}/unlock-request", response_model=UnlockRequestResponse)
-def request_unlock(period_key: str, request_in: UnlockRequestCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["OPERATION_MANAGER", "MANAGER"]))):
+def request_unlock(period_key: str, request_in: UnlockRequestCreate, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
     username = get_username(user)
     return UnlockService.create_request(db, period_key, request_in, username)
 

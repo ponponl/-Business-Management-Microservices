@@ -23,8 +23,8 @@ class OperationService:
         if not contract:
             raise HTTPException(status_code=404, detail="Contract not found in cache")
             
-        if contract.status != "APPROVED":
-            raise HTTPException(status_code=400, detail="Contract is not approved")
+        if contract.status not in ["APPROVED", "ACTIVE"]:
+            raise HTTPException(status_code=400, detail="Contract is not approved or active")
             
         vol_date = volume_in.volume_date.replace(tzinfo=None)
         if contract.start_date and contract.end_date:
