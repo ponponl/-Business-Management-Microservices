@@ -85,10 +85,15 @@ def validate_payment_sources(payload: PaymentBoardInput, authorization: str | No
     missing = [item.service_code for item in payload.items if item.service_code not in volumes]
     if missing:
         raise HTTPException(422, f"Thiếu sản lượng cho dịch vụ: {', '.join(missing)}")
-    return [{
-        "service_code": item.service_code,
-        "service_name": prices.get(item.service_code, {}).get("service_name", item.service_name),
-        "unit": volumes[item.service_code]["unit"] or item.unit,
-        "quantity": item.quantity,
-        "unit_price": Decimal(str(prices.get(item.service_code, {}).get("unit_price", item.unit_price))),
-    } for item in payload.items]
+    return {
+        "items": [{
+            "service_code": item.service_code,
+            "service_name": prices.get(item.service_code, {}).get("service_name", item.service_name),
+            "unit": volumes[item.service_code]["unit"] or item.unit,
+            "quantity": item.quantity,
+            "unit_price": Decimal(str(prices.get(item.service_code, {}).get("unit_price", item.unit_price))),
+        } for item in payload.items],
+        "price_list_id": price_result.get("price_list_id"),
+        "price_list_version_id": price_result.get("price_list_version_id"),
+        "price_list_version_number": price_result.get("version_number"),
+    }
