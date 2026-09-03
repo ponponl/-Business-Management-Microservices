@@ -45,8 +45,16 @@ export default function VolumeTable({ volumes = [], onRefresh }) {
         if (a.is_locked !== b.is_locked) {
             return a.is_locked ? 1 : -1;
         }
-        // 2. Ngày VH: Mới nhất lên trước (giảm dần)
-        return new Date(b.volume_date) - new Date(a.volume_date);
+        // 2. Ngày VH: Mới nhất lên trước (chỉ tính ngày, bỏ qua giờ phút giây)
+        const dateA = new Date(a.volume_date);
+        dateA.setHours(0, 0, 0, 0);
+        const dateB = new Date(b.volume_date);
+        dateB.setHours(0, 0, 0, 0);
+        const dateDiff = dateB.getTime() - dateA.getTime();
+        
+        if (dateDiff !== 0) return dateDiff;
+        // 3. Nếu cùng ngày, xếp theo thời gian tạo mới nhất (dựa vào id)
+        return b.id - a.id;
     });
 
     // Pagination calculations

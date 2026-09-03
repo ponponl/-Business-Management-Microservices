@@ -264,36 +264,36 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
       ? { ...payment, periodId: paymentPeriodId }
       : adjustmentOf
         ? {
-            ...adjustmentOf,
-            code: "",
-            periodId: paymentPeriodId,
-            referenceId: "",
-            adjustmentReason: "",
-            items: adjustmentOf.items?.map(({ id, ...item }) => item) || [{ ...EMPTY_ITEM }],
-          }
-      : {
-      customerId: "",
-      contractId: "",
-      priceTableId: "",
-      periodStart: today.slice(0, 8) + "01",
-      periodEnd: today,
-      taxPercent: 10,
-      items: [{ ...EMPTY_ITEM }],
-    },
+          ...adjustmentOf,
+          code: "",
+          periodId: paymentPeriodId,
+          referenceId: "",
+          adjustmentReason: "",
+          items: adjustmentOf.items?.map(({ id, ...item }) => item) || [{ ...EMPTY_ITEM }],
+        }
+        : {
+          customerId: "",
+          contractId: "",
+          priceTableId: "",
+          periodStart: today.slice(0, 8) + "01",
+          periodEnd: today,
+          taxPercent: 10,
+          items: [{ ...EMPTY_ITEM }],
+        },
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  
+
   // Dropdowns & search states
   const [customers, setCustomers] = useState([]);
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  
+
   const [contracts, setContracts] = useState([]);
   const [periods, setPeriods] = useState([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
-  
+
   const [priceTableInfo, setPriceTableInfo] = useState(null);
   const [fetchingVolumes, setFetchingVolumes] = useState(false);
 
@@ -396,7 +396,7 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
 
   const update = (field, value) =>
     setForm((previous) => ({ ...previous, [field]: value }));
-  
+
   const updateItem = (index, field, value) =>
     setForm((previous) => ({
       ...previous,
@@ -447,9 +447,9 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             quantity: 0,
             unitPrice: Number(
               priceDetail?.unitPrice ||
-                priceDetail?.unit_price ||
-                priceDetail?.price ||
-                0,
+              priceDetail?.unit_price ||
+              priceDetail?.price ||
+              0,
             ),
           };
         }
@@ -538,7 +538,7 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             {error}
           </div>
         )}
-        
+
         {/* Header Inputs Row */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {/* Customer Select */}
@@ -606,8 +606,8 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             >
               <option value="">-- Chọn hợp đồng --</option>
               {contracts.map((c) => (
-                <option key={c.contract_number} value={c.contract_number}>
-                  {c.contract_number}
+                <option key={c.contract_id} value={c.contract_id}>
+                  {c.contract_id}
                 </option>
               ))}
             </select>
@@ -882,7 +882,7 @@ export default function PaymentManagementPage({ user }) {
   const [message, setMessage] = useState("");
   const [actionDialog, setActionDialog] = useState(null);
   const [actionComment, setActionComment] = useState("");
-  
+
   // Assignee selection dialog
   const [assigneeDialog, setAssigneeDialog] = useState(null);
   const [assigneeSearch, setAssigneeSearch] = useState("");
@@ -1305,17 +1305,17 @@ export default function PaymentManagementPage({ user }) {
               "SIGN_FAILED",
               "ISSUED",
             ].includes(selected.status) && (
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={loadSignatures}
-                  disabled={signaturesLoading}
-                  className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600"
-                >
-                  {signaturesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />}
-                  Lịch sử ký
-                </button>
-              </div>
-            )}
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={loadSignatures}
+                    disabled={signaturesLoading}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600"
+                  >
+                    {signaturesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <History className="h-3.5 w-3.5" />}
+                    Lịch sử ký
+                  </button>
+                </div>
+              )}
             <div className="mt-5 grid grid-cols-2 gap-3 text-xs">
               <div>
                 <span className="text-slate-400">Customer ID</span>
@@ -1401,13 +1401,12 @@ export default function PaymentManagementPage({ user }) {
                           </td>
                           <td className="p-2">
                             <span
-                              className={`rounded px-2 py-1 text-[10px] font-bold ${
-                                step.status === "COMPLETED"
-                                  ? step.action === "APPROVED"
-                                    ? "bg-emerald-100 text-emerald-700"
-                                    : "bg-rose-100 text-rose-700"
-                                  : "bg-amber-100 text-amber-700"
-                              }`}
+                              className={`rounded px-2 py-1 text-[10px] font-bold ${step.status === "COMPLETED"
+                                ? step.action === "APPROVED"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-rose-100 text-rose-700"
+                                : "bg-amber-100 text-amber-700"
+                                }`}
                             >
                               {step.status === "PENDING"
                                 ? "Chờ xử lý"
@@ -1470,29 +1469,29 @@ export default function PaymentManagementPage({ user }) {
                 </button>
               )}
               {canApprove && (
-                  <>
-                    <button
-                      onClick={() => openActionDialog(selected.id, "reject")}
-                      className="flex items-center gap-1 rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700"
-                    >
-                      <XCircle className="h-3.5 w-3.5" /> Từ chối
-                    </button>
-                    <button
-                      onClick={() =>
-                        openActionDialog(selected.id, "request-revision")
-                      }
-                      className="flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-700"
-                    >
-                      Yêu cầu sửa
-                    </button>
-                    <button
-                      onClick={() => action(selected.id, "approve")}
-                      className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Phê duyệt
-                    </button>
-                  </>
-                )}
+                <>
+                  <button
+                    onClick={() => openActionDialog(selected.id, "reject")}
+                    className="flex items-center gap-1 rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700"
+                  >
+                    <XCircle className="h-3.5 w-3.5" /> Từ chối
+                  </button>
+                  <button
+                    onClick={() =>
+                      openActionDialog(selected.id, "request-revision")
+                    }
+                    className="flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-700"
+                  >
+                    Yêu cầu sửa
+                  </button>
+                  <button
+                    onClick={() => action(selected.id, "approve")}
+                    className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Phê duyệt
+                  </button>
+                </>
+              )}
               {canSign && (
                 <button
                   onClick={sendSign}
@@ -1629,7 +1628,7 @@ export default function PaymentManagementPage({ user }) {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            
+
             {/* Search Input */}
             <div className="mt-5 relative">
               <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -1652,30 +1651,30 @@ export default function PaymentManagementPage({ user }) {
                     )
                     .slice(0, 5)
                     .map((user) => (
-                    <button
-                      key={user.user_id || user.id}
-                      type="button"
-                      onClick={() => {
-                        const userId = user.user_id || user.id;
-                        if (!selectedAssignees.includes(userId)) {
-                          setSelectedAssignees([...selectedAssignees, userId]);
-                          setSelectedAssigneeUsers([
-                            ...selectedAssigneeUsers,
-                            user,
-                          ]);
-                        }
-                        setAssigneeSearch("");
-                        setAvailableAssignees([]);
-                      }}
-                      className="w-full px-3 py-2 text-left text-xs hover:bg-slate-50 border-b last:border-b-0"
-                    >
-                      <div className="font-semibold text-slate-800">
-                        {user.username || user.name}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        {user.user_id || user.id} · {user.role}
-                      </div>
-                    </button>
+                      <button
+                        key={user.user_id || user.id}
+                        type="button"
+                        onClick={() => {
+                          const userId = user.user_id || user.id;
+                          if (!selectedAssignees.includes(userId)) {
+                            setSelectedAssignees([...selectedAssignees, userId]);
+                            setSelectedAssigneeUsers([
+                              ...selectedAssigneeUsers,
+                              user,
+                            ]);
+                          }
+                          setAssigneeSearch("");
+                          setAvailableAssignees([]);
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs hover:bg-slate-50 border-b last:border-b-0"
+                      >
+                        <div className="font-semibold text-slate-800">
+                          {user.username || user.name}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {user.user_id || user.id} · {user.role}
+                        </div>
+                      </button>
                     ))}
                 </div>
               )}
