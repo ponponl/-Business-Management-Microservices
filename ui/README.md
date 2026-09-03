@@ -1,5 +1,23 @@
 # React + Vite
 
+## Run With Kubernetes
+
+Run a fixed port-forward for the Minikube gateway in one terminal and keep it open:
+
+```powershell
+kubectl port-forward service/api-gateway -n business-management 8090:80
+```
+
+In a second terminal, run the UI with Kubernetes mode:
+
+```powershell
+npm run dev:kubernetes
+```
+
+The Kubernetes UI mode uses `http://localhost:8090`. This avoids the Docker Compose gateway port (`8080`) and the local service ports (`8081`-`8087`).
+
+When `VITE_API_BASE_URL` is set, requests that currently use the local Compose ports are routed through the Kubernetes API Gateway. Without it, the existing Docker Compose URLs remain unchanged.
+
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
 Currently, two official plugins are available:

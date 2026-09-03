@@ -1,4 +1,5 @@
 # app/services/auth_service.py
+import asyncio
 from typing import List, Optional
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -69,10 +70,12 @@ class AuthService:
             data={"sub": str(user.id), "role": role_value, "username": user.username}
         )
 
-        await publish_user_login_event(
-            user_id=str(user.id),
-            username=user.username,
-            role=role_value
+        asyncio.create_task(
+            publish_user_login_event(
+                user_id=str(user.id),
+                username=user.username,
+                role=role_value
+            )
         )
 
         return TokenResponse(

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:kubernetes": "vite --mode kubernetes",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"
