@@ -1,6 +1,6 @@
 from typing import List
 from uuid import UUID
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -9,6 +9,7 @@ from app.schemas.price_history import (
     VersionDetailResponse,
     ChangeHistoryItem,
     UsageLogItem,
+    VersionComparisonResponse,
 )
 from app.services.price_history_service import PriceHistoryService
 
@@ -24,6 +25,31 @@ router = APIRouter()
 def get_version_history_list(price_list_identifier: str, db: Session = Depends(get_db)):
     """Lấy danh sách phiên bản thuộc bảng giá (chấp nhận cả UUID lẫn Mã bảng giá dạng chuỗi)."""
     return PriceHistoryService.get_version_history_list(db, price_list_identifier)
+
+
+@router.get(
+    "/versions/compare",
+    response_model=VersionComparisonResponse,
+    status_code=status.HTTP_200_OK,
+    summary="So sánh chênh lệch đơn giá giữa 2 phiên bản"
+)
+def compare_versions(
+    source_version_id: UUID = Query(..., description="ID phiên bản gốc/cũ (VD: v3.0)"),
+    target_version_id: UUID = Query(..., description="ID phiên bản so sánh/mới (VD: v3.1)"),
+    db: Session = Depends(get_db)
+):
+    """
+    So sánh giá dịch vụ giữa 2 phiên bản:
+    - **source_version_id**: Phiên bản làm mốc (VD: v3.0 - EFFECTIVE)
+    - **target_version_id**: Phiên bản đối chiếu (VD: v3.1 - DRAFT)
+    
+    Trả về danh sách các dịch vụ kèm chênh lệch số tiền (+/- VND), % chênh lệch và trạng thái thay đổi.
+    """
+    return PriceHistoryService.compare_versions(
+        db=db,
+        source_version_id=source_version_id,
+        target_version_id=target_version_id
+    )
 
 
 @router.get(

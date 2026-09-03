@@ -4,6 +4,7 @@ import { EditVolumeModal, UnlockVolumeModal, HistoryModal } from './VolumeModals
 export default function VolumeTable({ volumes = [], onRefresh }) {
     const [filterStatus, setFilterStatus] = useState('ALL');
     const [filterMonth, setFilterMonth] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 10;
     const userRole = localStorage.getItem('user_role');
@@ -30,6 +31,12 @@ export default function VolumeTable({ volumes = [], onRefresh }) {
             const d = new Date(v.volume_date);
             const mStr = `${d.getMonth() + 1}/${d.getFullYear()}`;
             if (mStr !== filterMonth) return false;
+        }
+
+        if (searchQuery) {
+            const query = searchQuery.toLowerCase();
+            const contractStr = (v.contract_number || v.contract_id || '').toLowerCase();
+            if (!contractStr.includes(query)) return false;
         }
         
         return true;
@@ -98,7 +105,13 @@ export default function VolumeTable({ volumes = [], onRefresh }) {
                 <div className="flex items-center space-x-3">
                     <div className="relative w-64">
                         <i className="fa-solid fa-search absolute left-3 top-2.5 text-slate-400 text-sm"></i>
-                        <input type="text" placeholder="Tìm kiếm dịch vụ..." className="w-full border border-slate-300 rounded-md pl-9 pr-3 py-2 text-sm outline-none focus:border-primary bg-white" />
+                        <input 
+                            type="text" 
+                            placeholder="Tìm kiếm theo hợp đồng..." 
+                            value={searchQuery}
+                            onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                            className="w-full border border-slate-300 rounded-md pl-9 pr-3 py-2 text-sm outline-none focus:border-primary bg-white" 
+                        />
                     </div>
                     <button className="px-3 py-2 border border-slate-300 rounded-md text-sm hover:bg-slate-50 font-medium text-slate-600" title="Xuất Excel">
                         <i className="fa-solid fa-download"></i>
@@ -125,7 +138,7 @@ export default function VolumeTable({ volumes = [], onRefresh }) {
                         {paginatedVolumes.length > 0 ? paginatedVolumes.map((v) => (
                             <tr key={v.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4 font-medium text-slate-700">{v.id}</td>
-                                <td className="px-6 py-4 font-semibold text-slate-600">{v.contract_id}</td>
+                                <td className="px-6 py-4 font-semibold text-slate-600">{v.contract_number || v.contract_id}</td>
                                 <td className="px-6 py-4 text-slate-500">{new Date(v.volume_date).toLocaleDateString('vi-VN')}</td>
                                 <td className="px-6 py-4">{v.service_code}</td>
                                 <td className="px-6 py-4 text-right font-semibold text-primary">{v.quantity} {v.unit}</td>

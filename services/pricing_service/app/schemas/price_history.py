@@ -73,3 +73,41 @@ class UsageLogItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Feature: So sánh chênh lệch đơn giá ---
+class VersionCompareHeader(BaseModel):
+    id: UUID
+    version_number: str
+    status: str
+    valid_from: date
+    valid_to: Optional[date] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PriceComparisonItem(BaseModel):
+    service_item_id: UUID
+    service_code: str
+    service_name: str
+    unit: Optional[str] = None
+    old_price: Optional[float] = None       # Đơn giá v3.0 (Cũ)
+    new_price: Optional[float] = None       # Đơn giá v3.1 (Mới)
+    price_difference: Optional[float] = None # Chênh lệch số tiền (VD: +10000.00)
+    percentage_change: Optional[float] = None # % Chênh lệch (VD: +2.86%)
+    status: str                             # "INCREASED", "DECREASED", "UNCHANGED", "ADDED", "REMOVED"
+
+    class Config:
+        from_attributes = True
+
+
+class VersionComparisonResponse(BaseModel):
+    price_list_id: UUID
+    price_list_name: str
+    source_version: VersionCompareHeader   
+    target_version: VersionCompareHeader    
+    comparison_items: List[PriceComparisonItem] = []
+
+    class Config:
+        from_attributes = True

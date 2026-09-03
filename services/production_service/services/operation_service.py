@@ -23,8 +23,8 @@ class OperationService:
         if not contract:
             raise HTTPException(status_code=404, detail="Contract not found in cache")
             
-        if contract.status != "APPROVED":
-            raise HTTPException(status_code=400, detail="Contract is not approved")
+        if contract.status not in ["APPROVED", "ACTIVE"]:
+            raise HTTPException(status_code=400, detail="Contract is not approved or active")
             
         vol_date = volume_in.volume_date.replace(tzinfo=None)
         if contract.start_date and contract.end_date:
@@ -150,7 +150,22 @@ class OperationService:
 
     @staticmethod
     def get_volumes(db: Session, contract_id: str = None, period_key: str = None):
-        query = db.query(OperationVolume)
+        query = db.query(
+            OperationVolume.id,
+            OperationVolume.contract_id,
+            ContractCache.contract_number,
+            OperationVolume.service_code,
+            OperationVolume.volume_date,
+            OperationVolume.period_key,
+            OperationVolume.quantity,
+            OperationVolume.unit,
+            OperationVolume.recorded_by,
+            OperationVolume.is_locked,
+            OperationVolume.created_at,
+            OperationVolume.updated_at
+        ).outerjoin(
+            ContractCache, OperationVolume.contract_id == ContractCache.contract_id
+        )
         if contract_id:
             query = query.filter(OperationVolume.contract_id == contract_id)
         if period_key:

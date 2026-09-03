@@ -7,8 +7,8 @@ from models.notification import Notification
 
 logger = logging.getLogger(__name__)
 
-# Các topic cần lắng nghe (vd: contract.events, operation.events)
-KAFKA_TOPICS = ["contract.events", "operation.events"]
+# Các topic cần lắng nghe (chỉ lấy từ contract_service)
+KAFKA_TOPICS = ["contract.events"]
 consumer = None
 
 def process_event(topic: str, event_data: dict, db, event_id: str):
@@ -21,15 +21,30 @@ def process_event(topic: str, event_data: dict, db, event_id: str):
     if existing:
         logger.info(f"Event {event_id} already processed (Idempotency). Skipping.")
         return
-    event_type = event_data.get("event_type")
-    payload = event_data.get("payload", {})
+    event_type = event_data.get("event_type") or event_data.get("event_name")
+    
+    # Nếu payload được bọc trong field "payload", lấy nó. Nếu không, toàn bộ event_data chính là payload
+    payload = event_data.get("payload", event_data)
     if isinstance(payload, str):
         payload = json.loads(payload)
         
     logger.info(f"Received event {event_type} from {topic}")
 
     # VD: Xử lý sự kiện từ contract_service
-    if event_type == "CONTRACT_APPROVED":
+    if event_type == "CONTRACT_CREATED":
+        user_id = payload.get("created_by", 1)
+        contract_number = payload.get("contract_number", "Unknown")
+        notif = Notification(
+            user_id=user_id,
+            title="Hợp đồng mới được tạo",
+            message=f"Hợp đồng {contract_number} đã được tạo thành công.",
+            event_type=event_type,
+            reference_id=contract_number,
+            event_id=event_id
+        )
+        db.add(notif)
+
+    elif event_type == "CONTRACT_APPROVED":
         # Tìm user_id phù hợp (người tạo hợp đồng hoặc manager). Tạm hardcode 1 để demo
         user_id = payload.get("created_by", 1)
         contract_number = payload.get("contract_number", "Unknown")
@@ -46,7 +61,7 @@ def process_event(topic: str, event_data: dict, db, event_id: str):
     elif event_type == "CONTRACT_REJECTED":
         user_id = payload.get("created_by", 1)
         contract_number = payload.get("contract_number", "Unknown")
-        reason = payload.get("reject_reason", "")
+        reason = payload.get("comment", "")
         notif = Notification(
             user_id=user_id,
             title="Hợp đồng bị từ chối",
@@ -56,22 +71,7 @@ def process_event(topic: str, event_data: dict, db, event_id: str):
             event_id=event_id
         )
         db.add(notif)
-        
-    # VD: Xử lý sự kiện từ production_service
-    elif event_type == "VOLUME_RECORDED":
-        # Tạm gán user_id = 1 (Ví dụ: báo cho kế toán hoặc quản lý)
-        user_id = 1
-        volume_id = payload.get("volume_id")
-        period_key = payload.get("period_key")
-        notif = Notification(
-            user_id=user_id,
-            title="Sản lượng mới được ghi nhận",
-            message=f"Một sản lượng mới vừa được ghi nhận cho kỳ {period_key}.",
-            event_type=event_type,
-            reference_id=str(volume_id),
-            event_id=event_id
-        )
-        db.add(notif)
+
         
     db.commit()
 

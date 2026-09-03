@@ -11,6 +11,7 @@ import CreatePriceListStaff from './pages/staff/CreatePriceListPage.jsx';
 import CreateNewVersionStaff from './pages/staff/CreateNewVersionPage.jsx';
 import PriceListDetailStaff from './pages/staff/PriceListDetailPage.jsx';
 import PriceListHistoryDetail from './pages/PriceListHistoryDetail.jsx';
+import PriceVersionCompare from './pages/staff/PriceVersionCompare.jsx';
 
 import PriceListApprovalPage from './pages/manager/PriceListApprovalPage.jsx';
 import DirectorPriceListApprovalPage from './pages/director/DirectorPriceListApprovalPage.jsx';
@@ -81,6 +82,7 @@ export default function App() {
           {/* SERVICE: QUẢN LÝ BẢNG GIÁ */}
           <Route path="/staff/price-lists" element={<PriceManagementStaff user={user} />} />
           <Route path="/staff/price-lists/create" element={<CreatePriceListStaff user={user} />} />
+          <Route path="/staff/price-lists/compare" element={<PriceVersionCompare user={user} />} />
           <Route path="/staff/price-lists/:id/create-version" element={<CreateNewVersionStaff user={user} />} />
           <Route path="/staff/price-lists/:id" element={<PriceListDetailStaff user={user} />} />
           <Route path="/staff/price-lists/:id/versions" element={<PriceListHistoryDetail user={user} />} />
