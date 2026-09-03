@@ -10,6 +10,7 @@ class PaymentDetailInput(BaseModel):
     unit: str = Field(..., min_length=1)
     quantity: Decimal = Field(..., ge=0)
     unit_price: Decimal = Field(..., ge=0, alias="unitPrice")
+    operation_date: date | None = Field(None, alias="operationDate")
 
     class Config:
         populate_by_name = True

@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.attachment import AttachmentResponse
+
 
 class CreateContractRequest(BaseModel):
     customer_id: UUID
@@ -91,6 +93,8 @@ class ContractResponse(BaseModel):
     updated_at: datetime
 
     current_version_detail: ContractVersionResponse | None = None
+    
+    attachments: list[AttachmentResponse] = Field(default_factory=list)
 
     model_config = {
         "from_attributes": True
@@ -111,17 +115,30 @@ class ContractListItem(BaseModel):
     effective_from: date | None = None
     effective_to: date | None = None
     contract_value: Decimal | None = None
+    revision_requested_by_role: str | None = None
 
     model_config = {
         "from_attributes": True
     }
     
+class ContractSummary(BaseModel):
+    approved: int = 0
+    active: int = 0
+    revision_requested: int = 0
+    revision_requested_by_manager: int = 0
+    revision_requested_by_director: int = 0
+    rejected: int = 0
+    expired: int = 0
+    cancelled: int = 0
+    director_review: int = 0
+
 class ContractListResponse(BaseModel):
     items: list[ContractListItem]
     
     total: int
     skip: int
     limit: int
+    summary: ContractSummary
     
 class RenewContractRequest(BaseModel):
     new_effective_to: date
@@ -129,9 +146,6 @@ class RenewContractRequest(BaseModel):
     
 class CancelContractRequest(BaseModel):
     reason: str
-    
-class StartReviewRequest(BaseModel):
-    approver_id: UUID
     
 class ApprovalActionRequest(BaseModel):
     comment: str | None = Field(

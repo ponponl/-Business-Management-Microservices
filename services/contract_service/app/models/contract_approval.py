@@ -30,6 +30,13 @@ class ContractApproval(Base):
         nullable=False,
         index=True,
     )
+    
+    approval_round = Column(
+        Integer,
+        nullable=False,
+        default=1,
+        index=True,
+    )
 
     step_no = Column(
         Integer,

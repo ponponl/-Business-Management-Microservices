@@ -150,30 +150,37 @@ class OperationService:
 
     @staticmethod
     def get_volumes(db: Session, contract_id: str = None, period_key: str = None):
-        query = db.query(
-            OperationVolume.id,
-            OperationVolume.contract_id,
-            ContractCache.contract_number,
-            OperationVolume.service_code,
-            OperationVolume.volume_date,
-            OperationVolume.period_key,
-            OperationVolume.quantity,
-            OperationVolume.unit,
-            OperationVolume.recorded_by,
-            OperationVolume.is_locked,
-            OperationVolume.created_at,
-            OperationVolume.updated_at
-        ).outerjoin(
+        query = db.query(OperationVolume, ContractCache.contract_number).outerjoin(
             ContractCache, OperationVolume.contract_id == ContractCache.contract_id
         )
         if contract_id:
             query = query.filter(OperationVolume.contract_id == contract_id)
         if period_key:
             query = query.filter(OperationVolume.period_key == period_key)
-        return query.order_by(
+            
+        results = query.order_by(
             OperationVolume.is_locked.asc(),
             OperationVolume.volume_date.desc()
         ).all()
+        
+        formatted_results = []
+        for vol, contract_number in results:
+            formatted_results.append({
+                "id": vol.id,
+                "contract_id": vol.contract_id,
+                "contract_number": contract_number,
+                "service_code": vol.service_code,
+                "volume_date": vol.volume_date,
+                "period_key": vol.period_key,
+                "quantity": vol.quantity,
+                "unit": vol.unit,
+                "recorded_by": str(vol.recorded_by),
+                "is_locked": vol.is_locked,
+                "created_at": vol.created_at,
+                "updated_at": vol.updated_at
+            })
+            
+        return formatted_results
 
     # Lấy dữ liệu cho Payment Service
     @staticmethod

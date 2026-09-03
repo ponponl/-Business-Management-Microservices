@@ -76,7 +76,8 @@ export default function ContractManagementStaffPage({ user }) {
 
     const handleCreateContract = async (payload) => {
         try {
-            await createContract(payload);
+            const { attachments = [], ...contractData } = payload;
+            await createContract(contractData, attachments);
             setShowForm(false);
             loadData();
         } catch (err) {
@@ -86,13 +87,14 @@ export default function ContractManagementStaffPage({ user }) {
 
     const handleUpdateContract = async (payload) => {
         try {
-            // Need row_version to update. Let's fetch detail first or pass it from somewhere.
-            // Since we edit, we probably fetched the detail. We need row_version!
-            // Wait, for simplicity if we don't have row_version here, we fetch it first.
+            const { attachments = [], ...contractData } = payload;
             const detail = await fetchContractDetail(editingContractId);
-            payload.row_version = detail.row_version;
+            const requestBody = {
+                ...contractData,
+                row_version: detail.row_version,
+            };
 
-            await updateContract(editingContractId, payload);
+            await updateContract(editingContractId, requestBody, attachments);
             setEditingContractId(null);
             setShowForm(false);
             loadData();
@@ -243,6 +245,8 @@ export default function ContractManagementStaffPage({ user }) {
                     customers={customers}
                     onClose={() => setShowForm(false)}
                     onSubmit={handleSubmitContractForm}
+                    contractStatus={detailData?.status || ''}
+                    existingAttachments={detailData?.attachments || []}
                 />
             )}
 

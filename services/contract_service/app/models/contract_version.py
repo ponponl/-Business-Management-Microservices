@@ -97,3 +97,9 @@ class ContractVersion(Base):
         "Contract",
         back_populates="versions",
     )
+    
+    attachments = relationship(
+    "ContractAttachment",
+    back_populates="version",
+    cascade="all, delete-orphan",
+    )

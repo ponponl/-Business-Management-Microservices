@@ -1,6 +1,11 @@
 from datetime import date
+import logging
 from uuid import UUID
+import uuid
 
+from fastapi import UploadFile
+
+from app.models.contract_attachment import ContractAttachment
 from sqlalchemy.orm import Session
 
 from app.core.constants import SYSTEM_ACTOR_ID
@@ -13,6 +18,16 @@ from app.models.contract_audit import ContractAudit
 from app.models.contract_version import ContractVersion
 from app.models.idempotency_key import IdempotencyKey
 from app.models.outbox_event import OutboxEvent
+
+from app.services.attachment_validator import (
+    read_and_validate_file,
+)
+from app.utils.attachment import (
+    build_attachment_object_key,
+)
+from app.services.file_storage import storage
+
+
 
 from app.repositories.contract_repository import ContractRepository
 from app.repositories.customer_repository import CustomerRepository
@@ -32,20 +47,47 @@ from app.services.state_machine import (
     ContractStatus,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ContractService:
-
+    
+    
+    @staticmethod
+    def build_contract_response(
+        contract: Contract,
+        version: ContractVersion,
+        attachments: list[ContractAttachment] | None = None,
+    ):
+        return {
+            "contract_id": contract.contract_id,
+            "contract_number": contract.contract_number,
+            "customer_id": contract.customer_id,
+            "current_version": contract.current_version,
+            "status": contract.status,
+            "row_version": contract.row_version,
+            "created_at": contract.created_at,
+            "updated_at": contract.updated_at,
+            "current_version_detail": version,
+            "attachments": attachments or [],
+        }
     # =========================================================
     # CREATE CONTRACT
     # =========================================================
+    # =========================================================
+
     @staticmethod
-    def create_contract(
+    async def create_contract(
         db: Session,
         request: CreateContractRequest,
         actor_id: UUID,
-    ) -> Contract:
+        attachments: list[UploadFile] | None = None,
+    ) -> dict:
 
+        # -----------------------------------------------------
         # 1. Validate customer
+        # -----------------------------------------------------
+
         customer = CustomerRepository.get_by_id(
             db,
             request.customer_id,
@@ -61,13 +103,26 @@ class ContractService:
                 "CUSTOMER_INACTIVE"
             )
 
+        # -----------------------------------------------------
+        # 2. Track physical files
+        # -----------------------------------------------------
+
+        saved_object_keys: list[str] = []
+
         try:
-            # 2. Generate business contract number
+
+            # -------------------------------------------------
+            # 3. Generate contract number
+            # -------------------------------------------------
+
             contract_number = (
                 generate_contract_number()
             )
 
-            # 3. Create Contract
+            # -------------------------------------------------
+            # 4. Create Contract
+            # -------------------------------------------------
+
             contract = Contract(
                 contract_number=contract_number,
                 customer_id=request.customer_id,
@@ -81,7 +136,10 @@ class ContractService:
             # Generate contract_id
             db.flush()
 
-            # 4. Create Version 1
+            # -------------------------------------------------
+            # 5. Create Version 1
+            # -------------------------------------------------
+
             version = ContractVersion(
                 contract_id=contract.contract_id,
                 version_no=1,
@@ -96,9 +154,104 @@ class ContractService:
 
             db.add(version)
 
+            # Generate version_id
             db.flush()
 
-            # 5. Create Audit
+            # -------------------------------------------------
+            # 6. Validate duplicate attachment names
+            # -------------------------------------------------
+
+            normalized_attachments = (
+                attachments or []
+            )
+
+            file_names: set[str] = set()
+
+            for file in normalized_attachments:
+
+                if not file.filename:
+                    raise ValueError(
+                        "INVALID_FILE_NAME"
+                    )
+
+                safe_file_name = (
+                    file.filename
+                    .replace("\\", "/")
+                    .split("/")[-1]
+                )
+
+                if safe_file_name in file_names:
+                    raise ValueError(
+                        "DUPLICATE_FILE_NAME"
+                    )
+
+                file_names.add(
+                    safe_file_name
+                )
+
+            # -------------------------------------------------
+            # 7. Upload Attachments
+            # -------------------------------------------------
+
+            created_attachments = []
+
+            for file in normalized_attachments:
+
+                content = (
+                    await read_and_validate_file(
+                        file
+                    )
+                )
+
+                attachment_id = uuid.uuid4()
+
+                object_key = (
+                    build_attachment_object_key(
+                        contract.contract_id,
+                        version.version_id,
+                        attachment_id,
+                    )
+                )
+
+                # Physical file
+                storage.save(
+                    content,
+                    object_key,
+                )
+
+                saved_object_keys.append(
+                    object_key
+                )
+
+                safe_file_name = (
+                    file.filename
+                    .replace("\\", "/")
+                    .split("/")[-1]
+                )
+
+                attachment = ContractAttachment(
+                    attachment_id=attachment_id,
+                    version_id=version.version_id,
+                    file_name=safe_file_name,
+                    object_key=object_key,
+                    content_type=file.content_type,
+                    file_size=len(content),
+                    uploaded_by=actor_id,
+                )
+
+                db.add(attachment)
+
+                created_attachments.append(
+                    attachment
+                )
+
+            if created_attachments:
+                db.flush()
+
+            # -------------------------------------------------
+            # 8. Audit
+            # -------------------------------------------------
+
             audit = ContractAudit(
                 contract_id=contract.contract_id,
                 version_id=version.version_id,
@@ -111,7 +264,10 @@ class ContractService:
 
             db.add(audit)
 
-            # 6. Build event envelope
+            # -------------------------------------------------
+            # 9. Event
+            # -------------------------------------------------
+
             event = build_contract_event(
                 event_name="CONTRACT_CREATED",
                 contract_id=contract.contract_id,
@@ -119,23 +275,29 @@ class ContractService:
                     "contract_id": str(
                         contract.contract_id
                     ),
-                    "contract_number":
-                        contract.contract_number,
+                    "contract_number": (
+                        contract.contract_number
+                    ),
                     "customer_id": str(
                         contract.customer_id
                     ),
-                    "current_version":
-                        contract.current_version,
-                    "status":
-                        contract.status,
-                    "effective_from":
-                        version.effective_from.isoformat(),
-                    "effective_to":
-                        version.effective_to.isoformat(),
+                    "current_version": (
+                        contract.current_version
+                    ),
+                    "status": contract.status,
+                    "effective_from": (
+                        version.effective_from.isoformat()
+                    ),
+                    "effective_to": (
+                        version.effective_to.isoformat()
+                    ),
                 },
             )
 
-            # 7. Create Outbox
+            # -------------------------------------------------
+            # 10. Outbox
+            # -------------------------------------------------
+
             outbox_event = OutboxEvent(
                 aggregate_type="CONTRACT",
                 aggregate_id=contract.contract_id,
@@ -147,15 +309,42 @@ class ContractService:
 
             db.add(outbox_event)
 
-            # 8. Commit everything in one transaction
+            # -------------------------------------------------
+            # 11. Commit
+            # -------------------------------------------------
+
             db.commit()
 
             db.refresh(contract)
 
-            return contract
+            return ContractService.build_contract_response(
+                contract=contract,
+                version=version,
+                attachments=created_attachments,
+            )
 
         except Exception:
+
             db.rollback()
+
+            # ---------------------------------------------
+            # Cleanup physical files if DB transaction fails
+            # ---------------------------------------------
+
+            for object_key in saved_object_keys:
+
+                try:
+                    storage.delete(
+                        object_key
+                    )
+
+                except Exception:
+
+                    logger.exception(
+                        "Failed to cleanup attachment %s",
+                        object_key,
+                    )
+
             raise
 
     # =========================================================
@@ -178,7 +367,8 @@ class ContractService:
             )
 
         version = (
-            ContractRepository.get_current_version(
+            ContractRepository
+            .get_current_version_with_attachments(
                 db,
                 contract,
             )
@@ -199,6 +389,8 @@ class ContractService:
         db: Session,
         customer_id: UUID | None = None,
         status: str | None = None,
+        search: str | None = None,
+        effective_date: date | None = None,
         skip: int = 0,
         limit: int = 20,
     ):
@@ -207,6 +399,8 @@ class ContractService:
                 db=db,
                 customer_id=customer_id,
                 status=status,
+                search=search,
+                effective_date=effective_date,
                 skip=skip,
                 limit=limit,
             )
@@ -217,6 +411,8 @@ class ContractService:
                 db=db,
                 customer_id=customer_id,
                 status=status,
+                search=search,
+                effective_date=effective_date,
             )
         )
 
@@ -225,6 +421,19 @@ class ContractService:
             version = ContractRepository.get_current_version(
                 db,
                 contract,
+            )
+            revision_audits = [
+                audit
+                for audit in contract.audits
+                if audit.action in {
+                    "MANAGER_REQUEST_REVISION",
+                    "DIRECTOR_REQUEST_REVISION",
+                }
+            ]
+            latest_revision_audit = max(
+                revision_audits,
+                key=lambda audit: audit.created_at,
+                default=None,
             )
 
             serialized.append({
@@ -239,23 +448,39 @@ class ContractService:
                 "effective_from": version.effective_from if version else None,
                 "effective_to": version.effective_to if version else None,
                 "contract_value": version.contract_value if version else None,
+                "revision_requested_by_role": (
+                    "MANAGER"
+                    if latest_revision_audit
+                    and latest_revision_audit.action
+                    == "MANAGER_REQUEST_REVISION"
+                    else "DIRECTOR"
+                    if latest_revision_audit
+                    else None
+                ),
             })
 
-        return serialized, total
+        return serialized, total, ContractRepository.contract_summary(db)
 
     # =========================================================
     # UPDATE CONTRACT
     # =========================================================
     @staticmethod
-    def update_contract(
+    async def update_contract(
         db: Session,
         contract_id: UUID,
         request: UpdateContractRequest,
         actor_id: UUID,
-    ) -> Contract:
+        attachments: list[UploadFile] | None = None,
+    ) -> dict:
+
+        saved_object_keys: list[str] = []
 
         try:
+
+            # -------------------------------------------------
             # 1. Lock Contract row
+            # -------------------------------------------------
+
             contract = (
                 ContractRepository.get_by_id_for_update(
                     db,
@@ -268,8 +493,10 @@ class ContractService:
                     "CONTRACT_NOT_FOUND"
                 )
 
-            # 2. Update chỉ được phép ở DRAFT
-            # hoặc REVISION_REQUESTED
+            # -------------------------------------------------
+            # 2. Validate state
+            # -------------------------------------------------
+
             if contract.status not in {
                 ContractStatus.DRAFT.value,
                 ContractStatus.REVISION_REQUESTED.value,
@@ -278,18 +505,26 @@ class ContractService:
                     "INVALID_STATE"
                 )
 
+            # -------------------------------------------------
             # 3. Optimistic locking
-            if contract.row_version != request.row_version:
+            # -------------------------------------------------
+
+            if (
+                contract.row_version
+                != request.row_version
+            ):
                 raise ValueError(
                     "VERSION_CONFLICT"
                 )
 
-            # 4. Next contract version
+            # -------------------------------------------------
+            # 4. New version
+            # -------------------------------------------------
+
             next_version_no = (
                 contract.current_version + 1
             )
 
-            # 5. Create new version
             new_version = ContractVersion(
                 contract_id=contract.contract_id,
                 version_no=next_version_no,
@@ -306,7 +541,10 @@ class ContractService:
 
             db.flush()
 
-            # 6. Update Contract aggregate
+            # -------------------------------------------------
+            # 5. Update aggregate
+            # -------------------------------------------------
+
             previous_status = contract.status
 
             contract.current_version = (
@@ -315,7 +553,101 @@ class ContractService:
 
             contract.row_version += 1
 
-            # 7. Audit
+            # -------------------------------------------------
+            # 6. Validate duplicate attachment names
+            # -------------------------------------------------
+
+            normalized_attachments = (
+                attachments or []
+            )
+
+            file_names: set[str] = set()
+
+            for file in normalized_attachments:
+
+                if not file.filename:
+                    raise ValueError(
+                        "INVALID_FILE_NAME"
+                    )
+
+                safe_file_name = (
+                    file.filename
+                    .replace("\\", "/")
+                    .split("/")[-1]
+                )
+
+                if safe_file_name in file_names:
+
+                    raise ValueError(
+                        "DUPLICATE_FILE_NAME"
+                    )
+
+                file_names.add(
+                    safe_file_name
+                )
+
+            # -------------------------------------------------
+            # 7. Upload attachments to NEW VERSION
+            # -------------------------------------------------
+
+            created_attachments = []
+
+            for file in normalized_attachments:
+
+                content = (
+                    await read_and_validate_file(
+                        file
+                    )
+                )
+
+                attachment_id = uuid.uuid4()
+
+                object_key = (
+                    build_attachment_object_key(
+                        contract.contract_id,
+                        new_version.version_id,
+                        attachment_id,
+                    )
+                )
+
+                storage.save(
+                    content,
+                    object_key,
+                )
+
+                saved_object_keys.append(
+                    object_key
+                )
+
+                safe_file_name = (
+                    file.filename
+                    .replace("\\", "/")
+                    .split("/")[-1]
+                )
+
+                attachment = ContractAttachment(
+                    attachment_id=attachment_id,
+                    version_id=new_version.version_id,
+                    file_name=safe_file_name,
+                    object_key=object_key,
+                    content_type=file.content_type,
+                    file_size=len(content),
+                    uploaded_by=actor_id,
+                )
+
+                db.add(attachment)
+
+                created_attachments.append(
+                    attachment
+                )
+
+            if created_attachments:
+                db.flush()
+
+            # -------------------------------------------------
+            # 8. Audit
+            # -------------------------------------------------
+
             audit = ContractAudit(
                 contract_id=contract.contract_id,
                 version_id=new_version.version_id,
@@ -328,7 +660,10 @@ class ContractService:
 
             db.add(audit)
 
-            # 8. Build event
+            # -------------------------------------------------
+            # 9. Event
+            # -------------------------------------------------
+
             event = build_contract_event(
                 event_name="CONTRACT_UPDATED",
                 contract_id=contract.contract_id,
@@ -336,23 +671,33 @@ class ContractService:
                     "contract_id": str(
                         contract.contract_id
                     ),
-                    "contract_number":
-                        contract.contract_number,
+                    "contract_number": (
+                        contract.contract_number
+                    ),
                     "customer_id": str(
                         contract.customer_id
                     ),
-                    "current_version":
-                        contract.current_version,
-                    "status":
-                        contract.status,
-                    "effective_from":
-                        new_version.effective_from.isoformat(),
-                    "effective_to":
-                        new_version.effective_to.isoformat(),
+                    "current_version": (
+                        contract.current_version
+                    ),
+                    "status": contract.status,
+                    "effective_from": (
+                        new_version
+                        .effective_from
+                        .isoformat()
+                    ),
+                    "effective_to": (
+                        new_version
+                        .effective_to
+                        .isoformat()
+                    ),
                 },
             )
 
-            # 9. Create Outbox
+            # -------------------------------------------------
+            # 10. Outbox
+            # -------------------------------------------------
+
             outbox_event = OutboxEvent(
                 aggregate_type="CONTRACT",
                 aggregate_id=contract.contract_id,
@@ -364,15 +709,38 @@ class ContractService:
 
             db.add(outbox_event)
 
-            # 10. Commit
+            # -------------------------------------------------
+            # 11. Commit
+            # -------------------------------------------------
+
             db.commit()
 
             db.refresh(contract)
 
-            return contract
+            return ContractService.build_contract_response(
+                contract=contract,
+                version=new_version,
+                attachments=created_attachments,
+            )
 
         except Exception:
+
             db.rollback()
+
+            for object_key in saved_object_keys:
+
+                try:
+                    storage.delete(
+                        object_key
+                    )
+
+                except Exception:
+
+                    logger.exception(
+                        "Failed to cleanup attachment %s",
+                        object_key,
+                    )
+
             raise
 
     # =========================================================
@@ -470,7 +838,19 @@ class ContractService:
                     "CURRENT_VERSION_NOT_FOUND"
                 )
 
-            # 6. State transition
+            # 6. Validate effective period
+            if version.effective_from > version.effective_to:
+                raise ValueError(
+                    "INVALID_EFFECTIVE_PERIOD"
+                )
+
+            # 7. Validate attachment requirement
+            if not version.attachments:
+                raise ValueError(
+                    "ATTACHMENT_REQUIRED"
+                )
+
+            # 8. State transition
             previous_status = contract.status
 
             new_status = (
@@ -484,11 +864,10 @@ class ContractService:
 
             contract.status = new_status.value
 
-            # IMPORTANT:
-            # Submit cũng là aggregate change
+            # Submit is an aggregate change
             contract.row_version += 1
 
-            # 7. Audit
+            # 9. Audit
             audit = ContractAudit(
                 contract_id=contract.contract_id,
                 version_id=version.version_id,
@@ -501,7 +880,7 @@ class ContractService:
 
             db.add(audit)
 
-            # 8. Build event
+            # 10. Build event
             event = build_contract_event(
                 event_name="CONTRACT_SUBMITTED",
                 contract_id=contract.contract_id,
@@ -525,7 +904,7 @@ class ContractService:
                 },
             )
 
-            # 9. Outbox
+            # 11. Outbox
             outbox_event = OutboxEvent(
                 aggregate_type="CONTRACT",
                 aggregate_id=contract.contract_id,
@@ -537,7 +916,7 @@ class ContractService:
 
             db.add(outbox_event)
 
-            # 10. Response
+            # 12. Response
             response_body = {
                 "contract_id":
                     str(contract.contract_id),
@@ -549,7 +928,7 @@ class ContractService:
                     "Contract submitted successfully",
             }
 
-            # 11. Idempotency record
+            # 13. Idempotency record
             IdempotencyRepository.create(
                 db,
                 key=idempotency_key,
@@ -560,7 +939,7 @@ class ContractService:
                 response_body=response_body,
             )
 
-            # 12. Commit
+            # 14. Commit
             db.commit()
 
             return 202, response_body

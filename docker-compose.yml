@@ -186,12 +186,14 @@ services:
     container_name: contract-service
     volumes:
       - ./services/contract_service:/app
+      - contract_attachments:/app/storage/attachments
     environment:
       - DATABASE_URL=postgresql://admin:password123@postgres-contract:5432/db_contract
       - JWT_SECRET=super_secret_jwt_key
       - JWT_ALGORITHM=HS256
       - REDIS_URL=redis://redis:6379/0
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ATTACHMENT_STORAGE_PATH=/app/storage/attachments
     ports:
       - "8083:8000"
     depends_on:
@@ -287,6 +289,7 @@ volumes:
   pgdata_contract:
   pgdata_production:
   pgdata_payment:
+  contract_attachments:
 
 networks:
   microservices-net:

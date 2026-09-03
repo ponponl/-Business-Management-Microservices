@@ -3,10 +3,16 @@ import React from 'react';
 export default function ContractTable({ 
     contracts = [], 
     customers = [], 
+    totalCount = contracts.length,
     onView, 
     onEdit, 
     onSubmit, 
-    onCancel 
+    onCancel,
+    managerMode = false,
+    page = 1,
+    pageSize = 20,
+    totalPages = 1,
+    onPageChange,
 }) {
     const formatDateForDisplay = (value) => {
         if (value === null || value === undefined || value === '') return 'N/A';
@@ -51,8 +57,8 @@ export default function ContractTable({
                 return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-yellow-100 text-yellow-700">DRAFT</span>;
             case 'SUBMITTED': 
                 return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-orange-100 text-orange-700">SUBMITTED</span>;
-            case 'UNDER REVIEW': 
-                return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-blue-100 text-blue-700">UNDER REVIEW</span>;
+            case 'DIRECTOR_REVIEW':
+                return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-purple-100 text-purple-700">DIRECTOR_REVIEW</span>;
             case 'APPROVED': 
                 return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-green-100 text-green-700">APPROVED</span>;
             case 'ACTIVE': 
@@ -68,7 +74,7 @@ export default function ContractTable({
     };
 
     return (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className={managerMode ? 'contract-table-manager' : 'bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden'}>
             <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse whitespace-nowrap">
                     <thead>
@@ -78,7 +84,7 @@ export default function ContractTable({
                             <th className="px-6 py-4 font-semibold">Thời gian hiệu lực</th>
                             <th className="px-6 py-4 font-semibold text-right">Giá trị hợp đồng</th>
                             <th className="px-6 py-4 font-semibold text-center">Trạng thái</th>
-                            <th className="px-6 py-4 font-semibold text-right">Hành động</th>
+                            <th className="px-6 py-4 font-semibold text-right">{managerMode ? 'Xem chi tiết' : 'Hành động'}</th>
                         </tr>
                     </thead>
                     <tbody className="text-sm">
@@ -102,7 +108,7 @@ export default function ContractTable({
                                 <td className="px-6 py-4 text-center">{getStatusBadge(c.status)}</td>
                                 <td className="px-6 py-4 text-right space-x-2">
                                     <button onClick={() => onView(c.contract_id)} className="text-slate-400 hover:text-primary transition-colors" title="Xem chi tiết"><i className="fa-solid fa-eye"></i></button>
-                                    {c.status === 'DRAFT' && (
+                                    {!managerMode && c.status === 'DRAFT' && (
                                         <>
                                             <button onClick={() => onEdit(c.contract_id)} className="text-slate-400 hover:text-amber-500 transition-colors" title="Chỉnh sửa"><i className="fa-solid fa-pen-to-square"></i></button>
                                             <button onClick={() => onSubmit(c.contract_id)} className="text-slate-400 hover:text-green-500 transition-colors" title="Submit"><i className="fa-solid fa-paper-plane"></i></button>
@@ -113,7 +119,7 @@ export default function ContractTable({
                             </tr>
                         )) : (
                             <tr>
-                                <td colSpan="7" className="px-6 py-10 text-center text-slate-500">
+                                <td colSpan="6" className="px-6 py-10 text-center text-slate-500">
                                     Không có dữ liệu hợp đồng nào
                                 </td>
                             </tr>
@@ -124,11 +130,11 @@ export default function ContractTable({
             
             {/* Pagination Placeholder */}
             <div className="p-4 border-t border-slate-200 flex items-center justify-between text-sm text-slate-500 bg-white">
-                <div>Hiển thị {contracts.length} bản ghi</div>
+                <div>Hiển thị {totalCount ? (page - 1) * pageSize + 1 : 0} - {(page - 1) * pageSize + contracts.length} của {totalCount} hợp đồng</div>
                 <div className="flex space-x-1">
-                    <button className="w-8 h-8 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-50"><i className="fa-solid fa-chevron-left text-xs"></i></button>
-                    <button className="w-8 h-8 rounded bg-sidebar text-white flex items-center justify-center font-medium">1</button>
-                    <button className="w-8 h-8 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-50"><i className="fa-solid fa-chevron-right text-xs"></i></button>
+                    <button onClick={() => onPageChange?.(page - 1)} disabled={page <= 1} className="w-8 h-8 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-50 disabled:opacity-40"><i className="fa-solid fa-chevron-left text-xs"></i></button>
+                    <button className="w-8 h-8 rounded bg-sidebar text-white flex items-center justify-center font-medium">{page}</button>
+                    <button onClick={() => onPageChange?.(page + 1)} disabled={page >= totalPages} className="w-8 h-8 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-50 disabled:opacity-40"><i className="fa-solid fa-chevron-right text-xs"></i></button>
                 </div>
             </div>
         </div>
