@@ -670,9 +670,19 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
               disabled={!form.contractId || periodsLoading}
               onChange={(event) => {
                 const period = periods.find((item) => item.period_id === event.target.value);
+                const contract = contracts.find(
+                  (item) => String(item.contract_id) === String(form.contractId),
+                );
+                const periodStart = [period?.from_date, contract?.effective_from]
+                  .filter(Boolean)
+                  .sort()
+                  .at(-1) || "";
+                const periodEnd = [period?.to_date, contract?.effective_to]
+                  .filter(Boolean)
+                  .sort()[0] || "";
                 update("periodId", event.target.value);
-                update("periodStart", period?.from_date || "");
-                update("periodEnd", period?.to_date || "");
+                update("periodStart", periodStart);
+                update("periodEnd", periodEnd);
                 update("priceTableId", "");
               }}
               className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50"
@@ -710,18 +720,6 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             />
           </label>
 
-          {/* Price Table - Read Only */}
-          <div className="text-xs font-medium text-slate-600">
-            <label className="block mb-1">Bảng giá (Effective) *</label>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 font-semibold">
-              {priceTableInfo?.priceName || priceTableInfo?.name || "-- Chưa xác định --"}
-            </div>
-            {priceTableInfo && (
-              <div className="mt-1 text-[11px] text-slate-500">
-                {priceTableInfo.priceCode} · Hiệu lực: {priceTableInfo.validFrom} - {priceTableInfo.validTo}
-              </div>
-            )}
-          </div>
           {/* Tax Percent */}
           <label className="text-xs font-medium text-slate-600">
             Thuế VAT (%)
@@ -943,8 +941,12 @@ export default function PaymentManagementPage({ user }) {
     setLoading(true);
     try {
       const [listResponse, statsResponse, customersResponse, contractsResponse, usersResponse] = await Promise.all([
-        fetch(`${API_BASE_URL}?search=${encodeURIComponent(search)}`),
-        fetch(`${API_BASE_URL}/stats`),
+        fetch(`${API_BASE_URL}?search=${encodeURIComponent(search)}`, {
+          headers: authHeaders(token),
+        }),
+        fetch(`${API_BASE_URL}/stats`, {
+          headers: authHeaders(token),
+        }),
         fetch(API_CUSTOMER_URL, { headers: authHeaders(token) }),
         fetch(`${API_CONTRACT_URL}?limit=100`, { headers: authHeaders(token) }),
         fetch(API_USERS_URL, { headers: authHeaders(token) }),
@@ -1485,7 +1487,7 @@ export default function PaymentManagementPage({ user }) {
               </div>
             )}
             <div className="mt-6 flex flex-wrap justify-end gap-2">
-              {role === "STAFF" && canEdit && (
+              {role === "STAFF" && canEdit && selected.status !== "RECONCILED" && (
                 <>
                   <button
                     onClick={() => setEditor(selected)}
@@ -1548,7 +1550,7 @@ export default function PaymentManagementPage({ user }) {
                   {issueLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Phát hành
                 </button>
               )}
-              {role === "STAFF" && isPaymentCreator && !hasActiveAdjustment && ["SIGNED", "ISSUED", "SIGN_FAILED"].includes(selected.status) && (
+              {role === "STAFF" && isPaymentCreator && !hasActiveAdjustment && ["SUBMITTED", "SIGNED", "ISSUED", "SIGN_FAILED"].includes(selected.status) && (
                 <button
                   onClick={() => setAdjustmentEditor(selected)}
                   className="flex items-center gap-1 rounded-lg border border-orange-200 px-3 py-2 text-xs font-semibold text-orange-700"

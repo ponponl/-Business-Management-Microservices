@@ -3,7 +3,7 @@ import calendar
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from models.database import get_db
@@ -21,10 +21,15 @@ from services.source_validation import validate_payment_sources
 from services.workflow import create_workflow, current_step
 from utils.calculations import calculate_totals
 from utils.http_client import call_json
+from core.security import authenticated_user, require_roles, require_user
 
 PRODUCTION_SERVICE_URL = "http://production-service:8005"
 
-router = APIRouter(prefix="/api/v1", tags=["payments"])
+router = APIRouter(
+    prefix="/api/v1",
+    tags=["payments"],
+    dependencies=[Depends(require_user)],
+)
 
 
 def add_event(db: Session, event_type: str, statement: PaymentBoard, extra: dict | None = None):
@@ -52,6 +57,10 @@ def add_signing_event(db: Session, signature: PaymentSignature):
 
 def serialize(statement: PaymentBoard):
     subtotal, tax, total = calculate_totals(statement)
+    try:
+        price_list_usages = json.loads(statement.price_list_usages or "[]")
+    except (TypeError, json.JSONDecodeError):
+        price_list_usages = []
     return {
         "id": statement.id,
         "code": statement.code,
@@ -61,6 +70,7 @@ def serialize(statement: PaymentBoard):
         "priceListId": statement.price_list_id,
         "priceListVersionId": statement.price_list_version_id,
         "priceListVersionNumber": statement.price_list_version_number,
+        "priceListUsages": price_list_usages,
         "periodStart": statement.period_start.isoformat(),
         "periodEnd": statement.period_end.isoformat(),
         "status": statement.status,
@@ -92,6 +102,11 @@ def serialize(statement: PaymentBoard):
             "totalPrice": float(item.total_price),
         } for item in statement.items],
     }
+
+
+def ensure_payment_visible(statement: PaymentBoard, user):
+    if user.role in {"MANAGER", "DIRECTOR"} and statement.status in {"DRAFT", "CALCULATED", "RECONCILED"}:
+        raise HTTPException(404, "Không tìm thấy bảng thanh toán")
 
 
 def signature_assignee(db: Session, statement: PaymentBoard):
@@ -135,6 +150,7 @@ def create_board(
     price_list_id: str | None = None,
     price_list_version_id: str | None = None,
     price_list_version_number: str | None = None,
+    price_list_usages: list[dict] | None = None,
 ):
     statement = PaymentBoard(
         code=code,
@@ -144,6 +160,7 @@ def create_board(
         price_list_id=price_list_id,
         price_list_version_id=price_list_version_id,
         price_list_version_number=price_list_version_number,
+        price_list_usages=json.dumps(price_list_usages or [], default=str),
         period_start=payload.period_start,
         period_end=payload.period_end,
         tax_percent=payload.tax_percent,
@@ -210,8 +227,12 @@ def change_status(
 
 
 @router.get("/payments/stats")
-def payment_stats(db: Session = Depends(get_db)):
-    rows = db.execute(select(PaymentBoard.status, func.count(PaymentBoard.id)).group_by(PaymentBoard.status)).all()
+def payment_stats(request: Request, db: Session = Depends(get_db)):
+    user = authenticated_user(request)
+    query = select(PaymentBoard.status, func.count(PaymentBoard.id))
+    if user.role in {"MANAGER", "DIRECTOR"}:
+        query = query.where(PaymentBoard.status.not_in({"DRAFT", "CALCULATED", "RECONCILED"}))
+    rows = db.execute(query.group_by(PaymentBoard.status)).all()
     values = {name.lower(): count for name, count in rows}
     return {"total": sum(values.values()), "draft": values.get("draft", 0), "submitted": values.get("submitted", 0), "approved": values.get("approved", 0), "signed": values.get("signed", 0), "issued": values.get("issued", 0)}
 
@@ -238,9 +259,11 @@ def production_periods(contract_id: str, db: Session = Depends(get_db)):
         end = date(year, month, calendar.monthrange(year, month)[1])
         billed = db.scalar(select(PaymentBoard.id).where(
             PaymentBoard.contract_id == contract_id,
-            PaymentBoard.period_start == start,
-            PaymentBoard.period_end == end,
             PaymentBoard.status.not_in({"CANCELLED", "REJECTED"}),
+            or_(
+                PaymentBoard.reference_id == period_id,
+                (PaymentBoard.period_start == start) & (PaymentBoard.period_end == end),
+            ),
         ).limit(1)) is not None
         if period["locked"]:
             result.append({
@@ -275,9 +298,13 @@ def list_payments(
     payment_type: str | None = Query(None, alias="paymentType"),
     include_superseded: bool = Query(True, alias="includeSuperseded"),
     search: str | None = None,
+    request: Request = None,
     db: Session = Depends(get_db),
 ):
+    user = authenticated_user(request)
     query = select(PaymentBoard).order_by(PaymentBoard.created_at.desc())
+    if user.role in {"MANAGER", "DIRECTOR"}:
+        query = query.where(PaymentBoard.status.not_in({"DRAFT", "CALCULATED", "RECONCILED"}))
     if status_filter and status_filter != "Tất cả":
         query = query.where(PaymentBoard.status == status_filter.upper())
     if payment_type:
@@ -292,6 +319,7 @@ def list_payments(
 
 @router.post("/payments", status_code=status.HTTP_201_CREATED)
 def create_payment(payload: PaymentBoardInput, request: Request, db: Session = Depends(get_db)):
+    user = require_roles(request, "STAFF")
     key = request.headers.get("Idempotency-Key")
     if key:
         existing_key = db.get(PaymentIdempotencyKey, key)
@@ -305,10 +333,11 @@ def create_payment(payload: PaymentBoardInput, request: Request, db: Session = D
         payload,
         validated["items"],
         code,
-        request.headers.get("X-User", "STAFF"),
+        user.user_id,
         price_list_id=validated["price_list_id"],
         price_list_version_id=validated["price_list_version_id"],
         price_list_version_number=validated["price_list_version_number"],
+        price_list_usages=validated["price_list_usages"],
     )
     db.add(statement)
     db.flush()
@@ -320,20 +349,24 @@ def create_payment(payload: PaymentBoardInput, request: Request, db: Session = D
 
 
 @router.get("/payments/{payment_id}")
-def get_payment(payment_id: str, db: Session = Depends(get_db)):
+def get_payment(payment_id: str, request: Request, db: Session = Depends(get_db)):
     statement = db.get(PaymentBoard, payment_id)
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
+    ensure_payment_visible(statement, authenticated_user(request))
     return serialize(statement)
 
 
 @router.put("/payments/{payment_id}")
 def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request, db: Session = Depends(get_db)):
+    user = require_roles(request, "STAFF")
     statement = db.get(PaymentBoard, payment_id)
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
     if statement.status not in {"DRAFT", "CALCULATED", "RECONCILED"}:
         raise HTTPException(409, "Bảng thanh toán đã khóa, cần tạo hồ sơ điều chỉnh")
+    if statement.created_by not in {user.user_id, user.username}:
+        raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được chỉnh sửa")
     validated = validate_payment_sources(payload, request.headers.get("Authorization"))
     statement.customer_id = payload.customer_id
     statement.contract_id = payload.contract_id
@@ -341,6 +374,7 @@ def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request
     statement.price_list_id = validated["price_list_id"]
     statement.price_list_version_id = validated["price_list_version_id"]
     statement.price_list_version_number = validated["price_list_version_number"]
+    statement.price_list_usages = json.dumps(validated["price_list_usages"], default=str)
     statement.period_start = payload.period_start
     statement.period_end = payload.period_end
     statement.tax_percent = payload.tax_percent
@@ -355,32 +389,42 @@ def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request
 
 @router.post("/payments/{payment_id}/reconcile")
 def reconcile(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
-    return change_status(payment_id, "RECONCILED", payload, db, request.headers.get("X-User", "STAFF"), authorization=request.headers.get("Authorization"))
+    user = require_roles(request, "STAFF")
+    return change_status(payment_id, "RECONCILED", payload, db, user.user_id, authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/submit")
 def submit(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
+    user = require_roles(request, "STAFF")
+    statement = db.get(PaymentBoard, payment_id)
+    if not statement:
+        raise HTTPException(404, "Không tìm thấy bảng thanh toán")
+    if statement.created_by not in {user.user_id, user.username}:
+        raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được trình duyệt")
     assignees = [value.strip() for value in request.headers.get("X-Approval-Assignees", "").split(",") if value.strip()]
-    return change_status(payment_id, "SUBMITTED", payload, db, request.headers.get("X-User", "STAFF"), assignees, request.headers.get("Authorization"))
+    return change_status(payment_id, "SUBMITTED", payload, db, user.user_id, assignees, request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/approve")
 def approve(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
-    return change_status(payment_id, "APPROVED", payload, db, request.headers.get("X-User", "MANAGER"), authorization=request.headers.get("Authorization"))
+    user = require_roles(request, "MANAGER", "DIRECTOR")
+    return change_status(payment_id, "APPROVED", payload, db, user.user_id, authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/reject")
 def reject(payment_id: str, payload: ActionInput, request: Request, db: Session = Depends(get_db)):
-    return change_status(payment_id, "REJECTED", payload, db, request.headers.get("X-User", "MANAGER"), authorization=request.headers.get("Authorization"))
+    user = require_roles(request, "MANAGER", "DIRECTOR")
+    return change_status(payment_id, "REJECTED", payload, db, user.user_id, authorization=request.headers.get("Authorization"))
 
 
 @router.post("/payments/{payment_id}/send-sign")
 def send_sign(payment_id: str, request: Request, db: Session = Depends(get_db)):
+    user = require_roles(request, "MANAGER", "DIRECTOR")
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement or statement.status not in {"APPROVED", "SIGN_FAILED"}:
         raise HTTPException(409, "Chỉ bảng thanh toán đã duyệt mới được gửi ký")
     assignee_id = signature_assignee(db, statement)
-    actor = request.headers.get("X-User", "")
+    actor = user.user_id
     if not assignee_id or actor != assignee_id:
         raise HTTPException(403, "Bạn không phải người được giao ký hồ sơ này")
     signature = PaymentSignature(payment_board_id=statement.id, assignee_id=assignee_id, status="PENDING")
@@ -394,9 +438,11 @@ def send_sign(payment_id: str, request: Request, db: Session = Depends(get_db)):
 
 
 @router.get("/payments/{payment_id}/signatures")
-def get_signatures(payment_id: str, db: Session = Depends(get_db)):
-    if not db.get(PaymentBoard, payment_id):
+def get_signatures(payment_id: str, request: Request, db: Session = Depends(get_db)):
+    statement = db.get(PaymentBoard, payment_id)
+    if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
+    ensure_payment_visible(statement, authenticated_user(request))
     rows = db.scalars(select(PaymentSignature).where(
         PaymentSignature.payment_board_id == payment_id
     ).order_by(PaymentSignature.created_at.desc())).all()
@@ -412,6 +458,7 @@ def get_signatures(payment_id: str, db: Session = Depends(get_db)):
 
 @router.post("/payments/{payment_id}/issue")
 def issue_payment(payment_id: str, request: Request, db: Session = Depends(get_db)):
+    user = require_roles(request, "STAFF")
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
@@ -424,14 +471,14 @@ def issue_payment(payment_id: str, request: Request, db: Session = Depends(get_d
     ).limit(1))
     if active_adjustment:
         raise HTTPException(409, "Bảng thanh toán đã có hồ sơ điều chỉnh và không thể phát hành")
-    actor = request.headers.get("X-User", "STAFF")
-    username = request.headers.get("X-Username", "")
-    if statement.created_by not in {actor, username}:
+    actor = user.user_id
+    if statement.created_by not in {user.user_id, user.username}:
         raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được phát hành")
     statement.status = "ISSUED"
     add_event(db, "payment.issued", statement, {
         "event": "PAYMENT_ISSUED",
-        "eventVersion": 1,
+        "eventVersion": 2,
+        "priceListUsages": json.loads(statement.price_list_usages or "[]"),
         "occurredAt": datetime.utcnow().isoformat(),
         "issuedBy": actor,
     })
@@ -449,6 +496,7 @@ def issue_payment(payment_id: str, request: Request, db: Session = Depends(get_d
 
 @router.post("/payments/{payment_id}/cancel-sign")
 def cancel_sign(payment_id: str, request: Request, db: Session = Depends(get_db)):
+    authenticated_user(request)
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement or statement.status not in {"PENDING_SIGN", "SIGNING"}:
         raise HTTPException(409, "Chỉ phiên ký đang xử lý mới được hủy")
@@ -468,11 +516,13 @@ def cancel_sign(payment_id: str, request: Request, db: Session = Depends(get_db)
 
 
 @router.get("/payments/{payment_id}/workflow")
-def get_workflow(payment_id: str, db: Session = Depends(get_db)):
+def get_workflow(payment_id: str, request: Request, db: Session = Depends(get_db)):
+    statement = db.get(PaymentBoard, payment_id)
+    if not statement:
+        raise HTTPException(404, "Không tìm thấy bảng thanh toán")
+    ensure_payment_visible(statement, authenticated_user(request))
     workflow = db.scalar(select(PaymentWorkflow).where(PaymentWorkflow.payment_board_id == payment_id))
     if not workflow:
-        if not db.get(PaymentBoard, payment_id):
-            raise HTTPException(404, "Không tìm thấy bảng thanh toán")
         return {"id": None, "paymentBoardId": payment_id, "status": "NOT_STARTED", "currentStep": None, "steps": []}
     return {"id": workflow.id, "paymentBoardId": workflow.payment_board_id, "status": workflow.status, "currentStep": workflow.current_step, "steps": [{
         "stepNo": step.step_no, "assigneeId": step.assignee_id, "status": step.status,
@@ -484,13 +534,14 @@ def get_workflow(payment_id: str, db: Session = Depends(get_db)):
 @router.post("/payments/{payment_id}/adjustments", status_code=status.HTTP_201_CREATED)
 @router.post("/payments/{payment_id}/adjustment", status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request: Request, db: Session = Depends(get_db)):
+    user = require_roles(request, "STAFF")
     original = db.execute(select(PaymentBoard).where(
         PaymentBoard.id == payment_id
     ).with_for_update()).scalar_one_or_none()
     if not original:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán gốc")
-    if original.status not in {"SIGNED", "ISSUED", "SIGN_FAILED"}:
-        raise HTTPException(409, "Chỉ hồ sơ đã ký hoặc ký thất bại mới được tạo điều chỉnh")
+    if original.status not in {"SUBMITTED", "SIGNED", "ISSUED", "SIGN_FAILED"}:
+        raise HTTPException(409, "Chỉ hồ sơ đã trình duyệt hoặc đã ký mới được tạo điều chỉnh")
     existing_adjustment = db.scalar(select(PaymentBoard.id).where(
         PaymentBoard.parent_payment_id == original.id,
         PaymentBoard.payment_type == "ADJUSTMENT",
@@ -498,9 +549,8 @@ def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request
     ).limit(1))
     if existing_adjustment:
         raise HTTPException(409, "Đã tồn tại hồ sơ điều chỉnh đang xử lý hoặc đã có hiệu lực")
-    actor = request.headers.get("X-User", "STAFF")
-    username = request.headers.get("X-Username", "")
-    if original.created_by not in {actor, username}:
+    actor = user.user_id
+    if original.created_by not in {user.user_id, user.username}:
         raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được tạo điều chỉnh")
     adjustment_count = db.scalar(select(func.count(PaymentBoard.id)).where(
         PaymentBoard.parent_payment_id == original.id,
@@ -537,7 +587,7 @@ def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request
         adjustment_payload,
         items,
         code,
-        request.headers.get("X-User", "STAFF"),
+        user.user_id,
         original.id,
         payment_type="ADJUSTMENT",
         parent_payment_id=original.id,
@@ -546,6 +596,7 @@ def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request
         price_list_id=original.price_list_id,
         price_list_version_id=original.price_list_version_id,
         price_list_version_number=original.price_list_version_number,
+        price_list_usages=json.loads(original.price_list_usages or "[]"),
     )
     db.add(statement)
     db.flush()
