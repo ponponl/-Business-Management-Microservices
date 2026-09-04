@@ -102,9 +102,12 @@ def validate_payment_sources(payload: PaymentBoardInput, authorization: str | No
             usage["operationDates"].append(item["operation_date"])
         if item["service_code"] not in usage["serviceCodes"]:
             usage["serviceCodes"].append(item["service_code"])
-
     return {
         "items": [{
+            "price_list_name": prices[(str(item.operation_date or payload.period_start), item.service_code)].get("price_list_name"),
+            "price_list_code": prices[(str(item.operation_date or payload.period_start), item.service_code)]["price_list_id"],
+            "price_list_version_id": prices[(str(item.operation_date or payload.period_start), item.service_code)]["price_list_version_id"],
+            "price_list_version_number": prices[(str(item.operation_date or payload.period_start), item.service_code)]["version_number"],
             "service_code": item.service_code,
             "service_name": prices[(str(item.operation_date or payload.period_start), item.service_code)]["service_name"],
             "unit": volumes[(str(item.operation_date or payload.period_start), item.service_code)]["unit"] or item.unit,

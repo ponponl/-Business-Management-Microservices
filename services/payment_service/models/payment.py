@@ -68,6 +68,10 @@ class PaymentDetail(Base):
     quantity = Column(Numeric(15, 2), nullable=False)
     unit_price = Column(Numeric(15, 2), nullable=False)
     total_price = Column(Numeric(15, 2), nullable=False)
+    price_list_name = Column(String(255), nullable=True)
+    price_list_code = Column(String(100), nullable=True)
+    price_list_version_id = Column(String(36), nullable=True)
+    price_list_version_number = Column(String(50), nullable=True)
     statement = relationship("PaymentBoard", back_populates="items")
 
 
@@ -87,6 +91,7 @@ class PaymentIdempotencyKey(Base):
 
     key = Column(String(100), primary_key=True)
     statement_id = Column(String(36), ForeignKey("payment_boards.id"), nullable=False)
+    request_hash = Column(String(64), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
