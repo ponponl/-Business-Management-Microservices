@@ -31,7 +31,12 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                 
                 if (res.ok) {
                     const data = await res.json();
-                    setContracts(data);
+                    const contractItems = Array.isArray(data)
+                        ? data
+                        : data?.items || data?.data || [];
+                    setContracts(Array.isArray(contractItems) ? contractItems : []);
+                } else {
+                    setContracts([]);
                 }
             } catch (error) {
                 console.error("Error fetching data:", error);
@@ -61,11 +66,16 @@ export default function RecordVolumeForm({ onCancel, onSubmit }) {
                 
                 if (res.ok) {
                     const data = await res.json();
-                    setServices(data.map(s => ({
+                    const serviceItems = Array.isArray(data)
+                        ? data
+                        : data?.items || data?.data || [];
+                    setServices((Array.isArray(serviceItems) ? serviceItems : []).map(s => ({
                         code: s.service_code || s.code,
                         name: s.service_name || s.name,
                         unit: s.default_unit || s.unit || 'Tự động'
                     })));
+                } else {
+                    setServices([]);
                 }
             } catch (error) {
                 console.error("Error fetching services:", error);

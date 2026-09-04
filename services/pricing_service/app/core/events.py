@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import date, datetime
+from uuid import UUID
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import GroupCoordinatorNotAvailableError, KafkaConnectionError
 from app.db.session import SessionLocal
-from app.models.pricing import UserCache, PriceListUsageLog
+from app.models.pricing import PriceList, PriceListUsageLog, PriceListVersion, UserCache
 
 logger = logging.getLogger("pricing_events")
 
@@ -105,16 +106,53 @@ def save_payment_usage_log(data: dict):
             else datetime.utcnow()
         )
 
-        # Idempotency Check (Tránh ghi trùng record)
-        existing = (
-            db.query(PriceListUsageLog)
-            .filter(PriceListUsageLog.payment_board_id == data["id"])
-            .first()
-        )
+        version_ids = set()
+        raw_version_id = data.get("priceListVersionId")
+        try:
+            if raw_version_id and raw_version_id != "MULTIPLE":
+                version_ids.add(UUID(str(raw_version_id)))
+        except ValueError:
+            logger.warning("Ignoring invalid payment price list version: %s", raw_version_id)
 
-        if not existing:
-            usage_log = PriceListUsageLog(
-                price_list_version_id=data["priceListVersionId"],
+        if not version_ids:
+            priority = {"CONTRACT": 0, "CUSTOMER": 1, "GENERAL": 2}
+            candidates = db.query(PriceList).filter(
+                PriceList.is_deleted.is_(False),
+                PriceList.scope_type.in_(["GENERAL", "CUSTOMER", "CONTRACT"]),
+            ).all()
+            for item in data.get("items", []):
+                operation_date = item.get("operationDate")
+                if not operation_date:
+                    continue
+                operation_date = date.fromisoformat(str(operation_date)[:10])
+                matching = []
+                for price_list in candidates:
+                    scope_type = str(price_list.scope_type or "").upper()
+                    scope_id = str(price_list.scope_id or "")
+                    if scope_type == "CONTRACT" and scope_id != str(data.get("contractId")):
+                        continue
+                    if scope_type == "CUSTOMER" and scope_id != str(data.get("customerId")):
+                        continue
+                    version = db.query(PriceListVersion).filter(
+                        PriceListVersion.price_list_id == price_list.id,
+                        PriceListVersion.status == "EFFECTIVE",
+                        PriceListVersion.valid_from <= operation_date,
+                        (PriceListVersion.valid_to.is_(None) | (PriceListVersion.valid_to >= operation_date)),
+                    ).order_by(PriceListVersion.created_at.desc()).first()
+                    if version:
+                        matching.append((priority.get(scope_type, 99), version.id))
+                if matching:
+                    version_ids.add(sorted(matching, key=lambda value: value[0])[0][1])
+
+        for version_id in version_ids:
+            existing = db.query(PriceListUsageLog).filter(
+                PriceListUsageLog.payment_board_id == data["id"],
+                PriceListUsageLog.price_list_version_id == version_id,
+            ).first()
+            if existing:
+                continue
+            db.add(PriceListUsageLog(
+                price_list_version_id=version_id,
                 payment_board_id=data["id"],
                 payment_code=data.get("code"),
                 status=data.get("status"),
@@ -123,10 +161,9 @@ def save_payment_usage_log(data: dict):
                 contract_id=data.get("contractId"),
                 issued_by=data.get("issuedBy"),
                 applied_at=applied_at,
-            )
-            db.add(usage_log)
-            db.commit()
-            logger.info(f"[Kafka Payment] Saved usage log for payment_board_id: {data['id']}")
+            ))
+        db.commit()
+        logger.info(f"[Kafka Payment] Saved usage log(s) for payment_board_id: {data['id']}")
     except Exception as db_err:
         db.rollback()
         logger.error(f"[Kafka Payment DB Error] {db_err}")

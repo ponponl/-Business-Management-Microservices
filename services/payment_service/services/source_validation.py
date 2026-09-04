@@ -6,9 +6,9 @@ from schemas.payment import PaymentBoardInput
 from utils.http_client import call_json
 
 
-PRICING_SERVICE_URL = "http://pricing-service:8000"
-PRODUCTION_SERVICE_URL = "http://production-service:8000"
-CONTRACT_SERVICE_URL = "http://contract-service:8000"
+PRICING_SERVICE_URL = "http://pricing-service:8006"
+PRODUCTION_SERVICE_URL = "http://production-service:8005"
+CONTRACT_SERVICE_URL = "http://contract-service:8002"
 
 
 def validate_payment_sources(payload: PaymentBoardInput, authorization: str | None):

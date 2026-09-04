@@ -22,7 +22,7 @@ from services.workflow import create_workflow, current_step
 from utils.calculations import calculate_totals
 from utils.http_client import call_json
 
-PRODUCTION_SERVICE_URL = "http://production-service:8000"
+PRODUCTION_SERVICE_URL = "http://production-service:8005"
 
 router = APIRouter(prefix="/api/v1", tags=["payments"])
 

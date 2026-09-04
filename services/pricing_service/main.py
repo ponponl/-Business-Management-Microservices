@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from app.db.session import engine, Base
 import app.models.pricing 
 from app.api.v1.api import api_router
@@ -11,6 +12,19 @@ from app.core.events import start_kafka_consumer, stop_kafka_consumer
 async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, lambda: Base.metadata.create_all(bind=engine))
+    with engine.begin() as connection:
+        for column, definition in {
+            "payment_code": "VARCHAR(100)",
+            "status": "VARCHAR(50)",
+            "total_amount": "NUMERIC(15, 2)",
+            "customer_id": "VARCHAR(100)",
+            "contract_id": "VARCHAR(100)",
+            "issued_by": "VARCHAR(100)",
+        }.items():
+            connection.execute(text(
+                f"ALTER TABLE price_list_usage_log "
+                f"ADD COLUMN IF NOT EXISTS {column} {definition}"
+            ))
     
     await start_kafka_consumer()
     

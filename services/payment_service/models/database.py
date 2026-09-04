@@ -80,6 +80,13 @@ def initialize_database():
                 for column, statement in migrations.items():
                     if column not in existing_columns:
                         connection.execute(text(statement))
+
+                connection.execute(
+                    text(
+                        "ALTER TABLE payment_details "
+                        "ADD COLUMN IF NOT EXISTS operation_date DATE"
+                    )
+                )
                         
                 if "note" in existing_columns:
                     connection.execute(

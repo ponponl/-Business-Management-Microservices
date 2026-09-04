@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from models.payment import PaymentBoard, PaymentWorkflow, PaymentWorkflowStep
 from utils.http_client import call_json
 
-AUTH_USERS_URL = "http://auth-service:8000/api/v1/auth/users"
+AUTH_USERS_URL = "http://auth-service:8001/api/v1/auth/users"
 
 
 def create_workflow(

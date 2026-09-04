@@ -24,17 +24,17 @@ async def update_volume(volume_id: int, volume_in: VolumeUpdate, db: Session = D
     return await OperationService.update_volume(db, volume_id, volume_in, username)
 
 @router.get("/volumes")
-def get_volumes(contract_id: str = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
+def get_volumes(contract_id: str = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER", "DIRECTOR"]))):
     return OperationService.get_volumes(db, contract_id, period_key)
 
 @router.get("/contracts")
-def get_contracts(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
+def get_contracts(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER", "DIRECTOR"]))):
     return OperationService.get_active_contracts(db)
 
 @router.get("/contracts/{contract_id}/services")
-async def get_services_by_contract(contract_id: str, request: Request, user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
+async def get_services_by_contract(contract_id: str, request: Request, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER", "DIRECTOR"]))):
     auth_header = request.headers.get("Authorization")
-    return await IntegrationService.get_pricing_services_by_contract(contract_id, auth_header)
+    return await IntegrationService.get_pricing_services_by_contract(db, contract_id, auth_header)
 
 
 @router.get("/volumes/{volume_id}/audit-logs")
@@ -42,7 +42,7 @@ def get_audit_logs(volume_id: int, db: Session = Depends(get_db), user: dict = D
     return OperationService.get_audit_logs(db, volume_id)
 
 @router.get("/periods")
-def get_periods(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
+def get_periods(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER", "DIRECTOR"]))):
     return PeriodService.get_periods(db)
 
 @router.post("/periods/{period_key}/lock")
