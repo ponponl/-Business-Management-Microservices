@@ -16,6 +16,7 @@ from fastapi import (
 )
 
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from app.core.dependencies import (
     CurrentUser,
@@ -31,6 +32,7 @@ from app.schemas.contract import (
     CreateContractRequest,
     ContractResponse,
     ContractListResponse,
+    SendRevisionRequest,
     UpdateContractRequest,
     RenewContractRequest,
     CancelContractRequest,
@@ -123,6 +125,12 @@ async def create_contract(
             attachments=attachments,
         )
 
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_context=False),
+        )
+
     except ValueError as exc:
 
         code = str(exc)
@@ -177,34 +185,11 @@ def get_contract(
             )
         )
 
-        return {
-            "contract_id": (
-                contract.contract_id
-            ),
-            "contract_number": (
-                contract.contract_number
-            ),
-            "customer_id": (
-                contract.customer_id
-            ),
-            "current_version": (
-                contract.current_version
-            ),
-            "status": contract.status,
-            "row_version": (
-                contract.row_version
-            ),
-            "created_at": (
-                contract.created_at
-            ),
-            "updated_at": (
-                contract.updated_at
-            ),
-            "current_version_detail": version,
-            "attachments": (
-                version.attachments
-            ),
-        }
+        return ContractService.build_contract_response(
+            contract=contract,
+            version=version,
+            attachments=version.attachments,
+        )
 
     except ValueError as exc:
 
@@ -329,7 +314,9 @@ def list_contracts(
         "summary": summary,
     }
 
-# Update contract endpoint
+# =========================================================
+# UPDATE CONTRACT
+# =========================================================
 @router.put(
     "/{contract_id}",
     response_model=ContractResponse,
@@ -340,7 +327,7 @@ async def update_contract(
     contract: str = Form(...),
 
     attachments: list[UploadFile] = File(
-    default_factory=list
+        default_factory=list
     ),
 
     db: Session = Depends(get_db),
@@ -357,13 +344,11 @@ async def update_contract(
         # -------------------------------------------------
 
         try:
-
             contract_dict = json.loads(
                 contract
             )
 
         except json.JSONDecodeError:
-
             raise HTTPException(
                 status_code=422,
                 detail={
@@ -398,28 +383,40 @@ async def update_contract(
             attachments=attachments,
         )
 
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=exc.errors(include_context=False),
+        )
+
     except ValueError as exc:
 
         code = str(exc)
 
-        if code == "CONTRACT_NOT_FOUND":
+        # 404
+        if code in {
+            "CONTRACT_NOT_FOUND",
+            "ATTACHMENT_NOT_FOUND",
+        }:
             raise HTTPException(
                 status_code=404,
                 detail=code,
             )
 
-        if code == "INVALID_STATE":
+        # 409
+        if code in {
+            "INVALID_STATE",
+            "VERSION_CONFLICT",
+            "REVISION_NOT_SENT_TO_STAFF",
+            "REVISION_CONTEXT_NOT_FOUND",
+            "INVALID_REVISION_CONTEXT",
+        }:
             raise HTTPException(
                 status_code=409,
                 detail=code,
             )
 
-        if code == "VERSION_CONFLICT":
-            raise HTTPException(
-                status_code=409,
-                detail=code,
-            )
-
+        # 422
         if code in {
             "INVALID_FILE_NAME",
             "DUPLICATE_FILE_NAME",
@@ -429,26 +426,27 @@ async def update_contract(
                 detail=code,
             )
 
+        if code == "CURRENT_VERSION_NOT_FOUND":
+            raise HTTPException(
+                status_code=500,
+                detail=code,
+            )
+
         raise HTTPException(
             status_code=400,
             detail=code,
         )
 
 # submit contract endpoint
-@router.post(
-    "/{contract_id}/submit",
-)
+@router.post("/{contract_id}/submit")
 def submit_contract(
     contract_id: UUID,
     idempotency_key: str = Header(
         ...,
         alias="Idempotency-Key",
-        description="Unique key to prevent duplicate submissions",
     ),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(
-        get_current_user
-    ),
 ):
     try:
         actor_id = UUID(
@@ -461,6 +459,7 @@ def submit_contract(
                 contract_id=contract_id,
                 idempotency_key=idempotency_key,
                 actor_id=actor_id,
+                actor_role=current_user.role,
             )
         )
 
@@ -472,6 +471,9 @@ def submit_contract(
     except ValueError as exc:
         code = str(exc)
 
+        # ---------------------------------------------
+        # 404
+        # ---------------------------------------------
         if code in {
             "CONTRACT_NOT_FOUND",
             "CUSTOMER_NOT_FOUND",
@@ -481,6 +483,9 @@ def submit_contract(
                 detail=code,
             )
 
+        # ---------------------------------------------
+        # 422
+        # ---------------------------------------------
         if code in {
             "CUSTOMER_INACTIVE",
             "ATTACHMENT_REQUIRED",
@@ -491,21 +496,34 @@ def submit_contract(
                 detail=code,
             )
 
+        # ---------------------------------------------
+        # 409
+        # ---------------------------------------------
         if code in {
             "INVALID_STATE",
             "IDEMPOTENCY_KEY_REUSED",
+            "REVISION_UPDATE_REQUIRED",
+            "REVISION_CONTEXT_NOT_FOUND",
+            "REVISION_NOT_SENT_TO_STAFF",
+            "INVALID_REVISION_CONTEXT",
         }:
             raise HTTPException(
                 status_code=409,
                 detail=code,
             )
 
+        # ---------------------------------------------
+        # 500
+        # ---------------------------------------------
         if code == "CURRENT_VERSION_NOT_FOUND":
             raise HTTPException(
                 status_code=500,
                 detail=code,
             )
 
+        # ---------------------------------------------
+        # Default
+        # ---------------------------------------------
         raise HTTPException(
             status_code=400,
             detail=code,
@@ -719,6 +737,7 @@ def start_review(
             "APPROVAL_ALREADY_EXISTS",
             "APPROVAL_NOT_FOUND",
             "MANAGER_APPROVAL_REQUIRED",
+            "REVISION_ALREADY_REQUESTED",
         }:
             raise HTTPException(
                 status_code=409,
@@ -984,40 +1003,31 @@ def request_revision(
             status_code=400,
             detail=code,
         )
-        
-# =========================================================
-# FORWARD DIRECTOR REVISION TO STAFF
-# =========================================================
-@router.post(
-    "/{contract_id}/forward-revision",
-)
-def forward_revision(
-    contract_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: CurrentUser = Depends(
-        get_current_user
-    ),
-):
 
+# Manager send revision to staff endpoint
+@router.post("/{contract_id}/send-revision")
+def send_revision(
+    contract_id: UUID,
+    request: SendRevisionRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     try:
-        contract = ApprovalService.forward_revision(
+        actor_id = UUID(current_user.user_id)
+
+        contract = ApprovalService.manager_send_revision(
             db=db,
             contract_id=contract_id,
-            actor_id=UUID(
-                current_user.user_id
-            ),
+            actor_id=actor_id,
             actor_role=current_user.role,
+            comment=request.comment,
         )
 
         return {
-            "contract_id":
-                str(contract.contract_id),
-            "contract_number":
-                contract.contract_number,
-            "status":
-                contract.status,
-            "message":
-                "Director revision forwarded to Staff",
+            "contract_id": str(contract.contract_id),
+            "contract_number": contract.contract_number,
+            "status": contract.status,
+            "message": "Revision request sent to Staff",
         }
 
     except ValueError as exc:
@@ -1035,11 +1045,23 @@ def forward_revision(
                 detail=code,
             )
 
+        if code == "CURRENT_VERSION_NOT_FOUND":
+            raise HTTPException(
+                status_code=500,
+                detail=code,
+            )
+
+        if code == "COMMENT_REQUIRED":
+            raise HTTPException(
+                status_code=422,
+                detail=code,
+            )
+
         if code in {
             "INVALID_STATE",
             "APPROVAL_NOT_FOUND",
             "INVALID_REVISION_SOURCE",
-            "REVISION_ALREADY_FORWARDED",
+            "REVISION_ALREADY_SENT",
         }:
             raise HTTPException(
                 status_code=409,

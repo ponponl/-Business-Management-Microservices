@@ -41,9 +41,10 @@ class ContractStateMachine:
         ContractStatus.DIRECTOR_REVIEW: {
             "approve_director": ContractStatus.APPROVED,
             "reject": ContractStatus.REJECTED,
-            "request_revision": ContractStatus.REVISION_REQUESTED,
+            "director_request_revision": ContractStatus.DIRECTOR_REVIEW,
+            "manager_send_revision": ContractStatus.REVISION_REQUESTED,
         },
-
+        
         ContractStatus.APPROVED: {
             "activate": ContractStatus.ACTIVE,
         },

@@ -1,4 +1,5 @@
 from pathlib import Path
+from shutil import copyfile
 
 from app.core.config import settings
 
@@ -72,6 +73,19 @@ class LocalFileStorage:
 
         if path.exists():
             path.unlink()
+
+    def copy(
+        self,
+        source_object_key: str,
+        target_object_key: str,
+    ) -> str:
+        source_path = self.resolve_path(source_object_key)
+        if not source_path.is_file():
+            raise FileNotFoundError(source_object_key)
+
+        target_path = self.build_path(target_object_key)
+        copyfile(source_path, target_path)
+        return target_object_key
 
     def exists(
         self,

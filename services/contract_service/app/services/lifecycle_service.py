@@ -1,8 +1,11 @@
+import logging
 from datetime import date
 
-import logging
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.core.contract_clock import contract_today
+from app.db.session import engine
 from app.repositories.contract_repository import (
     ContractRepository,
 )
@@ -17,6 +20,10 @@ logger = logging.getLogger(__name__)
 class ContractLifecycleService:
 
     DEFAULT_BATCH_SIZE = 100
+    # A stable, service-specific PostgreSQL advisory-lock key. Session-level
+    # locking is intentional: lifecycle actions commit once per contract, so a
+    # transaction-level lock would be released after the first activation.
+    ADVISORY_LOCK_ID = 43001001
 
     @staticmethod
     def process_activations(
@@ -25,55 +32,57 @@ class ContractLifecycleService:
         batch_size: int = DEFAULT_BATCH_SIZE,
     ) -> int:
 
-        contracts = (
-            ContractRepository.find_contracts_to_activate(
+        success_count = 0
+        failed_contract_ids = set()
+
+        while True:
+            contracts = ContractRepository.find_contracts_to_activate(
                 db=db,
                 today=today,
                 limit=batch_size,
+                exclude_contract_ids=failed_contract_ids,
             )
-        )
 
-        success_count = 0
+            if not contracts:
+                break
 
-        for contract in contracts:
+            for contract in contracts:
+                contract_id = contract.contract_id
+                contract_number = contract.contract_number
 
-            try:
+                try:
+                    ContractService.activate_contract(
+                        db=db,
+                        contract_id=contract_id,
+                    )
+                    success_count += 1
 
-                ContractService.activate_contract(
-                    db=db,
-                    contract_id=contract.contract_id,
-                )
+                    logger.info(
+                        "Contract activated: contract_id=%s "
+                        "contract_number=%s",
+                        contract_id,
+                        contract_number,
+                    )
 
-                success_count += 1
+                except ValueError as exc:
+                    db.rollback()
+                    failed_contract_ids.add(contract_id)
 
-                logger.info(
-                    "Contract activated: "
-                    "contract_id=%s "
-                    "contract_number=%s",
-                    contract.contract_id,
-                    contract.contract_number,
-                )
+                    logger.warning(
+                        "Failed to activate contract: "
+                        "contract_id=%s error=%s",
+                        contract_id,
+                        exc,
+                    )
 
-            except ValueError as exc:
+                except Exception:
+                    db.rollback()
+                    failed_contract_ids.add(contract_id)
 
-                db.rollback()
-
-                logger.warning(
-                    "Failed to activate contract: "
-                    "contract_id=%s error=%s",
-                    contract.contract_id,
-                    exc,
-                )
-
-            except Exception:
-
-                db.rollback()
-
-                logger.exception(
-                    "Unexpected error activating "
-                    "contract_id=%s",
-                    contract.contract_id,
-                )
+                    logger.exception(
+                        "Unexpected error activating contract_id=%s",
+                        contract_id,
+                    )
 
         return success_count
 
@@ -84,68 +93,94 @@ class ContractLifecycleService:
         batch_size: int = DEFAULT_BATCH_SIZE,
     ) -> int:
 
-        contracts = (
-            ContractRepository.find_contracts_to_expire(
+        success_count = 0
+        failed_contract_ids = set()
+
+        while True:
+            contracts = ContractRepository.find_contracts_to_expire(
                 db=db,
                 today=today,
                 limit=batch_size,
+                exclude_contract_ids=failed_contract_ids,
             )
-        )
 
-        success_count = 0
+            if not contracts:
+                break
 
-        for contract in contracts:
+            for contract in contracts:
+                contract_id = contract.contract_id
+                contract_number = contract.contract_number
 
-            try:
+                try:
+                    ContractService.expire_contract(
+                        db=db,
+                        contract_id=contract_id,
+                    )
+                    success_count += 1
 
-                ContractService.expire_contract(
-                    db=db,
-                    contract_id=contract.contract_id,
-                )
+                    logger.info(
+                        "Contract expired: contract_id=%s "
+                        "contract_number=%s",
+                        contract_id,
+                        contract_number,
+                    )
 
-                success_count += 1
+                except ValueError as exc:
+                    db.rollback()
+                    failed_contract_ids.add(contract_id)
 
-                logger.info(
-                    "Contract expired: "
-                    "contract_id=%s "
-                    "contract_number=%s",
-                    contract.contract_id,
-                    contract.contract_number,
-                )
+                    logger.warning(
+                        "Failed to expire contract: "
+                        "contract_id=%s error=%s",
+                        contract_id,
+                        exc,
+                    )
 
-            except ValueError as exc:
+                except Exception:
+                    db.rollback()
+                    failed_contract_ids.add(contract_id)
 
-                db.rollback()
-
-                logger.warning(
-                    "Failed to expire contract: "
-                    "contract_id=%s error=%s",
-                    contract.contract_id,
-                    exc,
-                )
-
-            except Exception:
-
-                db.rollback()
-
-                logger.exception(
-                    "Unexpected error expiring "
-                    "contract_id=%s",
-                    contract.contract_id,
-                )
+                    logger.exception(
+                        "Unexpected error expiring contract_id=%s",
+                        contract_id,
+                    )
 
         return success_count
 
     @staticmethod
     def run_once(
         batch_size: int = DEFAULT_BATCH_SIZE,
-    ) -> None:
-
-        today = date.today()
-
-        db = SessionLocal()
+    ) -> dict[str, int | bool]:
+        # Pin the Session to one physical connection. Session-level advisory
+        # locks belong to a PostgreSQL connection, while the lifecycle service
+        # commits once per contract. Without pinning, a commit can return the
+        # locked connection to the pool and the later unlock may run elsewhere.
+        connection = engine.connect()
+        db = Session(bind=connection)
+        lock_acquired = False
 
         try:
+            lock_acquired = bool(
+                db.execute(
+                    text(
+                        "SELECT pg_try_advisory_lock(:lock_id)"
+                    ),
+                    {"lock_id": ContractLifecycleService.ADVISORY_LOCK_ID},
+                ).scalar()
+            )
+
+            if not lock_acquired:
+                logger.info(
+                    "Contract lifecycle skipped: another process "
+                    "holds the advisory lock"
+                )
+                return {
+                    "activated": 0,
+                    "expired": 0,
+                    "skipped": True,
+                }
+
+            today = contract_today()
 
             activated_count = (
                 ContractLifecycleService.process_activations(
@@ -171,6 +206,12 @@ class ContractLifecycleService:
                 expired_count,
             )
 
+            return {
+                "activated": activated_count,
+                "expired": expired_count,
+                "skipped": False,
+            }
+
         except Exception:
 
             db.rollback()
@@ -179,5 +220,32 @@ class ContractLifecycleService:
                 "Contract lifecycle worker failed"
             )
 
+            return {
+                "activated": 0,
+                "expired": 0,
+                "skipped": False,
+            }
+
         finally:
+            if lock_acquired:
+                try:
+                    db.rollback()
+                    db.execute(
+                        text(
+                            "SELECT pg_advisory_unlock(:lock_id)"
+                        ),
+                        {
+                            "lock_id": (
+                                ContractLifecycleService.ADVISORY_LOCK_ID
+                            )
+                        },
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception(
+                        "Failed to release contract lifecycle "
+                        "advisory lock"
+                    )
             db.close()
+            connection.close()

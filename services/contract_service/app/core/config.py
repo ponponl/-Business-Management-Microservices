@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     KAFKA_BOOTSTRAP_SERVERS: str = "kafka:9092"
     KAFKA_CONTRACT_TOPIC: str = "contract.events"
 
+    CONTRACT_TIMEZONE: str = "Asia/Ho_Chi_Minh"
+    CONTRACT_LIFECYCLE_INTERVAL_SECONDS: int = 15
+
     # JWT Authentication
     JWT_SECRET: str = "your_jwt_secret_key"
     JWT_ALGORITHM: str = "HS256"

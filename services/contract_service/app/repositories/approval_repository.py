@@ -88,6 +88,25 @@ class ApprovalRepository:
             )
             .first()
         )
+
+    @staticmethod
+    def get_by_round_step_for_update(
+        db: Session,
+        contract_id: UUID,
+        approval_round: int,
+        step_no: int,
+    ) -> ContractApproval | None:
+
+        return (
+            db.query(ContractApproval)
+            .filter(
+                ContractApproval.contract_id == contract_id,
+                ContractApproval.approval_round == approval_round,
+                ContractApproval.step_no == step_no,
+            )
+            .with_for_update()
+            .first()
+        )
         
     @staticmethod
     def get_all_by_contract(
