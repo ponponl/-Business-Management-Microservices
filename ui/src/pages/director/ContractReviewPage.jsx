@@ -3,7 +3,8 @@ import { ArrowLeft, ClipboardCheck, Eye, FileCheck2, History, Search } from 'luc
 import { useNavigate } from 'react-router-dom';
 import ContractDetailModal from '../../components/contract/ContractDetailModal';
 import ContractProcessingModal from '../../components/contract/ContractProcessingModal';
-import { fetchContractDetail, fetchContracts, fetchCustomers, startContractReview } from '../../services/contractApi';
+import { useToast } from '../../components/common/ToastContext';
+import { fetchContractDetail, fetchContracts, fetchCustomers, getContractErrorMessage, startContractReview } from '../../services/contractApi';
 
 const formatMoney = (value) => value === null || value === undefined
     ? 'N/A'
@@ -24,6 +25,7 @@ const formatDateRange = (from, to) => {
 
 export default function ContractReviewDirectorPage() {
     const navigate = useNavigate();
+    const toast = useToast();
     const [contracts, setContracts] = useState([]);
     const [customers, setCustomers] = useState([]);
     const [activeTab, setActiveTab] = useState('');
@@ -62,12 +64,21 @@ export default function ContractReviewDirectorPage() {
     }), [contracts, customers, activeTab, searchQuery]);
 
     const handleStartReview = async (contract) => {
+        if (contract.director_approval_status === 'REVISION_REQUESTED') {
+            setProcessingContract(contract);
+            return;
+        }
+        if (contract.director_approval_status === 'PENDING') {
+            setProcessingContract(contract);
+            return;
+        }
         setProcessingId(contract.contract_id);
         try {
             const response = await startContractReview(contract.contract_id);
-            setProcessingContract({ ...contract, status: response.status || 'DIRECTOR_REVIEW' });
+            setProcessingContract({ ...contract, status: response.status || 'DIRECTOR_REVIEW', director_approval_status: 'PENDING' });
+            toast.success('Đã bắt đầu review hợp đồng.');
         } catch (actionError) {
-            alert(`Không thể bắt đầu review: ${actionError.message}`);
+            toast.error(getContractErrorMessage(actionError, 'Không thể bắt đầu review hợp đồng.'));
         } finally {
             setProcessingId(null);
         }
@@ -75,7 +86,7 @@ export default function ContractReviewDirectorPage() {
 
     const handleView = async (contractId) => {
         try { setDetail(await fetchContractDetail(contractId)); }
-        catch (viewError) { alert(`Không thể tải chi tiết hợp đồng: ${viewError.message}`); }
+        catch (viewError) { toast.error(getContractErrorMessage(viewError, 'Không thể tải chi tiết hợp đồng.')); }
     };
 
     const handleProcessingSuccess = async () => {
@@ -91,11 +102,11 @@ export default function ContractReviewDirectorPage() {
             <div className="review-panel-heading"><h2>Danh sách hợp đồng cần duyệt</h2><p>Danh sách chỉ hiển thị các contract cần theo dõi nhanh, thông tin chi tiết xem tại biểu tượng con mắt.</p></div>
             <div className="review-toolbar"><div className="review-tabs"><button type="button" className={activeTab === '' ? 'active' : ''} onClick={() => setActiveTab('')}>Tất cả</button><button type="button" className={activeTab === 'DIRECTOR_REVIEW' ? 'active' : ''} onClick={() => setActiveTab('DIRECTOR_REVIEW')}>Director Review</button></div><label className="review-search"><Search size={16} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Tìm kiếm mã HĐ, khách hàng..." /></label></div>
             {error && <div className="review-error">{error}</div>}
-            <div className="review-table-wrap"><table className="review-table"><thead><tr><th>Mã HĐ</th><th>Khách hàng</th><th>Giá trị hợp đồng</th><th>Thời gian hiệu lực</th><th>Trạng thái</th><th>Xem chi tiết</th><th>Thao tác</th></tr></thead><tbody>{loading ? <tr><td colSpan="7" className="review-empty">Đang tải dữ liệu...</td></tr> : filteredContracts.length === 0 ? <tr><td colSpan="7" className="review-empty"><ClipboardCheck size={72} /><strong>Không còn hợp đồng cần duyệt</strong><span>Tất cả hợp đồng đã được Director xử lý hoặc đã chuyển sang bước tiếp theo.</span></td></tr> : filteredContracts.map((contract) => <tr key={contract.contract_id}><td className="contract-number">{contract.contract_number}</td><td>{customerName(contract.customer_id)}</td><td>{formatMoney(contract.contract_value)}</td><td>{formatDateRange(contract.effective_from, contract.effective_to)}</td><td><span className="review-status-badge is-review">DIRECTOR_REVIEW</span></td><td><button className="review-icon-button" type="button" title="Xem chi tiết" onClick={() => handleView(contract.contract_id)}><Eye size={16} /></button></td><td><button className="review-action-button start" type="button" disabled={processingId === contract.contract_id} onClick={() => handleStartReview(contract)}>{processingId === contract.contract_id ? 'Đang xử lý...' : 'Bắt đầu Review'}</button></td></tr>)}</tbody></table></div>
+            <div className="review-table-wrap"><table className="review-table"><thead><tr><th>Mã HĐ</th><th>Khách hàng</th><th>Giá trị hợp đồng</th><th>Thời gian hiệu lực</th><th>Trạng thái</th><th>Xem chi tiết</th><th>Thao tác</th></tr></thead><tbody>{loading ? <tr><td colSpan="7" className="review-empty">Đang tải dữ liệu...</td></tr> : filteredContracts.length === 0 ? <tr><td colSpan="7" className="review-empty"><ClipboardCheck size={72} /><strong>Không còn hợp đồng cần duyệt</strong><span>Tất cả hợp đồng đã được Director xử lý hoặc đã chuyển sang bước tiếp theo.</span></td></tr> : filteredContracts.map((contract) => <tr key={contract.contract_id}><td className="contract-number">{contract.contract_number}</td><td>{customerName(contract.customer_id)}</td><td>{formatMoney(contract.contract_value)}</td><td>{formatDateRange(contract.effective_from, contract.effective_to)}</td><td>{contract.director_approval_status === 'REVISION_REQUESTED' ? <span className="review-status-badge is-revision-requested">Đã yêu cầu chỉnh sửa</span> : <span className="review-status-badge is-review">DIRECTOR_REVIEW</span>}</td><td><button className="review-icon-button" type="button" title="Xem chi tiết" onClick={() => handleView(contract.contract_id)}><Eye size={16} /></button></td><td>{contract.director_approval_status === 'REVISION_REQUESTED' ? <span className="review-pending-label">Đang chờ Manager xử lý</span> : <button className="review-action-button start" type="button" disabled={processingId === contract.contract_id} onClick={() => handleStartReview(contract)}>{processingId === contract.contract_id ? 'Đang xử lý...' : contract.director_approval_status === 'PENDING' ? 'Review' : 'Bắt đầu Review'}</button>}</td></tr>)}</tbody></table></div>
             <div className="review-footer"><span>Hiển thị 1 - {filteredContracts.length} của {filteredContracts.length} hợp đồng</span><div><button type="button" disabled>‹</button><button type="button" className="current">1</button><button type="button" disabled>›</button></div></div>
         </section>
-        {detail && <ContractDetailModal detail={detail} customers={customers} onClose={() => setDetail(null)} />}
-        {processingContract && <ContractProcessingModal contract={processingContract} customerName={customerName(processingContract.customer_id)} role="DIRECTOR" onClose={() => setProcessingContract(null)} onSuccess={handleProcessingSuccess} />}
+        {detail && <ContractDetailModal detail={detail} customers={customers} viewerRole="DIRECTOR" onClose={() => setDetail(null)} />}
+        {processingContract && <ContractProcessingModal contract={processingContract} customerName={customerName(processingContract.customer_id)} role="DIRECTOR" approvalStatus={processingContract.director_approval_status || 'PENDING'} onClose={() => setProcessingContract(null)} onSuccess={handleProcessingSuccess} />}
     </div>;
 }
 

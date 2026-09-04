@@ -194,6 +194,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - ATTACHMENT_STORAGE_PATH=/app/storage/attachments
+      - CONTRACT_TIMEZONE=Asia/Ho_Chi_Minh
+      - CONTRACT_LIFECYCLE_INTERVAL_SECONDS=15
     ports:
       - "8083:8000"
     depends_on:
@@ -255,7 +257,6 @@ services:
     container_name: notification-service
     volumes:
       - ./services/notification_service:/app
-      - ./services/notification_service/notification.db:/app/notification.db
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     ports:

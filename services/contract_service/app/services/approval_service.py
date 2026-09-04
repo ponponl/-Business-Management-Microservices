@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from app.core.event_builder import build_contract_event
 from sqlalchemy.orm import Session
 
 from app.models.contract import Contract
@@ -19,9 +20,47 @@ from app.services.state_machine import (
     ContractStatus,
     ContractStateMachine,
 )
+from app.services.revision_context import (
+    DIRECTOR_REQUEST_REVISION,
+    MANAGER_REQUEST_REVISION,
+    MANAGER_SEND_REVISION,
+)
 
 
 class ApprovalService:
+
+    @staticmethod
+    def _build_action_outbox_event(
+        *,
+        contract: Contract,
+        event_type: str,
+        actor_id: UUID,
+        actor_role: str,
+        approval_round: int,
+    ) -> OutboxEvent:
+        event = build_contract_event(
+            event_name=event_type,
+            contract_id=contract.contract_id,
+            payload={
+                "contract_id": str(contract.contract_id),
+                "contract_number": contract.contract_number,
+                "customer_id": str(contract.customer_id),
+                "current_version": contract.current_version,
+                "status": contract.status,
+                "actor_id": str(actor_id),
+                "actor_role": actor_role,
+                "approval_round": approval_round,
+            },
+        )
+
+        return OutboxEvent(
+            aggregate_type="CONTRACT",
+            aggregate_id=contract.contract_id,
+            event_type=event_type,
+            payload=event,
+            status="PENDING",
+            retry_count=0,
+        )
 
     # =====================================================
     # COMMON APPROVAL CONTEXT
@@ -51,12 +90,21 @@ class ApprovalService:
                 "INVALID_STATE"
             )
 
-        # 3. Get current pending approval
-        approval = (
-            ApprovalRepository.get_current_for_update(
-                db=db,
-                contract_id=contract_id,
-            )
+        # 3. Resolve the expected step in the latest approval round.
+        latest_round = ApprovalRepository.get_latest_round(
+            db=db,
+            contract_id=contract_id,
+        )
+        expected_step = (
+            1
+            if expected_status == ContractStatus.MANAGER_REVIEW
+            else 2
+        )
+        approval = ApprovalRepository.get_by_round_step_for_update(
+            db=db,
+            contract_id=contract_id,
+            approval_round=latest_round,
+            step_no=expected_step,
         )
 
         if approval is None:
@@ -87,201 +135,147 @@ class ApprovalService:
         contract_id: UUID,
         actor_id: UUID,
         actor_role: str,
-    ) -> Contract:
+    ):
+        contract = ContractRepository.get_by_id_for_update(
+            db,
+            contract_id,
+        )
 
-        try:
-            # 1. Lock Contract
-            contract = (
-                ContractRepository.get_by_id_for_update(
-                    db=db,
-                    contract_id=contract_id,
-                )
+        if contract is None:
+            raise ValueError("CONTRACT_NOT_FOUND")
+
+        # =========================================================
+        # MANAGER START REVIEW
+        # SUBMITTED -> MANAGER_REVIEW
+        # =========================================================
+        if actor_role == "MANAGER":
+
+            if contract.status != ContractStatus.SUBMITTED.value:
+                raise ValueError("INVALID_STATE")
+
+            # Không được tồn tại approval đang xử lý
+            existing = ApprovalRepository.get_current_for_update(
+                db,
+                contract_id,
             )
 
-            if contract is None:
-                raise ValueError(
-                    "CONTRACT_NOT_FOUND"
-                )
+            if existing is not None:
+                raise ValueError("APPROVAL_ALREADY_EXISTS")
 
-            # =================================================
-            # MANAGER START REVIEW
-            # SUBMITTED -> MANAGER_REVIEW
-            # =================================================
-            if (
-                contract.status
-                == ContractStatus.SUBMITTED.value
-            ):
+            latest_round = ApprovalRepository.get_latest_round(
+                db,
+                contract_id,
+            )
 
-                if actor_role != "MANAGER":
-                    raise ValueError(
-                        "FORBIDDEN"
-                    )
+            new_round = latest_round + 1
 
-                # Không được có approval đang PENDING
-                current_approval = (
-                    ApprovalRepository.get_current(
-                        db=db,
-                        contract_id=contract_id,
-                    )
-                )
+            previous_status = contract.status
 
-                if current_approval is not None:
-                    raise ValueError(
-                        "APPROVAL_ALREADY_EXISTS"
-                    )
+            contract.status = ContractStateMachine.transition(
+                ContractStatus(contract.status),
+                "start_manager_review",
+            ).value
 
-                # 2. Determine new approval round
-                latest_round = (
-                    ApprovalRepository.get_latest_round(
-                        db=db,
-                        contract_id=contract_id,
-                    )
-                )
+            contract.row_version += 1
 
-                new_round = latest_round + 1
+            approval = ContractApproval(
+                contract_id=contract.contract_id,
+                approval_round=new_round,
+                step_no=1,
+                approver_id=actor_id,
+                status="PENDING",
+            )
 
-                # 3. State transition
-                previous_status = contract.status
+            db.add(approval)
 
-                new_status = (
-                    ContractStateMachine.transition(
-                        current_status=ContractStatus(
-                            contract.status
-                        ),
-                        action="start_manager_review",
-                    )
-                )
+            audit = ContractAudit(
+                contract_id=contract.contract_id,
+                version_id=None,
+                actor_id=actor_id,
+                action="START_MANAGER_REVIEW",
+                status_before=previous_status,
+                status_after=contract.status,
+                note="Manager started contract review",
+            )
 
-                contract.status = new_status.value
-                contract.row_version += 1
+            db.add(audit)
 
-                # 4. Create Manager approval
-                approval = ContractApproval(
-                    contract_id=contract.contract_id,
-                    approval_round=new_round,
-                    step_no=1,
-                    approver_id=actor_id,
-                    status="PENDING",
-                )
+            event = build_contract_event(
+                event_name="CONTRACT_MANAGER_REVIEW_STARTED",
+                contract_id=contract.contract_id,
+                payload={
+                    "contract_id": str(contract.contract_id),
+                    "contract_number": contract.contract_number,
+                    "status": contract.status,
+                    "approval_round": new_round,
+                    "step_no": 1,
+                },
+            )
 
-                db.add(approval)
-
-                # 5. Audit
-                audit = ContractAudit(
-                    contract_id=contract.contract_id,
-                    version_id=None,
-                    actor_id=actor_id,
-                    action="START_MANAGER_REVIEW",
-                    status_before=previous_status,
-                    status_after=contract.status,
-                    note=(
-                        f"Manager started review "
-                        f"(approval round {new_round})"
-                    ),
-                )
-
-                db.add(audit)
-
-                # 6. Outbox
-                outbox_event = OutboxEvent(
+            db.add(
+                OutboxEvent(
                     aggregate_type="CONTRACT",
                     aggregate_id=contract.contract_id,
-                    event_type=(
-                        "CONTRACT_MANAGER_REVIEW_STARTED"
-                    ),
-                    payload={
-                        "contract_id": str(
-                            contract.contract_id
-                        ),
-                        "contract_number":
-                            contract.contract_number,
-                        "customer_id": str(
-                            contract.customer_id
-                        ),
-                        "approver_id": str(
-                            actor_id
-                        ),
-                        "approver_role": "MANAGER",
-                        "approval_round": new_round,
-                        "step_no": 1,
-                        "status": contract.status,
-                    },
+                    event_type="CONTRACT_MANAGER_REVIEW_STARTED",
+                    payload=event,
                     status="PENDING",
                     retry_count=0,
                 )
+            )
 
-                db.add(outbox_event)
+            db.commit()
+            db.refresh(contract)
 
-                db.commit()
-                db.refresh(contract)
+            return contract
 
-                return contract
+        # =========================================================
+        # DIRECTOR START REVIEW
+        # DIRECTOR_REVIEW -> DIRECTOR_REVIEW
+        #
+        # Chỉ tạo approval step 2 nếu chưa tồn tại.
+        # =========================================================
+        if actor_role == "DIRECTOR":
 
-            # =================================================
-            # DIRECTOR START REVIEW
-            # DIRECTOR_REVIEW -> DIRECTOR_REVIEW
-            # =================================================
-            if (
-                contract.status
-                == ContractStatus.DIRECTOR_REVIEW.value
-            ):
+            if contract.status != ContractStatus.DIRECTOR_REVIEW.value:
+                raise ValueError("INVALID_STATE")
 
-                if actor_role != "DIRECTOR":
-                    raise ValueError(
-                        "FORBIDDEN"
-                    )
+            latest_round = ApprovalRepository.get_latest_round(
+                db,
+                contract_id,
+            )
 
-                # 2. Get latest approval round
-                latest_round = (
-                    ApprovalRepository.get_latest_round(
-                        db=db,
-                        contract_id=contract_id,
-                    )
-                )
+            if latest_round <= 0:
+                raise ValueError("APPROVAL_NOT_FOUND")
 
-                if latest_round <= 0:
-                    raise ValueError(
-                        "APPROVAL_NOT_FOUND"
-                    )
+            # Kiểm tra Manager approval step 1
+            manager_approval = ApprovalRepository.get_by_round_step(
+                db=db,
+                contract_id=contract_id,
+                approval_round=latest_round,
+                step_no=1,
+            )
 
-                # 3. Manager approval in current round
-                manager_approval = (
-                    ApprovalRepository.get_by_round_step(
-                        db=db,
-                        contract_id=contract_id,
-                        approval_round=latest_round,
-                        step_no=1,
-                    )
-                )
+            if manager_approval is None:
+                raise ValueError("APPROVAL_NOT_FOUND")
 
-                if manager_approval is None:
-                    raise ValueError(
-                        "APPROVAL_NOT_FOUND"
-                    )
+            if manager_approval.status != "APPROVED":
+                raise ValueError("MANAGER_APPROVAL_REQUIRED")
 
-                if manager_approval.status != "APPROVED":
-                    raise ValueError(
-                        "MANAGER_APPROVAL_REQUIRED"
-                    )
+            # Kiểm tra Director step 2
+            director_approval = ApprovalRepository.get_by_round_step(
+                db=db,
+                contract_id=contract_id,
+                approval_round=latest_round,
+                step_no=2,
+            )
 
-                # 4. Ensure Director approval
-                # does not already exist in this round
-                director_approval = (
-                    ApprovalRepository.get_by_round_step(
-                        db=db,
-                        contract_id=contract_id,
-                        approval_round=latest_round,
-                        step_no=2,
-                    )
-                )
+            # -----------------------------------------------------
+            # Chưa có Director approval
+            # -> tạo mới
+            # -----------------------------------------------------
+            if director_approval is None:
 
-                if director_approval is not None:
-                    raise ValueError(
-                        "APPROVAL_ALREADY_EXISTS"
-                    )
-
-                # 5. Create Director approval
-                approval = ContractApproval(
+                director_approval = ContractApproval(
                     contract_id=contract.contract_id,
                     approval_round=latest_round,
                     step_no=2,
@@ -289,9 +283,8 @@ class ApprovalService:
                     status="PENDING",
                 )
 
-                db.add(approval)
+                db.add(director_approval)
 
-                # 6. Audit
                 audit = ContractAudit(
                     contract_id=contract.contract_id,
                     version_id=None,
@@ -299,57 +292,59 @@ class ApprovalService:
                     action="START_DIRECTOR_REVIEW",
                     status_before=contract.status,
                     status_after=contract.status,
-                    note=(
-                        f"Director started review "
-                        f"(approval round {latest_round})"
-                    ),
+                    note="Director started contract review",
                 )
 
                 db.add(audit)
 
-                # 7. Outbox
-                outbox_event = OutboxEvent(
-                    aggregate_type="CONTRACT",
-                    aggregate_id=contract.contract_id,
-                    event_type=(
-                        "CONTRACT_DIRECTOR_REVIEW_STARTED"
-                    ),
+                event = build_contract_event(
+                    event_name="CONTRACT_DIRECTOR_REVIEW_STARTED",
+                    contract_id=contract.contract_id,
                     payload={
-                        "contract_id": str(
-                            contract.contract_id
-                        ),
-                        "contract_number":
-                            contract.contract_number,
-                        "customer_id": str(
-                            contract.customer_id
-                        ),
-                        "approver_id": str(
-                            actor_id
-                        ),
-                        "approver_role": "DIRECTOR",
-                        "approval_round":
-                            latest_round,
-                        "step_no": 2,
+                        "contract_id": str(contract.contract_id),
+                        "contract_number": contract.contract_number,
                         "status": contract.status,
+                        "approval_round": latest_round,
+                        "step_no": 2,
                     },
-                    status="PENDING",
-                    retry_count=0,
                 )
 
-                db.add(outbox_event)
+                db.add(
+                    OutboxEvent(
+                        aggregate_type="CONTRACT",
+                        aggregate_id=contract.contract_id,
+                        event_type="CONTRACT_DIRECTOR_REVIEW_STARTED",
+                        payload=event,
+                        status="PENDING",
+                        retry_count=0,
+                    )
+                )
 
                 db.commit()
                 db.refresh(contract)
 
                 return contract
 
-            raise ValueError(
-                "INVALID_STATE"
-            )
+            # -----------------------------------------------------
+            # Director approval đã tồn tại
+            # -----------------------------------------------------
 
-        except Exception:
-            db.rollback()
-            raise
+            # Cùng Director và vẫn đang PENDING
+            if (
+                director_approval.approver_id == actor_id
+                and director_approval.status == "PENDING"
+            ):
+                # Start review là idempotent
+                return contract
+
+            # Director đã request revision
+            if director_approval.status == "REVISION_REQUESTED":
+                raise ValueError("REVISION_ALREADY_REQUESTED")
+
+            # Approval đã xử lý rồi
+            raise ValueError("APPROVAL_ALREADY_EXISTS")
+
+        raise ValueError("FORBIDDEN")
 
     # =====================================================
     # APPROVE
@@ -415,32 +410,12 @@ class ApprovalService:
                 db.add(audit)
 
                 # Outbox
-                outbox_event = OutboxEvent(
-                    aggregate_type="CONTRACT",
-                    aggregate_id=contract.contract_id,
+                outbox_event = ApprovalService._build_action_outbox_event(
+                    contract=contract,
                     event_type="CONTRACT_MANAGER_APPROVED",
-                    payload={
-                        "contract_id": str(
-                            contract.contract_id
-                        ),
-                        "contract_number":
-                            contract.contract_number,
-                        "customer_id": str(
-                            contract.customer_id
-                        ),
-                        "approval_round":
-                            approval.approval_round,
-                        "step_no":
-                            approval.step_no,
-                        "approver_id": str(
-                            actor_id
-                        ),
-                        "approver_role": "MANAGER",
-                        "status": contract.status,
-                        "comment": comment,
-                    },
-                    status="PENDING",
-                    retry_count=0,
+                    actor_id=actor_id,
+                    actor_role=actor_role,
+                    approval_round=approval.approval_round,
                 )
 
                 db.add(outbox_event)
@@ -500,32 +475,12 @@ class ApprovalService:
                 db.add(audit)
 
                 # Outbox
-                outbox_event = OutboxEvent(
-                    aggregate_type="CONTRACT",
-                    aggregate_id=contract.contract_id,
-                    event_type="CONTRACT_APPROVED",
-                    payload={
-                        "contract_id": str(
-                            contract.contract_id
-                        ),
-                        "contract_number":
-                            contract.contract_number,
-                        "customer_id": str(
-                            contract.customer_id
-                        ),
-                        "approval_round":
-                            approval.approval_round,
-                        "step_no":
-                            approval.step_no,
-                        "approver_id": str(
-                            actor_id
-                        ),
-                        "approver_role": "DIRECTOR",
-                        "status": contract.status,
-                        "comment": comment,
-                    },
-                    status="PENDING",
-                    retry_count=0,
+                outbox_event = ApprovalService._build_action_outbox_event(
+                    contract=contract,
+                    event_type="CONTRACT_DIRECTOR_APPROVED",
+                    actor_id=actor_id,
+                    actor_role=actor_role,
+                    approval_round=approval.approval_round,
                 )
 
                 db.add(outbox_event)
@@ -619,34 +574,17 @@ class ApprovalService:
 
             db.add(audit)
 
-            outbox_event = OutboxEvent(
-                aggregate_type="CONTRACT",
-                aggregate_id=contract.contract_id,
-                event_type="CONTRACT_REJECTED",
-                payload={
-                    "contract_id": str(
-                        contract.contract_id
-                    ),
-                    "contract_number":
-                        contract.contract_number,
-                    "customer_id": str(
-                        contract.customer_id
-                    ),
-                    "approval_round":
-                        approval.approval_round,
-                    "step_no":
-                        approval.step_no,
-                    "approver_id": str(
-                        actor_id
-                    ),
-                    "approver_role":
-                        actor_role,
-                    "status": contract.status,
-                    "comment":
-                        comment.strip(),
-                },
-                status="PENDING",
-                retry_count=0,
+            event_type = (
+                "CONTRACT_MANAGER_REJECTED"
+                if actor_role == "MANAGER"
+                else "CONTRACT_DIRECTOR_REJECTED"
+            )
+            outbox_event = ApprovalService._build_action_outbox_event(
+                contract=contract,
+                event_type=event_type,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                approval_round=approval.approval_round,
             )
 
             db.add(outbox_event)
@@ -669,68 +607,86 @@ class ApprovalService:
         contract_id: UUID,
         actor_id: UUID,
         actor_role: str,
-        comment: str | None,
-    ) -> Contract:
-
+        comment: str,
+    ):
         if not comment or not comment.strip():
-            raise ValueError(
-                "COMMENT_REQUIRED"
+            raise ValueError("COMMENT_REQUIRED")
+
+        # -------------------------------------------------
+        # Load contract + lock
+        # -------------------------------------------------
+        contract = ContractRepository.get_by_id_for_update(
+            db,
+            contract_id,
+        )
+
+        if contract is None:
+            raise ValueError("CONTRACT_NOT_FOUND")
+
+        # -------------------------------------------------
+        # Load current version
+        # -------------------------------------------------
+        version = ContractRepository.get_current_version(
+            db,
+            contract,
+        )
+
+        if version is None:
+            raise ValueError("CURRENT_VERSION_NOT_FOUND")
+
+        # =================================================
+        # MANAGER REQUEST REVISION
+        # MANAGER_REVIEW -> REVISION_REQUESTED
+        # =================================================
+        if actor_role == "MANAGER":
+
+            if contract.status != ContractStatus.MANAGER_REVIEW.value:
+                raise ValueError("INVALID_STATE")
+
+            latest_round = ApprovalRepository.get_latest_round(
+                db,
+                contract_id,
+            )
+            approval = ApprovalRepository.get_by_round_step_for_update(
+                db=db,
+                contract_id=contract_id,
+                approval_round=latest_round,
+                step_no=1,
             )
 
-        try:
+            if approval is None:
+                raise ValueError("APPROVAL_NOT_FOUND")
 
-            if actor_role == "MANAGER":
-                expected_status = (
-                    ContractStatus.MANAGER_REVIEW
-                )
+            if approval.status != "PENDING":
+                raise ValueError("APPROVAL_ALREADY_PROCESSED")
 
-            elif actor_role == "DIRECTOR":
-                expected_status = (
-                    ContractStatus.DIRECTOR_REVIEW
-                )
-
-            else:
-                raise ValueError(
-                    "FORBIDDEN"
-                )
-
-            contract, approval = (
-                ApprovalService._load_approval_context(
-                    db=db,
-                    contract_id=contract_id,
-                    actor_id=actor_id,
-                    expected_status=expected_status,
-                )
-            )
+            if approval.approver_id != actor_id:
+                raise ValueError("NOT_ASSIGNED_APPROVER")
 
             previous_status = contract.status
 
-            new_status = (
-                ContractStateMachine.transition(
-                    current_status=ContractStatus(
-                        contract.status
-                    ),
-                    action="request_revision",
-                )
-            )
-
+            # Approval record
             approval.status = "REVISION_REQUESTED"
             approval.comment = comment.strip()
 
-            contract.status = new_status.value
+            # State transition
+            contract.status = ContractStateMachine.transition(
+                ContractStatus(contract.status),
+                "request_revision",
+            ).value
+
             contract.row_version += 1
 
-            audit_action = (
-                "MANAGER_REQUEST_REVISION"
-                if actor_role == "MANAGER"
-                else "DIRECTOR_REQUEST_REVISION"
-            )
-
+            # Audit
             audit = ContractAudit(
                 contract_id=contract.contract_id,
-                version_id=None,
+
+                # IMPORTANT:
+                # dùng UUID của version
+                version_id=version.version_id,
+
                 actor_id=actor_id,
-                action=audit_action,
+                action=MANAGER_REQUEST_REVISION,
                 status_before=previous_status,
                 status_after=contract.status,
                 note=comment.strip(),
@@ -738,197 +694,265 @@ class ApprovalService:
 
             db.add(audit)
 
-            outbox_event = OutboxEvent(
-                aggregate_type="CONTRACT",
-                aggregate_id=contract.contract_id,
-                event_type="CONTRACT_REVISION_REQUESTED",
-                payload={
-                    "contract_id": str(
-                        contract.contract_id
-                    ),
-                    "contract_number":
-                        contract.contract_number,
-                    "customer_id": str(
-                        contract.customer_id
-                    ),
-                    "approval_round":
-                        approval.approval_round,
-                    "step_no":
-                        approval.step_no,
-                    "approver_id": str(
-                        actor_id
-                    ),
-                    "approver_role":
-                        actor_role,
-                    "status":
-                        contract.status,
-                    "comment":
-                        comment.strip(),
-                },
-                status="PENDING",
-                retry_count=0,
+            db.add(
+                ApprovalService._build_action_outbox_event(
+                    contract=contract,
+                    event_type="CONTRACT_MANAGER_REVISION_REQUESTED",
+                    actor_id=actor_id,
+                    actor_role=actor_role,
+                    approval_round=approval.approval_round,
+                )
             )
-
-            db.add(outbox_event)
 
             db.commit()
             db.refresh(contract)
 
             return contract
 
-        except Exception:
-            db.rollback()
-            raise
+        # =================================================
+        # DIRECTOR REQUEST REVISION
+        #
+        # DIRECTOR_REVIEW
+        #       ↓
+        # DIRECTOR_REVIEW
+        #
+        # Status KHÔNG ĐỔI
+        # Manager sẽ xử lý bước tiếp theo
+        # =================================================
+        if actor_role == "DIRECTOR":
 
-    # =====================================================
-    # FORWARD DIRECTOR REVISION TO STAFF
-    # =====================================================
-    @staticmethod
-    def forward_revision(
-        db: Session,
-        contract_id: UUID,
-        actor_id: UUID,
-        actor_role: str,
-    ) -> Contract:
+            if contract.status != ContractStatus.DIRECTOR_REVIEW.value:
+                raise ValueError("INVALID_STATE")
 
-        try:
-
-            # 1. Only Manager can forward
-            if actor_role != "MANAGER":
-                raise ValueError(
-                    "FORBIDDEN"
-                )
-
-            # 2. Lock Contract
-            contract = (
-                ContractRepository.get_by_id_for_update(
-                    db=db,
-                    contract_id=contract_id,
-                )
+            latest_round = ApprovalRepository.get_latest_round(
+                db,
+                contract_id,
+            )
+            approval = ApprovalRepository.get_by_round_step_for_update(
+                db=db,
+                contract_id=contract_id,
+                approval_round=latest_round,
+                step_no=2,
             )
 
-            if contract is None:
-                raise ValueError(
-                    "CONTRACT_NOT_FOUND"
-                )
+            if approval is None:
+                raise ValueError("APPROVAL_NOT_FOUND")
 
-            # 3. Must be in revision requested state
-            if (
-                contract.status
-                != ContractStatus.REVISION_REQUESTED.value
-            ):
-                raise ValueError(
-                    "INVALID_STATE"
-                )
+            if approval.status != "PENDING":
+                raise ValueError("APPROVAL_ALREADY_PROCESSED")
 
-            # 4. Get latest approval round
-            latest_round = (
-                ApprovalRepository.get_latest_round(
-                    db=db,
-                    contract_id=contract_id,
-                )
-            )
+            if approval.approver_id != actor_id:
+                raise ValueError("NOT_ASSIGNED_APPROVER")
 
-            if latest_round <= 0:
-                raise ValueError(
-                    "APPROVAL_NOT_FOUND"
-                )
+            previous_status = contract.status
 
-            # 5. Latest approval must be
-            # Director revision request
-            director_approval = (
-                ApprovalRepository.get_by_round_step(
-                    db=db,
-                    contract_id=contract_id,
-                    approval_round=latest_round,
-                    step_no=2,
-                )
-            )
+            # Approval record
+            approval.status = "REVISION_REQUESTED"
+            approval.comment = comment.strip()
 
-            if director_approval is None:
-                raise ValueError(
-                    "APPROVAL_NOT_FOUND"
-                )
+            # IMPORTANT:
+            # Director request revision nhưng status vẫn DIRECTOR_REVIEW
+            contract.status = previous_status
 
-            if director_approval.status != (
-                "REVISION_REQUESTED"
-            ):
-                raise ValueError(
-                    "INVALID_REVISION_SOURCE"
-                )
+            contract.row_version += 1
 
-            # 6. Check if already forwarded
-            already_forwarded = (
-                db.query(ContractAudit)
-                .filter(
-                    ContractAudit.contract_id
-                    == contract.contract_id,
-                    ContractAudit.action
-                    == "MANAGER_FORWARD_REVISION",
-                    ContractAudit.created_at
-                    > director_approval.updated_at,
-                )
-                .first()
-            )
-
-            if already_forwarded is not None:
-                raise ValueError(
-                    "REVISION_ALREADY_FORWARDED"
-                )
-
-            # 7. Audit
+            # Audit
             audit = ContractAudit(
                 contract_id=contract.contract_id,
-                version_id=None,
+
+                # IMPORTANT:
+                # dùng UUID của version
+                version_id=version.version_id,
+
                 actor_id=actor_id,
-                action="MANAGER_FORWARD_REVISION",
-                status_before=contract.status,
+                action=DIRECTOR_REQUEST_REVISION,
+                status_before=previous_status,
                 status_after=contract.status,
-                note=(
-                    "Manager reviewed Director's "
-                    "revision request and forwarded "
-                    "it to Staff"
-                ),
+                note=comment.strip(),
             )
 
             db.add(audit)
 
-            # 8. Outbox
-            outbox_event = OutboxEvent(
-                aggregate_type="CONTRACT",
-                aggregate_id=contract.contract_id,
-                event_type=(
-                    "CONTRACT_REVISION_FORWARDED_TO_STAFF"
-                ),
-                payload={
-                    "contract_id": str(
-                        contract.contract_id
-                    ),
-                    "contract_number":
-                        contract.contract_number,
-                    "customer_id": str(
-                        contract.customer_id
-                    ),
-                    "approval_round":
-                        latest_round,
-                    "requested_by_role":
-                        "DIRECTOR",
-                    "forwarded_by":
-                        str(actor_id),
-                    "status":
-                        contract.status,
-                },
-                status="PENDING",
-                retry_count=0,
+            db.add(
+                ApprovalService._build_action_outbox_event(
+                    contract=contract,
+                    event_type="CONTRACT_DIRECTOR_REVISION_REQUESTED",
+                    actor_id=actor_id,
+                    actor_role=actor_role,
+                    approval_round=approval.approval_round,
+                )
             )
-
-            db.add(outbox_event)
 
             db.commit()
             db.refresh(contract)
 
             return contract
 
-        except Exception:
-            db.rollback()
-            raise
+        raise ValueError("FORBIDDEN")
+
+    # manager gửi lại cho staff sau khi director yêu cầu sửa đổi
+    @staticmethod
+    def manager_send_revision(
+        db: Session,
+        contract_id: UUID,
+        actor_id: UUID,
+        actor_role: str,
+        comment: str,
+    ):
+        # -------------------------------------------------
+        # 1. Validate role
+        # -------------------------------------------------
+        if actor_role != "MANAGER":
+            raise ValueError("FORBIDDEN")
+
+        # -------------------------------------------------
+        # 2. Validate comment
+        # -------------------------------------------------
+        if not comment or not comment.strip():
+            raise ValueError("COMMENT_REQUIRED")
+
+        # -------------------------------------------------
+        # 3. Lock contract
+        # -------------------------------------------------
+        contract = ContractRepository.get_by_id_for_update(
+            db,
+            contract_id,
+        )
+
+        if contract is None:
+            raise ValueError("CONTRACT_NOT_FOUND")
+
+        # -------------------------------------------------
+        # 4. Must still be DIRECTOR_REVIEW
+        # -------------------------------------------------
+        if contract.status != ContractStatus.DIRECTOR_REVIEW.value:
+            raise ValueError("INVALID_STATE")
+
+        # -------------------------------------------------
+        # 5. Get current version
+        # -------------------------------------------------
+        version = ContractRepository.get_current_version(
+            db,
+            contract,
+        )
+
+        if version is None:
+            raise ValueError("CURRENT_VERSION_NOT_FOUND")
+
+        # -------------------------------------------------
+        # 6. Get latest approval round
+        # -------------------------------------------------
+        latest_round = ApprovalRepository.get_latest_round(
+            db,
+            contract_id,
+        )
+
+        if latest_round <= 0:
+            raise ValueError("APPROVAL_NOT_FOUND")
+
+        # -------------------------------------------------
+        # 7. Get Director approval = step 2
+        # -------------------------------------------------
+        director_approval = ApprovalRepository.get_by_round_step(
+            db=db,
+            contract_id=contract_id,
+            approval_round=latest_round,
+            step_no=2,
+        )
+
+        if director_approval is None:
+            raise ValueError("APPROVAL_NOT_FOUND")
+
+        # Director must have requested revision
+        if director_approval.status != "REVISION_REQUESTED":
+            raise ValueError("INVALID_REVISION_SOURCE")
+
+        # -------------------------------------------------
+        # 8. Find latest Director revision audit
+        # -------------------------------------------------
+        latest_director_revision = (
+            db.query(ContractAudit)
+            .filter(
+                ContractAudit.contract_id == contract_id,
+                ContractAudit.action
+                == DIRECTOR_REQUEST_REVISION,
+                ContractAudit.version_id == version.version_id,
+            )
+            .order_by(
+                ContractAudit.created_at.desc(),
+                ContractAudit.audit_id.desc(),
+            )
+            .first()
+        )
+
+        if latest_director_revision is None:
+            raise ValueError("INVALID_REVISION_SOURCE")
+
+        # -------------------------------------------------
+        # 9. Prevent duplicate send
+        # -------------------------------------------------
+        already_sent = (
+            db.query(ContractAudit)
+            .filter(
+                ContractAudit.contract_id == contract_id,
+                ContractAudit.action == MANAGER_SEND_REVISION,
+                ContractAudit.version_id == version.version_id,
+            )
+            .first()
+        )
+
+        if already_sent is not None:
+            raise ValueError("REVISION_ALREADY_SENT")
+
+        # -------------------------------------------------
+        # 10. State transition
+        # DIRECTOR_REVIEW -> REVISION_REQUESTED
+        # -------------------------------------------------
+        previous_status = contract.status
+
+        new_status = ContractStateMachine.transition(
+            ContractStatus(contract.status),
+            "manager_send_revision",
+        )
+
+        contract.status = new_status.value
+        contract.row_version += 1
+
+        # -------------------------------------------------
+        # 11. Audit
+        # -------------------------------------------------
+        audit = ContractAudit(
+            contract_id=contract.contract_id,
+
+            # IMPORTANT:
+            # phải dùng UUID
+            version_id=version.version_id,
+
+            actor_id=actor_id,
+            action=MANAGER_SEND_REVISION,
+            status_before=previous_status,
+            status_after=contract.status,
+
+            # Đây là lý do MANAGER gửi cho STAFF
+            note=comment.strip(),
+        )
+
+        db.add(audit)
+
+        db.add(
+            ApprovalService._build_action_outbox_event(
+                contract=contract,
+                event_type="CONTRACT_MANAGER_SEND_REVISION",
+                actor_id=actor_id,
+                actor_role=actor_role,
+                approval_round=latest_round,
+            )
+        )
+
+        # -------------------------------------------------
+        # 13. Commit
+        # -------------------------------------------------
+        db.commit()
+        db.refresh(contract)
+
+        return contract

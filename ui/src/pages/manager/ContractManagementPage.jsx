@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Search, SlidersHorizontal, CalendarDays, CheckSquare, CheckCircle2, Pencil, XCircle, Clock3, Users } from 'lucide-react';
 import ContractTable from '../../components/contract/ContractTable';
 import ContractDetailModal from '../../components/contract/ContractDetailModal';
-import { fetchContractDetail, fetchContracts, fetchCustomers } from '../../services/contractApi';
+import RevisionCommentModal from '../../components/contract/RevisionCommentModal';
+import { useToast } from '../../components/common/ToastContext';
+import { fetchContractDetail, fetchContracts, fetchCustomers, getContractErrorMessage, sendRevisionToStaff } from '../../services/contractApi';
 
 const statusOptions = [
     ['APPROVED', 'Đã Approved'],
@@ -18,6 +20,7 @@ const managerStatuses = new Set(statusOptions.map(([status]) => status));
 
 export default function ContractManagementManagerPage() {
     const navigate = useNavigate();
+    const toast = useToast();
     const PAGE_SIZE = 10;
     const [contracts, setContracts] = useState([]);
     const [totalContracts, setTotalContracts] = useState(0);
@@ -30,6 +33,7 @@ export default function ContractManagementManagerPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
     const [detailData, setDetailData] = useState(null);
+    const [revisionContract, setRevisionContract] = useState(null);
 
     const loadData = async () => {
         setIsLoading(true);
@@ -58,12 +62,24 @@ export default function ContractManagementManagerPage() {
         revision: summary.revision_requested_by_manager || 0,
         rejected: summary.rejected || 0,
         expired: summary.expired || 0,
-        review: summary.director_review || 0,
+        review: (summary.submitted || 0) + (summary.manager_review || 0),
     }), [summary]);
 
     const viewContract = async (contractId) => {
         try { setDetailData(await fetchContractDetail(contractId)); }
-        catch (err) { alert(`Không thể tải chi tiết hợp đồng: ${err.message}`); }
+        catch (err) { toast.error(getContractErrorMessage(err, 'Không thể tải chi tiết hợp đồng.')); }
+    };
+
+    const handleSendRevision = async (comment) => {
+        try {
+            await sendRevisionToStaff(revisionContract.contract_id, comment);
+            toast.success('Đã gửi yêu cầu chỉnh sửa tới Staff.');
+            setRevisionContract(null);
+            await loadData();
+        } catch (error) {
+            toast.error(getContractErrorMessage(error, 'Không thể gửi yêu cầu chỉnh sửa tới Staff.'));
+            throw error;
+        }
     };
 
     return (
@@ -97,9 +113,10 @@ export default function ContractManagementManagerPage() {
                     <button className="manager-filter-button" title="Bộ lọc" onClick={() => { setPage(1); setStatusFilter(''); setSearchQuery(''); setDateQuery(''); }}><SlidersHorizontal size={16} /></button>
                 </div>
                 {error && <div className="manager-error">{error}</div>}
-                {isLoading ? <div className="manager-loading">Đang tải dữ liệu hợp đồng...</div> : <ContractTable contracts={contracts.filter((item) => managerStatuses.has(item.status))} customers={customers} totalCount={totalContracts} page={page} totalPages={Math.max(1, Math.ceil(totalContracts / PAGE_SIZE))} onPageChange={setPage} managerMode onView={viewContract} />}
+                {isLoading ? <div className="manager-loading">Đang tải dữ liệu hợp đồng...</div> : <ContractTable contracts={contracts.filter((item) => managerStatuses.has(item.status))} customers={customers} totalCount={totalContracts} page={page} totalPages={Math.max(1, Math.ceil(totalContracts / PAGE_SIZE))} onPageChange={setPage} managerMode onView={viewContract} onSendRevision={setRevisionContract} />}
             </section>
-            {detailData && <ContractDetailModal detail={detailData} customers={customers} onClose={() => setDetailData(null)} />}
+            {detailData && <ContractDetailModal detail={detailData} customers={customers} viewerRole="MANAGER" onClose={() => setDetailData(null)} />}
+            {revisionContract && <RevisionCommentModal reason={revisionContract.revision_reason_for_manager} onClose={() => setRevisionContract(null)} onSubmit={handleSendRevision} />}
         </div>
     );
 }

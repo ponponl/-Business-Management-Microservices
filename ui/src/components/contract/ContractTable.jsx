@@ -13,6 +13,7 @@ export default function ContractTable({
     pageSize = 20,
     totalPages = 1,
     onPageChange,
+    onSendRevision,
 }) {
     const formatDateForDisplay = (value) => {
         if (value === null || value === undefined || value === '') return 'N/A';
@@ -57,8 +58,12 @@ export default function ContractTable({
                 return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-yellow-100 text-yellow-700">DRAFT</span>;
             case 'SUBMITTED': 
                 return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-orange-100 text-orange-700">SUBMITTED</span>;
+            case 'MANAGER_REVIEW':
+                return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-blue-100 text-blue-700">MANAGER_REVIEW</span>;
             case 'DIRECTOR_REVIEW':
                 return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-purple-100 text-purple-700">DIRECTOR_REVIEW</span>;
+            case 'REVISION_REQUESTED':
+                return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-amber-100 text-amber-700">REVISION_REQUESTED</span>;
             case 'APPROVED': 
                 return <span className="px-2 py-1 text-xs font-semibold rounded-md bg-green-100 text-green-700">APPROVED</span>;
             case 'ACTIVE': 
@@ -108,7 +113,10 @@ export default function ContractTable({
                                 <td className="px-6 py-4 text-center">{getStatusBadge(c.status)}</td>
                                 <td className="px-6 py-4 text-right space-x-2">
                                     <button onClick={() => onView(c.contract_id)} className="text-slate-400 hover:text-primary transition-colors" title="Xem chi tiết"><i className="fa-solid fa-eye"></i></button>
-                                    {!managerMode && c.status === 'DRAFT' && (
+                                    {managerMode && c.status === 'DIRECTOR_REVIEW' && c.director_approval_status === 'REVISION_REQUESTED' && (
+                                        <button onClick={() => onSendRevision?.(c)} className="text-amber-500 hover:text-amber-700 transition-colors" title="Gửi yêu cầu chỉnh sửa cho Staff"><i className="fa-solid fa-reply"></i></button>
+                                    )}
+                                    {!managerMode && ['DRAFT', 'REVISION_REQUESTED'].includes(c.status) && (
                                         <>
                                             <button onClick={() => onEdit(c.contract_id)} className="text-slate-400 hover:text-amber-500 transition-colors" title="Chỉnh sửa"><i className="fa-solid fa-pen-to-square"></i></button>
                                             <button onClick={() => onSubmit(c.contract_id)} className="text-slate-400 hover:text-green-500 transition-colors" title="Submit"><i className="fa-solid fa-paper-plane"></i></button>
