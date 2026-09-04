@@ -7,12 +7,15 @@ from apscheduler.schedulers.background import (
 from app.services.lifecycle_service import (
     ContractLifecycleService,
 )
+from app.core.config import settings
 
 
 logger = logging.getLogger(__name__)
 
 
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(
+    timezone=settings.CONTRACT_TIMEZONE,
+)
 
 
 def run_contract_lifecycle():
@@ -38,11 +41,15 @@ def start_scheduler():
     scheduler.add_job(
         run_contract_lifecycle,
         trigger="interval",
-        minutes=5,
+        seconds=settings.CONTRACT_LIFECYCLE_INTERVAL_SECONDS,
         id="contract-lifecycle",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
+        misfire_grace_time=max(
+            30,
+            settings.CONTRACT_LIFECYCLE_INTERVAL_SECONDS * 2,
+        ),
     )
 
     scheduler.start()

@@ -9,6 +9,7 @@ from app.models.contract_attachment import ContractAttachment
 from sqlalchemy.orm import Session
 
 from app.core.constants import SYSTEM_ACTOR_ID
+from app.core.contract_clock import contract_today
 from app.core.contract_number import generate_contract_number
 from app.core.event_builder import build_contract_event
 from app.core.idempotency import build_request_hash
@@ -46,11 +47,28 @@ from app.services.state_machine import (
     ContractStateMachine,
     ContractStatus,
 )
+from app.services.revision_context import (
+    DIRECTOR_REQUEST_REVISION,
+    MANAGER_REQUEST_REVISION,
+    get_current_approval_metadata,
+    get_latest_revision_context,
+    get_revision_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ContractService:
+
+    @staticmethod
+    def get_current_revision_metadata(
+        db: Session | None,
+        contract: Contract,
+    ) -> dict:
+        # Kept as the public service method used by the API layer.
+        # Revision selection itself is centralized and independent of
+        # contract.status so review-again screens retain the active context.
+        return get_revision_metadata(contract)
     
     
     @staticmethod
@@ -59,6 +77,11 @@ class ContractService:
         version: ContractVersion,
         attachments: list[ContractAttachment] | None = None,
     ):
+        revision_metadata = ContractService.get_current_revision_metadata(
+            db=None,
+            contract=contract,
+        )
+        approval_metadata = get_current_approval_metadata(contract)
         return {
             "contract_id": contract.contract_id,
             "contract_number": contract.contract_number,
@@ -70,6 +93,9 @@ class ContractService:
             "updated_at": contract.updated_at,
             "current_version_detail": version,
             "attachments": attachments or [],
+            "approvals": getattr(contract, "approval_records", []),
+            **approval_metadata,
+            **revision_metadata,
         }
     # =========================================================
     # CREATE CONTRACT
@@ -422,19 +448,11 @@ class ContractService:
                 db,
                 contract,
             )
-            revision_audits = [
-                audit
-                for audit in contract.audits
-                if audit.action in {
-                    "MANAGER_REQUEST_REVISION",
-                    "DIRECTOR_REQUEST_REVISION",
-                }
-            ]
-            latest_revision_audit = max(
-                revision_audits,
-                key=lambda audit: audit.created_at,
-                default=None,
+            revision_metadata = ContractService.get_current_revision_metadata(
+                db=db,
+                contract=contract,
             )
+            approval_metadata = get_current_approval_metadata(contract)
 
             serialized.append({
                 "contract_id": contract.contract_id,
@@ -448,15 +466,8 @@ class ContractService:
                 "effective_from": version.effective_from if version else None,
                 "effective_to": version.effective_to if version else None,
                 "contract_value": version.contract_value if version else None,
-                "revision_requested_by_role": (
-                    "MANAGER"
-                    if latest_revision_audit
-                    and latest_revision_audit.action
-                    == "MANAGER_REQUEST_REVISION"
-                    else "DIRECTOR"
-                    if latest_revision_audit
-                    else None
-                ),
+                **approval_metadata,
+                **revision_metadata,
             })
 
         return serialized, total, ContractRepository.contract_summary(db)
@@ -476,11 +487,9 @@ class ContractService:
         saved_object_keys: list[str] = []
 
         try:
-
             # -------------------------------------------------
             # 1. Lock Contract row
             # -------------------------------------------------
-
             contract = (
                 ContractRepository.get_by_id_for_update(
                     db,
@@ -496,7 +505,6 @@ class ContractService:
             # -------------------------------------------------
             # 2. Validate state
             # -------------------------------------------------
-
             if contract.status not in {
                 ContractStatus.DRAFT.value,
                 ContractStatus.REVISION_REQUESTED.value,
@@ -508,22 +516,83 @@ class ContractService:
             # -------------------------------------------------
             # 3. Optimistic locking
             # -------------------------------------------------
-
-            if (
-                contract.row_version
-                != request.row_version
-            ):
+            if contract.row_version != request.row_version:
                 raise ValueError(
                     "VERSION_CONFLICT"
                 )
 
-            # -------------------------------------------------
-            # 4. New version
-            # -------------------------------------------------
+            previous_version = (
+                ContractRepository.get_current_version_with_attachments(
+                    db,
+                    contract,
+                )
+            )
+            if previous_version is None:
+                raise ValueError(
+                    "CURRENT_VERSION_NOT_FOUND"
+                )
 
+            # -------------------------------------------------
+            # 4. Revision workflow validation
+            # -------------------------------------------------
+            revision_context = None
+            revision_source = None
+
+            if (
+                contract.status
+                == ContractStatus.REVISION_REQUESTED.value
+            ):
+                # Lấy revision request mới nhất
+                revision_context = get_latest_revision_context(contract)
+
+                if revision_context is None:
+                    raise ValueError(
+                        "REVISION_CONTEXT_NOT_FOUND"
+                    )
+
+                revision_source = revision_context.source
+
+                # ---------------------------------------------
+                # Manager revision:
+                # Staff được update ngay
+                # ---------------------------------------------
+                if revision_source == MANAGER_REQUEST_REVISION:
+                    pass
+
+                # ---------------------------------------------
+                # Director revision:
+                # Phải được Manager gửi cho Staff trước
+                # ---------------------------------------------
+                elif revision_source == DIRECTOR_REQUEST_REVISION:
+                    if revision_context.manager_send_audit is None:
+                        raise ValueError(
+                            "REVISION_NOT_SENT_TO_STAFF"
+                        )
+
+                else:
+                    raise ValueError(
+                        "INVALID_REVISION_CONTEXT"
+                    )
+
+            # -------------------------------------------------
+            # 5. New version
+            # -------------------------------------------------
             next_version_no = (
                 contract.current_version + 1
             )
+
+            if revision_source == MANAGER_REQUEST_REVISION:
+                change_reason = (
+                    "Updated according to Manager revision request"
+                )
+
+            elif revision_source == DIRECTOR_REQUEST_REVISION:
+                change_reason = (
+                    "Updated according to Director revision request"
+                )
+
+            else:
+                change_reason = "Contract updated"
 
             new_version = ContractVersion(
                 contract_id=contract.contract_id,
@@ -534,32 +603,35 @@ class ContractService:
                 payment_terms=request.payment_terms,
                 service_terms=request.service_terms,
                 created_by=actor_id,
-                change_reason="Contract updated",
+                change_reason=change_reason,
             )
 
             db.add(new_version)
-
             db.flush()
 
             # -------------------------------------------------
-            # 5. Update aggregate
+            # 6. Update aggregate
             # -------------------------------------------------
-
             previous_status = contract.status
 
-            contract.current_version = (
-                next_version_no
-            )
-
+            contract.current_version = next_version_no
             contract.row_version += 1
 
             # -------------------------------------------------
-            # 6. Validate duplicate attachment names
+            # 7. Validate duplicate attachment names
             # -------------------------------------------------
+            normalized_attachments = attachments or []
+            removed_attachment_ids = set(request.removed_attachment_ids)
 
-            normalized_attachments = (
-                attachments or []
-            )
+            existing_attachment_ids = {
+                attachment.attachment_id
+                for attachment in previous_version.attachments
+            }
+
+            if not removed_attachment_ids.issubset(existing_attachment_ids):
+                raise ValueError(
+                    "ATTACHMENT_NOT_FOUND"
+                )
 
             file_names: set[str] = set()
 
@@ -577,27 +649,56 @@ class ContractService:
                 )
 
                 if safe_file_name in file_names:
-
                     raise ValueError(
                         "DUPLICATE_FILE_NAME"
                     )
 
-                file_names.add(
-                    safe_file_name
-                )
+                file_names.add(safe_file_name)
 
-            # -------------------------------------------------
-            # 7. Upload attachments to NEW VERSION
-            # -------------------------------------------------
-
+            # Carry forward attachments from the previous immutable version.
+            # Removed attachments are omitted from the new version, while the
+            # historical version and its physical files remain intact.
+            # A newly uploaded file with the same name replaces the old one.
             created_attachments = []
 
+            for existing_attachment in previous_version.attachments:
+                if existing_attachment.attachment_id in removed_attachment_ids:
+                    continue
+
+                if existing_attachment.file_name in file_names:
+                    continue
+
+                attachment_id = uuid.uuid4()
+                object_key = build_attachment_object_key(
+                    contract.contract_id,
+                    new_version.version_id,
+                    attachment_id,
+                )
+                storage.copy(
+                    existing_attachment.object_key,
+                    object_key,
+                )
+                saved_object_keys.append(object_key)
+
+                copied_attachment = ContractAttachment(
+                    attachment_id=attachment_id,
+                    version_id=new_version.version_id,
+                    file_name=existing_attachment.file_name,
+                    object_key=object_key,
+                    content_type=existing_attachment.content_type,
+                    file_size=existing_attachment.file_size,
+                    uploaded_by=existing_attachment.uploaded_by,
+                )
+                db.add(copied_attachment)
+                created_attachments.append(copied_attachment)
+
+            # -------------------------------------------------
+            # 8. Upload attachments to NEW VERSION
+            # -------------------------------------------------
             for file in normalized_attachments:
 
                 content = (
-                    await read_and_validate_file(
-                        file
-                    )
+                    await read_and_validate_file(file)
                 )
 
                 attachment_id = uuid.uuid4()
@@ -636,7 +737,6 @@ class ContractService:
                 )
 
                 db.add(attachment)
-
                 created_attachments.append(
                     attachment
                 )
@@ -645,9 +745,8 @@ class ContractService:
                 db.flush()
 
             # -------------------------------------------------
-            # 8. Audit
+            # 9. Audit
             # -------------------------------------------------
-
             audit = ContractAudit(
                 contract_id=contract.contract_id,
                 version_id=new_version.version_id,
@@ -655,15 +754,14 @@ class ContractService:
                 action="UPDATE",
                 status_before=previous_status,
                 status_after=contract.status,
-                note="Contract content updated",
+                note=change_reason,
             )
 
             db.add(audit)
 
             # -------------------------------------------------
-            # 9. Event
+            # 10. Event
             # -------------------------------------------------
-
             event = build_contract_event(
                 event_name="CONTRACT_UPDATED",
                 contract_id=contract.contract_id,
@@ -671,33 +769,25 @@ class ContractService:
                     "contract_id": str(
                         contract.contract_id
                     ),
-                    "contract_number": (
-                        contract.contract_number
-                    ),
+                    "contract_number":
+                        contract.contract_number,
                     "customer_id": str(
                         contract.customer_id
                     ),
-                    "current_version": (
-                        contract.current_version
-                    ),
-                    "status": contract.status,
-                    "effective_from": (
-                        new_version
-                        .effective_from
-                        .isoformat()
-                    ),
-                    "effective_to": (
-                        new_version
-                        .effective_to
-                        .isoformat()
-                    ),
+                    "current_version":
+                        contract.current_version,
+                    "status":
+                        contract.status,
+                    "effective_from":
+                        new_version.effective_from.isoformat(),
+                    "effective_to":
+                        new_version.effective_to.isoformat(),
                 },
             )
 
             # -------------------------------------------------
-            # 10. Outbox
+            # 11. Outbox
             # -------------------------------------------------
-
             outbox_event = OutboxEvent(
                 aggregate_type="CONTRACT",
                 aggregate_id=contract.contract_id,
@@ -710,11 +800,9 @@ class ContractService:
             db.add(outbox_event)
 
             # -------------------------------------------------
-            # 11. Commit
+            # 12. Commit
             # -------------------------------------------------
-
             db.commit()
-
             db.refresh(contract)
 
             return ContractService.build_contract_response(
@@ -724,18 +812,12 @@ class ContractService:
             )
 
         except Exception:
-
             db.rollback()
 
             for object_key in saved_object_keys:
-
                 try:
-                    storage.delete(
-                        object_key
-                    )
-
+                    storage.delete(object_key)
                 except Exception:
-
                     logger.exception(
                         "Failed to cleanup attachment %s",
                         object_key,
@@ -752,6 +834,7 @@ class ContractService:
         contract_id: UUID,
         idempotency_key: str,
         actor_id: UUID,
+        actor_role: str,
     ):
         operation = "SUBMIT_CONTRACT"
 
@@ -761,16 +844,15 @@ class ContractService:
         )
 
         try:
+            # -------------------------------------------------
             # 1. Check Idempotency
-            existing = (
-                IdempotencyRepository.get_by_key(
-                    db,
-                    idempotency_key,
-                )
+            # -------------------------------------------------
+            existing = IdempotencyRepository.get_by_key(
+                db,
+                idempotency_key,
             )
 
             if existing is not None:
-
                 if (
                     existing.operation != operation
                     or existing.resource_id != contract_id
@@ -785,12 +867,12 @@ class ContractService:
                     existing.response_body,
                 )
 
+            # -------------------------------------------------
             # 2. Lock Contract
-            contract = (
-                ContractRepository.get_by_id_for_update(
-                    db,
-                    contract_id,
-                )
+            # -------------------------------------------------
+            contract = ContractRepository.get_by_id_for_update(
+                db,
+                contract_id,
             )
 
             if contract is None:
@@ -798,7 +880,9 @@ class ContractService:
                     "CONTRACT_NOT_FOUND"
                 )
 
-            # 3. Validate state
+            # -------------------------------------------------
+            # 3. Validate State
+            # -------------------------------------------------
             if contract.status not in {
                 ContractStatus.DRAFT.value,
                 ContractStatus.REVISION_REQUESTED.value,
@@ -807,12 +891,12 @@ class ContractService:
                     "INVALID_STATE"
                 )
 
+            # -------------------------------------------------
             # 4. Validate Customer
-            customer = (
-                CustomerRepository.get_by_id(
-                    db,
-                    contract.customer_id,
-                )
+            # -------------------------------------------------
+            customer = CustomerRepository.get_by_id(
+                db,
+                contract.customer_id,
             )
 
             if customer is None:
@@ -825,12 +909,12 @@ class ContractService:
                     "CUSTOMER_INACTIVE"
                 )
 
-            # 5. Validate current version
-            version = (
-                ContractRepository.get_current_version(
-                    db,
-                    contract,
-                )
+            # -------------------------------------------------
+            # 5. Validate Current Version
+            # -------------------------------------------------
+            version = ContractRepository.get_current_version(
+                db,
+                contract,
             )
 
             if version is None:
@@ -838,36 +922,142 @@ class ContractService:
                     "CURRENT_VERSION_NOT_FOUND"
                 )
 
-            # 6. Validate effective period
+            # -------------------------------------------------
+            # 6. Validate Revision Workflow
+            # -------------------------------------------------
+            if contract.status == ContractStatus.REVISION_REQUESTED.value:
+
+                # Lấy revision request mới nhất
+                revision_context = get_latest_revision_context(contract)
+
+                if revision_context is None:
+                    raise ValueError(
+                        "REVISION_CONTEXT_NOT_FOUND"
+                    )
+
+                # =================================================
+                # CASE 1:
+                # Manager request revision
+                #
+                # MANAGER_REVIEW
+                #      ↓
+                # REVISION_REQUESTED
+                #      ↓
+                # Staff Update
+                #      ↓
+                # Staff Submit
+                # =================================================
+                if revision_context.source == MANAGER_REQUEST_REVISION:
+                    latest_update = (
+                        db.query(ContractAudit)
+                        .filter(
+                            ContractAudit.contract_id
+                            == contract.contract_id,
+
+                            ContractAudit.action == "UPDATE",
+                            ContractAudit.version_id == version.version_id,
+                        )
+                        .order_by(
+                            ContractAudit.created_at.desc(),
+                            ContractAudit.audit_id.desc(),
+                        )
+                        .first()
+                    )
+
+                    if latest_update is None:
+                        raise ValueError(
+                            "REVISION_UPDATE_REQUIRED"
+                        )
+
+                # =================================================
+                # CASE 2:
+                # Director request revision
+                #
+                # DIRECTOR_REVIEW
+                #      ↓ Director Request Revision
+                # DIRECTOR_REVIEW
+                #      ↓ Manager Send Revision
+                # REVISION_REQUESTED
+                #      ↓ Staff Update
+                #      ↓ Staff Submit
+                #
+                # Phải có:
+                # 1. DIRECTOR_REQUEST_REVISION
+                # 2. MANAGER_SEND_REVISION
+                # 3. UPDATE
+                # =================================================
+                elif revision_context.source == DIRECTOR_REQUEST_REVISION:
+                    # ---------------------------------------------
+                    # 6.2.1 Manager đã gửi revision cho Staff chưa?
+                    # ---------------------------------------------
+                    manager_send_revision = revision_context.manager_send_audit
+
+                    if manager_send_revision is None:
+                        raise ValueError(
+                            "REVISION_NOT_SENT_TO_STAFF"
+                        )
+
+                    # ---------------------------------------------
+                    # 6.2.2 Staff đã Update sau khi nhận revision chưa?
+                    # ---------------------------------------------
+                    latest_update = (
+                        db.query(ContractAudit)
+                        .filter(
+                            ContractAudit.contract_id
+                            == contract.contract_id,
+
+                            ContractAudit.action == "UPDATE",
+                            ContractAudit.version_id == version.version_id,
+                        )
+                        .order_by(
+                            ContractAudit.created_at.desc(),
+                            ContractAudit.audit_id.desc(),
+                        )
+                        .first()
+                    )
+
+                    if latest_update is None:
+                        raise ValueError(
+                            "REVISION_UPDATE_REQUIRED"
+                        )
+
+                else:
+                    raise ValueError(
+                        "INVALID_REVISION_CONTEXT"
+                    )
+
+            # -------------------------------------------------
+            # 7. Validate Effective Period
+            # -------------------------------------------------
             if version.effective_from > version.effective_to:
                 raise ValueError(
                     "INVALID_EFFECTIVE_PERIOD"
                 )
 
-            # 7. Validate attachment requirement
+            # -------------------------------------------------
+            # 8. Validate Attachment Requirement
+            # -------------------------------------------------
             if not version.attachments:
                 raise ValueError(
                     "ATTACHMENT_REQUIRED"
                 )
 
-            # 8. State transition
+            # -------------------------------------------------
+            # 9. State Transition
+            # -------------------------------------------------
             previous_status = contract.status
 
-            new_status = (
-                ContractStateMachine.transition(
-                    ContractStatus(
-                        contract.status
-                    ),
-                    "submit",
-                )
+            new_status = ContractStateMachine.transition(
+                ContractStatus(contract.status),
+                "submit",
             )
 
             contract.status = new_status.value
-
-            # Submit is an aggregate change
             contract.row_version += 1
 
-            # 9. Audit
+            # -------------------------------------------------
+            # 10. Audit
+            # -------------------------------------------------
             audit = ContractAudit(
                 contract_id=contract.contract_id,
                 version_id=version.version_id,
@@ -880,7 +1070,9 @@ class ContractService:
 
             db.add(audit)
 
-            # 10. Build event
+            # -------------------------------------------------
+            # 11. Event
+            # -------------------------------------------------
             event = build_contract_event(
                 event_name="CONTRACT_SUBMITTED",
                 contract_id=contract.contract_id,
@@ -888,23 +1080,26 @@ class ContractService:
                     "contract_id": str(
                         contract.contract_id
                     ),
-                    "contract_number":
-                        contract.contract_number,
+                    "contract_number": contract.contract_number,
                     "customer_id": str(
                         contract.customer_id
                     ),
-                    "current_version":
-                        contract.current_version,
-                    "status":
-                        contract.status,
-                    "effective_from":
-                        version.effective_from.isoformat(),
-                    "effective_to":
-                        version.effective_to.isoformat(),
+                    "current_version": contract.current_version,
+                    "status": contract.status,
+                    "actor_id": str(actor_id),
+                    "actor_role": actor_role,
+                    "effective_from": (
+                        version.effective_from.isoformat()
+                    ),
+                    "effective_to": (
+                        version.effective_to.isoformat()
+                    ),
                 },
             )
 
-            # 11. Outbox
+            # -------------------------------------------------
+            # 12. Outbox
+            # -------------------------------------------------
             outbox_event = OutboxEvent(
                 aggregate_type="CONTRACT",
                 aggregate_id=contract.contract_id,
@@ -916,19 +1111,21 @@ class ContractService:
 
             db.add(outbox_event)
 
-            # 12. Response
+            # -------------------------------------------------
+            # 13. Response
+            # -------------------------------------------------
             response_body = {
-                "contract_id":
-                    str(contract.contract_id),
-                "contract_number":
-                    contract.contract_number,
-                "status":
-                    contract.status,
-                "message":
-                    "Contract submitted successfully",
+                "contract_id": str(
+                    contract.contract_id
+                ),
+                "contract_number": contract.contract_number,
+                "status": contract.status,
+                "message": "Contract submitted successfully",
             }
 
-            # 13. Idempotency record
+            # -------------------------------------------------
+            # 14. Idempotency
+            # -------------------------------------------------
             IdempotencyRepository.create(
                 db,
                 key=idempotency_key,
@@ -939,7 +1136,9 @@ class ContractService:
                 response_body=response_body,
             )
 
-            # 14. Commit
+            # -------------------------------------------------
+            # 15. Commit
+            # -------------------------------------------------
             db.commit()
 
             return 202, response_body
@@ -1238,6 +1437,15 @@ class ContractService:
                     "CONTRACT_NOT_FOUND"
                 )
 
+            # A concurrent lifecycle worker may have selected the contract
+            # before this transaction acquired the row lock. Returning the
+            # already-active aggregate makes the operation idempotent and,
+            # importantly, does not create another audit/outbox event.
+            if contract.status == ContractStatus.ACTIVE.value:
+                db.commit()
+                db.refresh(contract)
+                return contract
+
             # 2. Only APPROVED can activate
             if contract.status != (
                 ContractStatus.APPROVED.value
@@ -1260,7 +1468,7 @@ class ContractService:
                 )
 
             # 4. Check effective date
-            today = date.today()
+            today = contract_today()
 
             if today < version.effective_from:
                 raise ValueError(
@@ -1389,7 +1597,7 @@ class ContractService:
                 )
 
             # 4. Check expiration date
-            today = date.today()
+            today = contract_today()
 
             if today <= version.effective_to:
                 raise ValueError(

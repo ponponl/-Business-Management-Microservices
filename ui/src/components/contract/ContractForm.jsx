@@ -14,6 +14,20 @@ const formatFileSize = (bytes = 0) => {
     return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 };
 
+const getTodayValue = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const fieldClassName = (hasError) => `w-full border rounded-md px-3 py-2 text-sm focus:ring-1 focus:ring-primary outline-none ${hasError ? 'border-red-400 focus:border-red-500' : 'border-slate-300 focus:border-primary'}`;
+
+function FieldError({ message }) {
+    return message ? <p className="mt-1 text-xs text-red-600" role="alert">{message}</p> : null;
+}
+
 export default function ContractForm({ 
     initialData = null, 
     customers = [], 
@@ -33,9 +47,12 @@ export default function ContractForm({
     });
     const [selectedFiles, setSelectedFiles] = useState([]);
     const [currentAttachments, setCurrentAttachments] = useState(existingAttachments || []);
+    const [removedAttachmentIds, setRemovedAttachmentIds] = useState([]);
+    const [fieldErrors, setFieldErrors] = useState({});
 
     const isEditMode = !!initialData;
     const isAttachmentEditable = !isEditMode || ['DRAFT', 'REVISION_REQUESTED'].includes(contractStatus);
+    const todayValue = getTodayValue();
 
     useEffect(() => {
         setFormData(prev => ({
@@ -46,11 +63,21 @@ export default function ContractForm({
 
     useEffect(() => {
         setCurrentAttachments(existingAttachments || []);
+        setRemovedAttachmentIds([]);
     }, [existingAttachments]);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
+        setFieldErrors(prev => {
+            const next = { ...prev };
+            delete next[name];
+            if (name === 'effective_from' || name === 'effective_to') {
+                delete next.effective_from;
+                delete next.effective_to;
+            }
+            return next;
+        });
     };
 
     const handleFileChange = (e) => {
@@ -78,12 +105,45 @@ export default function ContractForm({
         setSelectedFiles(prev => prev.filter((_, index) => index !== fileIndex));
     };
 
+    const handleRemoveCurrentAttachment = (attachment) => {
+        if (!attachment?.attachment_id) return;
+        setCurrentAttachments(prev => prev.filter(item => item.attachment_id !== attachment.attachment_id));
+        setRemovedAttachmentIds(prev => prev.includes(attachment.attachment_id)
+            ? prev
+            : [...prev, attachment.attachment_id]);
+    };
+
     const handleSubmit = (e) => {
         e.preventDefault();
+
+        const errors = {};
+        if (!isEditMode && !formData.customer_id) errors.customer_id = 'Vui lòng chọn khách hàng.';
+        if (!formData.effective_from) {
+            errors.effective_from = 'Vui lòng chọn ngày bắt đầu hiệu lực.';
+        } else if (formData.effective_from < todayValue) {
+            errors.effective_from = 'Ngày bắt đầu hiệu lực phải từ hôm nay trở đi.';
+        }
+        if (!formData.effective_to) {
+            errors.effective_to = 'Vui lòng chọn ngày kết thúc hiệu lực.';
+        } else if (formData.effective_from && formData.effective_from >= formData.effective_to) {
+            errors.effective_to = 'Ngày bắt đầu hiệu lực phải trước ngày kết thúc hiệu lực.';
+        }
+        if (formData.contract_value === '' || formData.contract_value === null || Number(formData.contract_value) < 0) {
+            errors.contract_value = 'Vui lòng nhập giá trị hợp đồng hợp lệ.';
+        }
+        if (!String(formData.payment_terms || '').trim()) errors.payment_terms = 'Vui lòng nhập điều khoản thanh toán.';
+        if (!String(formData.service_terms || '').trim()) errors.service_terms = 'Vui lòng nhập điều khoản dịch vụ.';
+
+        setFieldErrors(errors);
+        if (Object.keys(errors).length > 0) return;
+
         const payload = {
             ...formData,
+            payment_terms: formData.payment_terms.trim(),
+            service_terms: formData.service_terms.trim(),
             contract_value: parseFloat(formData.contract_value) || 0,
             attachments: selectedFiles,
+            ...(isEditMode ? { removed_attachment_ids: removedAttachmentIds } : {}),
         };
         onSubmit(payload);
     };
@@ -101,7 +161,7 @@ export default function ContractForm({
                 </div>
                 
                 <div className="p-6 overflow-y-auto flex-1">
-                    <form id="contract-form" onSubmit={handleSubmit} className="space-y-6">
+                    <form id="contract-form" onSubmit={handleSubmit} className="space-y-6" noValidate>
                         {!isEditMode && (
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1">Khách hàng <span className="text-red-500">*</span></label>
@@ -110,7 +170,7 @@ export default function ContractForm({
                                     value={formData.customer_id} 
                                     onChange={handleChange}
                                     required
-                                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                                    className={fieldClassName(fieldErrors.customer_id)}
                                 >
                                     <option value="">-- Chọn khách hàng --</option>
                                     {customers.map(c => (
@@ -119,6 +179,7 @@ export default function ContractForm({
                                         </option>
                                     ))}
                                 </select>
+                                <FieldError message={fieldErrors.customer_id} />
                             </div>
                         )}
 
@@ -131,8 +192,10 @@ export default function ContractForm({
                                     value={formData.effective_from}
                                     onChange={handleChange}
                                     required
-                                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                                    min={todayValue}
+                                    className={fieldClassName(fieldErrors.effective_from)}
                                 />
+                                <FieldError message={fieldErrors.effective_from} />
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-1">Ngày kết thúc hiệu lực <span className="text-red-500">*</span></label>
@@ -142,8 +205,9 @@ export default function ContractForm({
                                     value={formData.effective_to}
                                     onChange={handleChange}
                                     required
-                                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                                    className={fieldClassName(fieldErrors.effective_to)}
                                 />
+                                <FieldError message={fieldErrors.effective_to} />
                             </div>
                         </div>
 
@@ -157,33 +221,38 @@ export default function ContractForm({
                                 required
                                 min="0"
                                 step="1000"
-                                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                                className={fieldClassName(fieldErrors.contract_value)}
                                 placeholder="Ví dụ: 100000000"
                             />
+                            <FieldError message={fieldErrors.contract_value} />
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Điều khoản thanh toán</label>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Điều khoản thanh toán <span className="text-red-500">*</span></label>
                             <textarea 
                                 name="payment_terms"
-                                value={formData.payment_terms}
+                                value={formData.payment_terms || ''}
                                 onChange={handleChange}
                                 rows={3}
-                                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                                required
+                                className={fieldClassName(fieldErrors.payment_terms)}
                                 placeholder="Ghi chú điều khoản thanh toán..."
                             ></textarea>
+                            <FieldError message={fieldErrors.payment_terms} />
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Điều khoản dịch vụ</label>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Điều khoản dịch vụ <span className="text-red-500">*</span></label>
                             <textarea 
                                 name="service_terms"
-                                value={formData.service_terms}
+                                value={formData.service_terms || ''}
                                 onChange={handleChange}
                                 rows={3}
-                                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                                required
+                                className={fieldClassName(fieldErrors.service_terms)}
                                 placeholder="Ghi chú điều khoản dịch vụ..."
                             ></textarea>
+                            <FieldError message={fieldErrors.service_terms} />
                         </div>
 
                         <div className="border border-dashed border-slate-300 rounded-lg p-4 bg-slate-50">
@@ -218,7 +287,20 @@ export default function ContractForm({
                                                 <i className="fa-solid fa-paperclip text-slate-400 mr-2"></i>
                                                 <span className="truncate">{attachment.file_name}</span>
                                             </div>
-                                            <span className="text-xs text-slate-500 ml-3">{formatFileSize(attachment.file_size)}</span>
+                                            <div className="flex items-center gap-2 ml-3">
+                                                <span className="text-xs text-slate-500">{formatFileSize(attachment.file_size)}</span>
+                                                {isAttachmentEditable && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRemoveCurrentAttachment(attachment)}
+                                                        className="text-slate-400 hover:text-red-500"
+                                                        title="Xóa file khỏi phiên bản mới"
+                                                        aria-label={`Xóa ${attachment.file_name}`}
+                                                    >
+                                                        <i className="fa-solid fa-xmark"></i>
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                     ))}
                                 </div>

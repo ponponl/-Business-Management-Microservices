@@ -1,4 +1,5 @@
 import React from 'react';
+import { useToast } from '../common/ToastContext';
 
 const BASE_URL = 'http://localhost:8080/api/v1';
 
@@ -16,23 +17,26 @@ const formatFileSize = (bytes = 0) => {
     return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 };
 
-export default function ContractDetailModal({ detail, customers, onClose }) {
+export default function ContractDetailModal({ detail, customers, onClose, viewerRole = 'STAFF' }) {
+    const toast = useToast();
     if (!detail) return null;
 
     const customer = customers.find(c => c.customer_id === detail.customer_id) || {};
     const attachments = Array.isArray(detail.attachments) ? detail.attachments : [];
+    const viewerKey = viewerRole.toLowerCase();
+    const revisionReason = detail[`revision_reason_for_${viewerKey}`] || null;
+    const revisionReasonSource = detail[`revision_reason_source_for_${viewerKey}`] || null;
+    const revisionLabel = revisionReasonSource === 'DIRECTOR' ? 'Director' : 'Manager';
 
     const formatDateValue = (value) => {
         if (!value) return 'N/A';
 
         const normalized = typeof value === 'string' ? value.split('T')[0] : value;
         const match = /^\d{4}-\d{2}-\d{2}$/.exec(String(normalized));
-
         if (!match) {
             const parsed = new Date(value);
             return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString('vi-VN');
         }
-
         const [year, month, day] = normalized.split('-');
         return `${day}/${month}/${year}`;
     };
@@ -64,8 +68,9 @@ export default function ContractDetailModal({ detail, customers, onClose }) {
             link.click();
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
+            toast.success('Tải file đính kèm thành công.');
         } catch (error) {
-            alert(error.message || 'Không thể tải file đính kèm');
+            toast.error(error.message || 'Không thể tải file đính kèm.');
         }
     };
 
@@ -139,6 +144,7 @@ export default function ContractDetailModal({ detail, customers, onClose }) {
                     </div>
 
                     <div className="mb-6">
+                        {revisionReason && <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 p-4 text-sm text-orange-800"><strong>Yêu cầu chỉnh sửa từ {revisionLabel}</strong><p className="mt-1 whitespace-pre-wrap">{revisionReason}</p></div>}
                         <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Điều khoản thanh toán</h4>
                         <div className="p-4 bg-slate-50 rounded-lg text-sm text-slate-700 whitespace-pre-wrap border border-slate-100">
                             {detail.current_version_detail?.payment_terms || 'Không có điều khoản thanh toán.'}
