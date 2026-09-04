@@ -3,7 +3,7 @@ import logging
 import json
 from core.database import SessionLocal
 from models.operation import OperationOutboxEvent
-from producers.event_producer import publish_volume_recorded, publish_period_locked, publish_period_unlocked
+from producers.event_producer import publish_volume_recorded, publish_volume_updated, publish_period_locked, publish_period_unlocked
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,8 @@ async def process_outbox_events():
                 # Gửi sự kiện dựa trên event_type
                 if event.event_type == "VOLUME_RECORDED":
                     await publish_volume_recorded(payload["volume_id"], payload["period_key"])
+                elif event.event_type == "VOLUME_UPDATED":
+                    await publish_volume_updated(payload["volume_id"], payload["period_key"])
                 elif event.event_type == "VOLUME_PERIOD_LOCKED":
                     await publish_period_locked(payload["period_key"])
                 elif event.event_type == "VOLUME_PERIOD_UNLOCKED":

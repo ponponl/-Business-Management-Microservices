@@ -12,6 +12,15 @@ async def publish_volume_recorded(volume_id: int, period_key: str):
     await kafka_producer.send_event("volume.events", event_data)
     logger.info(f"Published VOLUME_RECORDED for volume {volume_id}")
 
+async def publish_volume_updated(volume_id: int, period_key: str):
+    event_data = {
+        "event_name": "VOLUME_UPDATED",
+        "volume_id": volume_id,
+        "period_key": period_key
+    }
+    await kafka_producer.send_event("volume.events", event_data)
+    logger.info(f"Published VOLUME_UPDATED for volume {volume_id}")
+
 async def publish_period_locked(period_key: str):
     event_data = {
         "event_name": "VOLUME_PERIOD_LOCKED",
