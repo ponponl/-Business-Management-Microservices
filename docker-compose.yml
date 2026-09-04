@@ -257,7 +257,6 @@ services:
     container_name: notification-service
     volumes:
       - ./services/notification_service:/app
-      - ./services/notification_service/notification.db:/app/notification.db
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
     ports:
