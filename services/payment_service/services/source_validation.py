@@ -87,6 +87,22 @@ def validate_payment_sources(payload: PaymentBoardInput, authorization: str | No
     missing_prices = [f"{key[0]}:{key[1]}" for key in volumes if key not in prices]
     if missing_prices:
         raise HTTPException(422, f"Chưa có đơn giá cho: {', '.join(missing_prices)}")
+    price_list_usages = {}
+    for item in prices.values():
+        usage_key = (item["price_list_id"], item["price_list_version_id"])
+        usage = price_list_usages.setdefault(usage_key, {
+            "priceListId": item["price_list_id"],
+            "priceListVersionId": item["price_list_version_id"],
+            "priceListVersionNumber": item["version_number"],
+            "priceListName": item.get("price_list_name"),
+            "operationDates": [],
+            "serviceCodes": [],
+        })
+        if item["operation_date"] not in usage["operationDates"]:
+            usage["operationDates"].append(item["operation_date"])
+        if item["service_code"] not in usage["serviceCodes"]:
+            usage["serviceCodes"].append(item["service_code"])
+
     return {
         "items": [{
             "service_code": item.service_code,
@@ -99,4 +115,5 @@ def validate_payment_sources(payload: PaymentBoardInput, authorization: str | No
         "price_list_id": "MULTIPLE" if len({item["price_list_id"] for item in prices.values()}) > 1 else next(iter(prices.values()))["price_list_id"],
         "price_list_version_id": "MULTIPLE" if len({item["price_list_version_id"] for item in prices.values()}) > 1 else next(iter(prices.values()))["price_list_version_id"],
         "price_list_version_number": "MULTIPLE" if len({item["version_number"] for item in prices.values()}) > 1 else next(iter(prices.values()))["version_number"],
+        "price_list_usages": list(price_list_usages.values()),
     }

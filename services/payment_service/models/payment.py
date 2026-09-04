@@ -19,6 +19,7 @@ class PaymentBoard(Base):
     price_list_id = Column(String(36), nullable=True)
     price_list_version_id = Column(String(36), nullable=True, index=True)
     price_list_version_number = Column(String(50), nullable=True)
+    price_list_usages = Column(Text, nullable=True)
     period_start = Column(Date, nullable=False)
     period_end = Column(Date, nullable=False)
     sub_total = Column(Numeric(15, 2), default=Decimal("0"), nullable=False)
