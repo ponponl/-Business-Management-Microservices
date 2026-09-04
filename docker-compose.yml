@@ -248,6 +248,24 @@ services:
     networks:
       - microservices-net
 
+  # SV-06: Notification Service
+  notification-service:
+    build:
+      context: ./services/notification_service
+    container_name: notification-service
+    volumes:
+      - ./services/notification_service:/app
+      - ./services/notification_service/notification.db:/app/notification.db
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    ports:
+      - "8087:8000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - microservices-net
+
   esign-worker:
     build:
       context: ./services/payment_service
@@ -280,6 +298,7 @@ services:
       - contract-service
       - production-service
       - payment-service
+      - notification-service
     networks:
       - microservices-net
 

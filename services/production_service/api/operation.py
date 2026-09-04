@@ -24,7 +24,7 @@ async def update_volume(volume_id: int, volume_in: VolumeUpdate, db: Session = D
     return await OperationService.update_volume(db, volume_id, volume_in, username)
 
 @router.get("/volumes")
-def get_volumes(contract_id: str = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
+def get_volumes(contract_id: str = None, period_key: str = None, db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER", "DIRECTOR"]))):
     return OperationService.get_volumes(db, contract_id, period_key)
 
 @router.get("/contracts")
@@ -42,7 +42,7 @@ def get_audit_logs(volume_id: int, db: Session = Depends(get_db), user: dict = D
     return OperationService.get_audit_logs(db, volume_id)
 
 @router.get("/periods")
-def get_periods(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER"]))):
+def get_periods(db: Session = Depends(get_db), user: dict = Depends(require_role(["STAFF", "MANAGER", "DIRECTOR"]))):
     return PeriodService.get_periods(db)
 
 @router.post("/periods/{period_key}/lock")

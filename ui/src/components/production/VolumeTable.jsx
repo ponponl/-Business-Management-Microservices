@@ -1,10 +1,13 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { EditVolumeModal, UnlockVolumeModal, HistoryModal } from './VolumeModals';
 
 export default function VolumeTable({ volumes = [], onRefresh }) {
     const [filterStatus, setFilterStatus] = useState('ALL');
     const [filterMonth, setFilterMonth] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const searchRef = useRef(null);
+    
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 10;
     const userRole = localStorage.getItem('user_role');
@@ -21,6 +24,27 @@ export default function VolumeTable({ volumes = [], onRefresh }) {
         }));
         return Array.from(mSet).sort();
     }, [volumes]);
+
+    const uniqueContracts = useMemo(() => {
+        const cSet = new Set(volumes.map(v => v.contract_number || v.contract_id).filter(Boolean));
+        return Array.from(cSet).sort();
+    }, [volumes]);
+
+    const searchSuggestions = useMemo(() => {
+        if (!searchQuery.trim()) return [];
+        const query = searchQuery.toLowerCase();
+        return uniqueContracts.filter(c => c.toLowerCase().includes(query)).slice(0, 5);
+    }, [searchQuery, uniqueContracts]);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (searchRef.current && !searchRef.current.contains(event.target)) {
+                setShowSuggestions(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const filteredVolumes = volumes.filter(v => {
         const isLocked = v.is_locked;
@@ -40,22 +64,7 @@ export default function VolumeTable({ volumes = [], onRefresh }) {
         }
         
         return true;
-    }).sort((a, b) => {
-        // 1. Trạng thái: Chưa khóa (is_locked = false) lên trước
-        if (a.is_locked !== b.is_locked) {
-            return a.is_locked ? 1 : -1;
-        }
-        // 2. Ngày VH: Mới nhất lên trước (chỉ tính ngày, bỏ qua giờ phút giây)
-        const dateA = new Date(a.volume_date);
-        dateA.setHours(0, 0, 0, 0);
-        const dateB = new Date(b.volume_date);
-        dateB.setHours(0, 0, 0, 0);
-        const dateDiff = dateB.getTime() - dateA.getTime();
-        
-        if (dateDiff !== 0) return dateDiff;
-        // 3. Nếu cùng ngày, xếp theo thời gian tạo mới nhất (dựa vào id)
-        return b.id - a.id;
-    });
+    }).sort((a, b) => b.id - a.id);
 
     // Pagination calculations
     const totalPages = Math.ceil(filteredVolumes.length / itemsPerPage) || 1;
@@ -111,15 +120,37 @@ export default function VolumeTable({ volumes = [], onRefresh }) {
                 
                 {/* Search & Export */}
                 <div className="flex items-center space-x-3">
-                    <div className="relative w-64">
+                    <div className="relative w-64" ref={searchRef}>
                         <i className="fa-solid fa-search absolute left-3 top-2.5 text-slate-400 text-sm"></i>
                         <input 
                             type="text" 
                             placeholder="Tìm kiếm theo hợp đồng..." 
                             value={searchQuery}
-                            onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                            className="w-full border border-slate-300 rounded-md pl-9 pr-3 py-2 text-sm outline-none focus:border-primary bg-white" 
+                            onFocus={() => setShowSuggestions(true)}
+                            onChange={(e) => { 
+                                setSearchQuery(e.target.value); 
+                                setCurrentPage(1); 
+                                setShowSuggestions(true);
+                            }}
+                            className="w-full border border-slate-300 rounded-md pl-9 pr-3 py-2 text-sm outline-none focus:border-primary bg-white transition-colors" 
                         />
+                        {showSuggestions && searchSuggestions.length > 0 && (
+                            <ul className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-md shadow-lg max-h-48 overflow-auto">
+                                {searchSuggestions.map((suggestion, index) => (
+                                    <li 
+                                        key={index}
+                                        className="px-4 py-2 hover:bg-slate-100 cursor-pointer text-sm text-slate-700"
+                                        onClick={() => {
+                                            setSearchQuery(suggestion);
+                                            setShowSuggestions(false);
+                                            setCurrentPage(1);
+                                        }}
+                                    >
+                                        {suggestion}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
                     <button className="px-3 py-2 border border-slate-300 rounded-md text-sm hover:bg-slate-50 font-medium text-slate-600" title="Xuất Excel">
                         <i className="fa-solid fa-download"></i>
