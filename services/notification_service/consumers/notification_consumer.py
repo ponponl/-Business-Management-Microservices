@@ -16,11 +16,6 @@ def process_event(topic: str, event_data: dict, db, event_id: str):
     Xử lý event từ Kafka và tạo thông báo (Notification) tương ứng.
     Tùy vào event_type mà tạo nội dung thông báo khác nhau.
     """
-    # 1. Kiểm tra Idempotency (Tránh nhận 1 thông báo 2 lần)
-    existing = db.query(Notification).filter(Notification.event_id == event_id).first()
-    if existing:
-        logger.info(f"Event {event_id} already processed (Idempotency). Skipping.")
-        return
     event_type = event_data.get("event_type") or event_data.get("event_name")
     
     # Nếu payload được bọc trong field "payload", lấy nó. Nếu không, toàn bộ event_data chính là payload
@@ -30,48 +25,77 @@ def process_event(topic: str, event_data: dict, db, event_id: str):
         
     logger.info(f"Received event {event_type} from {topic}")
 
-    # VD: Xử lý sự kiện từ contract_service
+    contract_number = payload.get("contract_number", "Unknown")
+    title = ""
+    message = ""
+
     if event_type == "CONTRACT_CREATED":
-        user_id = payload.get("created_by", 1)
-        contract_number = payload.get("contract_number", "Unknown")
-        notif = Notification(
-            user_id=user_id,
-            title="Hợp đồng mới được tạo",
-            message=f"Hợp đồng {contract_number} đã được tạo thành công.",
-            event_type=event_type,
-            reference_id=contract_number,
-            event_id=event_id
-        )
-        db.add(notif)
-
+        title = "Hợp đồng mới được tạo"
+        message = f"Hợp đồng {contract_number} đã được tạo thành công."
+    elif event_type == "CONTRACT_UPDATED":
+        title = "Hợp đồng được cập nhật"
+        message = f"Hợp đồng {contract_number} đã được cập nhật."
+    elif event_type == "CONTRACT_SUBMITTED":
+        title = "Hợp đồng chờ duyệt (Manager)"
+        message = f"Hợp đồng {contract_number} đã được gửi để Manager duyệt."
+    elif event_type == "CONTRACT_MANAGER_REVIEW_STARTED":
+        title = "Quá trình duyệt bắt đầu (Manager)"
+        message = f"Manager đang xem xét hợp đồng {contract_number}."
+    elif event_type == "CONTRACT_MANAGER_APPROVED":
+        title = "Hợp đồng chờ duyệt (Director)"
+        message = f"Hợp đồng {contract_number} đã được Manager duyệt, đang chờ Director duyệt."
+    elif event_type == "CONTRACT_DIRECTOR_REVIEW_STARTED":
+        title = "Quá trình duyệt bắt đầu (Director)"
+        message = f"Director đang xem xét hợp đồng {contract_number}."
     elif event_type == "CONTRACT_APPROVED":
-        # Tìm user_id phù hợp (người tạo hợp đồng hoặc manager). Tạm hardcode 1 để demo
-        user_id = payload.get("created_by", 1)
-        contract_number = payload.get("contract_number", "Unknown")
-        notif = Notification(
-            user_id=user_id,
-            title="Hợp đồng đã được duyệt",
-            message=f"Hợp đồng {contract_number} đã được duyệt thành công.",
-            event_type=event_type,
-            reference_id=contract_number,
-            event_id=event_id
-        )
-        db.add(notif)
-
+        title = "Hợp đồng đã được phê duyệt"
+        message = f"Hợp đồng {contract_number} đã được phê duyệt hoàn toàn."
     elif event_type == "CONTRACT_REJECTED":
-        user_id = payload.get("created_by", 1)
-        contract_number = payload.get("contract_number", "Unknown")
         reason = payload.get("comment", "")
+        title = "Hợp đồng bị từ chối"
+        message = f"Hợp đồng {contract_number} bị từ chối. Lý do: {reason}"
+    elif event_type == "CONTRACT_REVISION_REQUESTED":
+        title = "Yêu cầu chỉnh sửa hợp đồng (Manager)"
+        message = f"Hợp đồng {contract_number} cần được Manager xem xét và chỉnh sửa."
+    elif event_type == "CONTRACT_REVISION_FORWARDED_TO_STAFF":
+        title = "Yêu cầu chỉnh sửa hợp đồng (Staff)"
+        message = f"Hợp đồng {contract_number} cần được Staff chỉnh sửa lại."
+    elif event_type == "CONTRACT_RENEWED":
+        title = "Hợp đồng được gia hạn"
+        message = f"Hợp đồng {contract_number} đã được gia hạn."
+    elif event_type == "CONTRACT_CANCELLED":
+        title = "Hợp đồng bị hủy"
+        message = f"Hợp đồng {contract_number} đã bị hủy."
+    elif event_type == "CONTRACT_ACTIVATED":
+        title = "Hợp đồng có hiệu lực"
+        message = f"Hợp đồng {contract_number} hiện đã có hiệu lực."
+    elif event_type == "CONTRACT_EXPIRED":
+        title = "Hợp đồng hết hạn"
+        message = f"Hợp đồng {contract_number} đã hết hạn."
+    else:
+        logger.info(f"Ignored event type {event_type}")
+        return
+
+    # Thông báo hiển thị cho cả 3 roles (Staff=1, Manager=2, Director=3)
+    user_ids = [1, 2, 3]
+    for uid in user_ids:
+        unique_event_id = f"{event_id}-{uid}"
+        
+        # 1. Kiểm tra Idempotency cho từng user
+        existing = db.query(Notification).filter(Notification.event_id == unique_event_id).first()
+        if existing:
+            logger.info(f"Event {unique_event_id} already processed (Idempotency). Skipping.")
+            continue
+            
         notif = Notification(
-            user_id=user_id,
-            title="Hợp đồng bị từ chối",
-            message=f"Hợp đồng {contract_number} bị từ chối. Lý do: {reason}",
+            user_id=uid,
+            title=title,
+            message=message,
             event_type=event_type,
             reference_id=contract_number,
-            event_id=event_id
+            event_id=unique_event_id
         )
         db.add(notif)
-
         
     db.commit()
 

@@ -686,6 +686,42 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
             </select>
           </label>
 
+          {/* Date Range */}
+          <label className="text-xs font-medium text-slate-600">
+            Từ ngày *
+            <input
+              required
+              type="date"
+              value={form.periodStart}
+              readOnly
+              onChange={(event) => update("periodStart", event.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            Đến ngày *
+            <input
+              required
+              type="date"
+              value={form.periodEnd}
+              readOnly
+              onChange={(event) => update("periodEnd", event.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+          </label>
+
+          {/* Price Table - Read Only */}
+          <div className="text-xs font-medium text-slate-600">
+            <label className="block mb-1">Bảng giá (Effective) *</label>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 font-semibold">
+              {priceTableInfo?.priceName || priceTableInfo?.name || "-- Chưa xác định --"}
+            </div>
+            {priceTableInfo && (
+              <div className="mt-1 text-[11px] text-slate-500">
+                {priceTableInfo.priceCode} · Hiệu lực: {priceTableInfo.validFrom} - {priceTableInfo.validTo}
+              </div>
+            )}
+          </div>
           {/* Tax Percent */}
           <label className="text-xs font-medium text-slate-600">
             Thuế VAT (%)

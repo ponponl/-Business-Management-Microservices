@@ -36,7 +36,15 @@ class OperationService:
 
         period = db.query(OperationPeriod).filter(OperationPeriod.period_key == volume_in.period_key).first()
         if period and period.status == "LOCKED":
-            raise HTTPException(status_code=400, detail="Period is locked")
+            from models.operation import UnlockPeriodRequest
+            approved_req = db.query(UnlockPeriodRequest).filter(
+                UnlockPeriodRequest.period_key == volume_in.period_key,
+                UnlockPeriodRequest.requested_by == str(user_id),
+                UnlockPeriodRequest.status == "APPROVED",
+                UnlockPeriodRequest.target_type == "PERIOD"
+            ).first()
+            if not approved_req:
+                raise HTTPException(status_code=400, detail="Period is locked")
             
         if not period:
             period = OperationPeriod(period_key=volume_in.period_key, status="OPEN")
@@ -90,7 +98,22 @@ class OperationService:
             
         period = db.query(OperationPeriod).filter(OperationPeriod.period_key == volume.period_key).first()
         if period and period.status == "LOCKED":
-            raise HTTPException(status_code=400, detail="Period is locked")
+            from models.operation import UnlockPeriodRequest
+            from sqlalchemy import or_, and_
+            approved_req = db.query(UnlockPeriodRequest).filter(
+                UnlockPeriodRequest.period_key == volume.period_key,
+                UnlockPeriodRequest.requested_by == str(user_id),
+                UnlockPeriodRequest.status == "APPROVED",
+                or_(
+                    UnlockPeriodRequest.target_type == "PERIOD",
+                    and_(
+                        UnlockPeriodRequest.target_type == "VOLUME",
+                        UnlockPeriodRequest.target_volume_id == volume.id
+                    )
+                )
+            ).first()
+            if not approved_req:
+                raise HTTPException(status_code=400, detail="Period is locked")
             
         if volume_in.quantity <= 0:
             raise HTTPException(status_code=400, detail="Quantity must be > 0")
