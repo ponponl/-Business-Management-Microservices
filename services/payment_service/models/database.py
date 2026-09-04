@@ -81,6 +81,27 @@ def initialize_database():
                 for column, statement in migrations.items():
                     if column not in existing_columns:
                         connection.execute(text(statement))
+
+                detail_columns = {
+                    column["name"]
+                    for column in inspect(engine).get_columns("payment_details")
+                }
+                detail_migrations = {
+                    "price_list_name": "ALTER TABLE payment_details ADD COLUMN IF NOT EXISTS price_list_name VARCHAR(255)",
+                    "price_list_code": "ALTER TABLE payment_details ADD COLUMN IF NOT EXISTS price_list_code VARCHAR(100)",
+                    "price_list_version_id": "ALTER TABLE payment_details ADD COLUMN IF NOT EXISTS price_list_version_id VARCHAR(36)",
+                    "price_list_version_number": "ALTER TABLE payment_details ADD COLUMN IF NOT EXISTS price_list_version_number VARCHAR(50)",
+                }
+                for column, statement in detail_migrations.items():
+                    if column not in detail_columns:
+                        connection.execute(text(statement))
+
+                connection.execute(
+                    text(
+                        "ALTER TABLE payment_idempotency_key ADD COLUMN IF NOT EXISTS "
+                        "request_hash VARCHAR(64) NOT NULL DEFAULT ''"
+                    )
+                )
                         
                 if "note" in existing_columns:
                     connection.execute(

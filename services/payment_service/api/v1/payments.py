@@ -1,9 +1,11 @@
+import hashlib
 import json
 import calendar
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from models.database import get_db
@@ -55,6 +57,23 @@ def add_signing_event(db: Session, signature: PaymentSignature):
     ))
 
 
+def request_hash(payload: dict) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def idempotent_result(db: Session, key: str, payload: dict):
+    record = db.get(PaymentIdempotencyKey, key)
+    if not record:
+        return None
+    if record.request_hash != request_hash(payload):
+        raise HTTPException(409, "Idempotency-Key đã được dùng với dữ liệu khác")
+    statement = db.get(PaymentBoard, record.statement_id)
+    if not statement:
+        raise HTTPException(409, "Idempotency-Key tham chiếu hồ sơ không còn tồn tại")
+    return serialize(statement)
+
+
 def serialize(statement: PaymentBoard):
     subtotal, tax, total = calculate_totals(statement)
     try:
@@ -100,6 +119,10 @@ def serialize(statement: PaymentBoard):
             "quantity": float(item.quantity),
             "unitPrice": float(item.unit_price),
             "totalPrice": float(item.total_price),
+            "priceListName": item.price_list_name,
+            "priceListCode": item.price_list_code,
+            "priceListVersionId": item.price_list_version_id,
+            "priceListVersionNumber": item.price_list_version_number,
         } for item in statement.items],
     }
 
@@ -134,6 +157,10 @@ def make_items(items):
         quantity=item["quantity"],
         unit_price=item["unit_price"],
         total_price=item["quantity"] * item["unit_price"],
+        price_list_name=item.get("price_list_name"),
+        price_list_code=item.get("price_list_code"),
+        price_list_version_id=item.get("price_list_version_id"),
+        price_list_version_number=item.get("price_list_version_number"),
     ) for item in items]
 
 
@@ -184,10 +211,26 @@ def change_status(
     actor: str,
     assignees: list[str] | None = None,
     authorization: str | None = None,
+    idempotency_key: str | None = None,
 ):
+    if not idempotency_key:
+        raise HTTPException(400, "Thiếu Idempotency-Key khi thực hiện thao tác")
+    action_payload = {
+        "payment_id": payment_id,
+        "action": next_status,
+        "comment": payload.comment,
+        "assignees": assignees or [],
+    }
+    action_key = f"action:{idempotency_key}"
+    replay = idempotent_result(db, action_key, action_payload)
+    if replay:
+        return replay
     statement = db.execute(select(PaymentBoard).where(PaymentBoard.id == payment_id).with_for_update()).scalar_one_or_none()
     if not statement:
         raise HTTPException(404, "Không tìm thấy bảng thanh toán")
+    replay = idempotent_result(db, action_key, action_payload)
+    if replay:
+        return replay
     allowed = {"RECONCILED": {"DRAFT", "CALCULATED"}, "SUBMITTED": {"RECONCILED"}, "APPROVED": {"SUBMITTED"}, "REJECTED": {"SUBMITTED"}}
     if statement.status not in allowed[next_status]:
         raise HTTPException(409, f"Không thể chuyển từ {statement.status} sang {next_status}")
@@ -221,6 +264,11 @@ def change_status(
             assignees or [],
             authorization=authorization,
         )
+    db.add(PaymentIdempotencyKey(
+        key=action_key,
+        statement_id=statement.id,
+        request_hash=request_hash(action_payload),
+    ))
     db.commit()
     db.refresh(statement)
     return serialize(statement)
@@ -321,10 +369,12 @@ def list_payments(
 def create_payment(payload: PaymentBoardInput, request: Request, db: Session = Depends(get_db)):
     user = require_roles(request, "STAFF")
     key = request.headers.get("Idempotency-Key")
-    if key:
-        existing_key = db.get(PaymentIdempotencyKey, key)
-        if existing_key:
-            return serialize(db.get(PaymentBoard, existing_key.statement_id))
+    if not key:
+        raise HTTPException(400, "Thiếu Idempotency-Key khi tạo bảng thanh toán")
+    payload_data = payload.model_dump(mode="json", by_alias=False)
+    replay = idempotent_result(db, key, payload_data)
+    if replay:
+        return replay
     code = payload.code or f"PAY-{datetime.utcnow():%Y%m%d%H%M%S}"
     if db.scalar(select(PaymentBoard).where(PaymentBoard.code == code)):
         raise HTTPException(409, "Mã bảng thanh toán đã tồn tại")
@@ -341,9 +391,15 @@ def create_payment(payload: PaymentBoardInput, request: Request, db: Session = D
     )
     db.add(statement)
     db.flush()
-    if key:
-        db.add(PaymentIdempotencyKey(key=key, statement_id=statement.id))
-    db.commit()
+    db.add(PaymentIdempotencyKey(key=key, statement_id=statement.id, request_hash=request_hash(payload_data)))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        replay = idempotent_result(db, key, payload_data)
+        if replay:
+            return replay
+        raise
     db.refresh(statement)
     return serialize(statement)
 
@@ -390,7 +446,7 @@ def update_payment(payment_id: str, payload: PaymentBoardInput, request: Request
 @router.post("/payments/{payment_id}/reconcile")
 def reconcile(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
     user = require_roles(request, "STAFF")
-    return change_status(payment_id, "RECONCILED", payload, db, user.user_id, authorization=request.headers.get("Authorization"))
+    return change_status(payment_id, "RECONCILED", payload, db, user.user_id, authorization=request.headers.get("Authorization"), idempotency_key=request.headers.get("Idempotency-Key"))
 
 
 @router.post("/payments/{payment_id}/submit")
@@ -402,19 +458,19 @@ def submit(payment_id: str, payload: ActionInput = ActionInput(), request: Reque
     if statement.created_by not in {user.user_id, user.username}:
         raise HTTPException(403, "Chỉ người tạo bảng thanh toán mới được trình duyệt")
     assignees = [value.strip() for value in request.headers.get("X-Approval-Assignees", "").split(",") if value.strip()]
-    return change_status(payment_id, "SUBMITTED", payload, db, user.user_id, assignees, request.headers.get("Authorization"))
+    return change_status(payment_id, "SUBMITTED", payload, db, user.user_id, assignees, request.headers.get("Authorization"), request.headers.get("Idempotency-Key"))
 
 
 @router.post("/payments/{payment_id}/approve")
 def approve(payment_id: str, payload: ActionInput = ActionInput(), request: Request = None, db: Session = Depends(get_db)):
     user = require_roles(request, "MANAGER", "DIRECTOR")
-    return change_status(payment_id, "APPROVED", payload, db, user.user_id, authorization=request.headers.get("Authorization"))
+    return change_status(payment_id, "APPROVED", payload, db, user.user_id, authorization=request.headers.get("Authorization"), idempotency_key=request.headers.get("Idempotency-Key"))
 
 
 @router.post("/payments/{payment_id}/reject")
 def reject(payment_id: str, payload: ActionInput, request: Request, db: Session = Depends(get_db)):
     user = require_roles(request, "MANAGER", "DIRECTOR")
-    return change_status(payment_id, "REJECTED", payload, db, user.user_id, authorization=request.headers.get("Authorization"))
+    return change_status(payment_id, "REJECTED", payload, db, user.user_id, authorization=request.headers.get("Authorization"), idempotency_key=request.headers.get("Idempotency-Key"))
 
 
 @router.post("/payments/{payment_id}/send-sign")
@@ -565,6 +621,10 @@ def create_adjustment(payment_id: str, payload: CreateAdjustmentRequest, request
         "unit": item.unit,
         "quantity": item.quantity,
         "unit_price": item.unit_price,
+        "price_list_name": item.price_list_name,
+        "price_list_code": item.price_list_code,
+        "price_list_version_id": item.price_list_version_id,
+        "price_list_version_number": item.price_list_version_number,
     } for item in original.items]
     adjustment_payload = PaymentBoardInput(
         customerId=original.customer_id,

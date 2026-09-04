@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Check,
   CheckCircle2,
@@ -267,6 +267,7 @@ function StatusBadge({ status }) {
 
 function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
   const token = user?.token || localStorage.getItem("token");
+  const idempotencyKey = useRef(crypto.randomUUID());
   const paymentPeriodId = payment
     ? payment.periodId || payment.referenceId || payment.periodStart?.slice(0, 7)
     : adjustmentOf?.periodId || adjustmentOf?.periodStart?.slice(0, 7) || "";
@@ -531,6 +532,9 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
           method: payment ? "PUT" : "POST",
           headers: {
             ...authHeaders(token),
+            ...(!payment && !adjustmentOf
+              ? { "Idempotency-Key": idempotencyKey.current }
+              : {}),
             "X-User": user?.user_id || user?.id || getTokenSubject(token) || user?.username || "STAFF",
             "X-Username": user?.username || "",
           },
@@ -547,7 +551,14 @@ function PaymentEditor({ payment, adjustmentOf, user, onClose, onSaved }) {
       const data = await response.json();
       if (!response.ok)
         throw new Error(data.detail || "Không thể lưu bảng thanh toán");
-      onSaved(data);
+      onSaved({
+        ...data,
+        items: data.items?.map((item, index) => ({
+          ...item,
+          priceListName: item.priceListName || form.items[index]?.priceListName,
+          priceListCode: item.priceListCode || form.items[index]?.priceListCode,
+        })),
+      });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -936,6 +947,25 @@ export default function PaymentManagementPage({ user }) {
   const [customerNames, setCustomerNames] = useState({});
   const [contractNumbers, setContractNumbers] = useState({});
   const [userNames, setUserNames] = useState({});
+  const actionKeys = useRef(new Map());
+
+  const getActionKey = (id, endpoint) => {
+    const key = `${id}:${endpoint}:${actorId}`;
+    if (!actionKeys.current.has(key)) actionKeys.current.set(key, crypto.randomUUID());
+    return actionKeys.current.get(key);
+  };
+
+  const selectPayment = async (payment) => {
+    setSelected(payment);
+    try {
+      const response = await fetch(`${API_BASE_URL}/${payment.id}`, {
+        headers: authHeaders(token),
+      });
+      if (response.ok) setSelected(await response.json());
+    } catch (err) {
+      console.error("Fetch payment details error:", err);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -1051,6 +1081,7 @@ export default function PaymentManagementPage({ user }) {
     try {
       const headers = {
         ...authHeaders(token),
+        "Idempotency-Key": getActionKey(id, endpoint),
         "X-User": actorId,
       };
       if (assignees.length) {
@@ -1267,7 +1298,7 @@ export default function PaymentManagementPage({ user }) {
                 payments.map((payment) => (
                   <tr
                     key={payment.id}
-                    onClick={() => setSelected(payment)}
+                    onClick={() => selectPayment(payment)}
                     className="cursor-pointer hover:bg-slate-50"
                   >
                     <td className="p-3 font-semibold text-slate-800">
@@ -1297,7 +1328,7 @@ export default function PaymentManagementPage({ user }) {
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          setSelected(payment);
+                          selectPayment(payment);
                         }}
                         className="rounded p-1.5 text-slate-400 hover:bg-slate-100"
                         title="Xem chi tiết"
@@ -1374,10 +1405,6 @@ export default function PaymentManagementPage({ user }) {
                 <p className="font-semibold">{contractNumbers[String(selected.contractId)] || selected.contractId}</p>
               </div>
               <div>
-                <span className="text-slate-400">Price table ID</span>
-                <p className="font-semibold">{selected.priceTableId}</p>
-              </div>
-              <div>
                 <span className="text-slate-400">Kỳ tính phí</span>
                 <p className="font-semibold">
                   {selected.periodStart} - {selected.periodEnd}
@@ -1389,6 +1416,7 @@ export default function PaymentManagementPage({ user }) {
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
                     <th className="p-2 text-left">Dịch vụ</th>
+                    <th className="p-2 text-left">Bảng giá áp dụng</th>
                     <th className="p-2 text-right">SL</th>
                     <th className="p-2 text-right">Đơn giá snapshot</th>
                     <th className="p-2 text-right">Thành tiền</th>
@@ -1402,6 +1430,14 @@ export default function PaymentManagementPage({ user }) {
                         <div className="text-[10px] text-slate-400">
                           {item.serviceCode} / {item.unit}
                         </div>
+                      </td>
+                      <td className="p-2 text-[11px] text-slate-600">
+                        <b>{item.priceListName || "--"}</b>
+                        {item.priceListCode && (
+                          <div className="text-[10px] text-slate-400">
+                            {item.priceListCode}
+                          </div>
+                        )}
                       </td>
                       <td className="p-2 text-right">{item.quantity}</td>
                       <td className="p-2 text-right">
