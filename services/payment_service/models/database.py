@@ -75,6 +75,7 @@ def initialize_database():
                     "price_list_id": "ALTER TABLE payment_boards ADD COLUMN IF NOT EXISTS price_list_id VARCHAR(36)",
                     "price_list_version_id": "ALTER TABLE payment_boards ADD COLUMN IF NOT EXISTS price_list_version_id VARCHAR(36)",
                     "price_list_version_number": "ALTER TABLE payment_boards ADD COLUMN IF NOT EXISTS price_list_version_number VARCHAR(50)",
+                    "price_list_usages": "ALTER TABLE payment_boards ADD COLUMN IF NOT EXISTS price_list_usages TEXT",
                 }
                 
                 for column, statement in migrations.items():
