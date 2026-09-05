@@ -25,7 +25,6 @@ class VolumeCreate(VolumeBase):
 class VolumeUpdate(BaseModel):
     quantity: float
     unit: Optional[str] = None
-    service_code: Optional[str] = None
 
 class UnlockRequestCreate(BaseModel):
     reason: str

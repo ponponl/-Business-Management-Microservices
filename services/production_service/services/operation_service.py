@@ -120,22 +120,18 @@ class OperationService:
             
         old_data = {
             "quantity": volume.quantity,
-            "unit": volume.unit,
-            "service_code": volume.service_code
+            "unit": volume.unit
         }
         
         volume.quantity = volume_in.quantity
         if volume_in.unit:
             volume.unit = volume_in.unit
-        if volume_in.service_code:
-            volume.service_code = volume_in.service_code
             
         db.flush()  # Dùng flush để đánh dấu thay đổi thay vì commit sớm
         
         new_data = {
             "quantity": volume.quantity,
-            "unit": volume.unit,
-            "service_code": volume.service_code
+            "unit": volume.unit
         }
         
         audit = VolumeAuditLog(

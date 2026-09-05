@@ -23,54 +23,14 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 export const EditVolumeModal = ({ isOpen, onClose, volume, onRefresh }) => {
     const [quantity, setQuantity] = useState('');
     const [unit, setUnit] = useState('');
-    const [serviceCode, setServiceCode] = useState('');
     const [loading, setLoading] = useState(false);
-    const [services, setServices] = useState([]);
-    const [loadingServices, setLoadingServices] = useState(false);
 
     useEffect(() => {
         if (volume) {
             setQuantity(volume.quantity);
             setUnit(volume.unit);
-            setServiceCode(volume.service_code || '');
         }
     }, [volume]);
-
-    useEffect(() => {
-        if (isOpen) {
-            const fetchServices = async () => {
-                try {
-                    setLoadingServices(true);
-                    const token = localStorage.getItem('token');
-                    const res = await fetch(`http://localhost:8084/api/v1/contracts/${volume.contract_id}/services`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-                    if (res.ok) {
-                        const data = await res.json();
-                        setServices(data.map(s => ({
-                            code: s.service_code || s.code,
-                            name: s.service_name || s.name,
-                            unit: s.default_unit || s.unit || 'Tự động'
-                        })));
-                    }
-                } catch (err) {
-                    console.error('Error fetching services:', err);
-                } finally {
-                    setLoadingServices(false);
-                }
-            };
-            fetchServices();
-        }
-    }, [isOpen]);
-
-    const handleServiceChange = (e) => {
-        const code = e.target.value;
-        setServiceCode(code);
-        const srv = services.find(s => s.code === code);
-        if (srv && srv.unit && srv.unit !== 'Tự động') {
-            setUnit(srv.unit);
-        }
-    };
 
     const handleSave = async () => {
         if (!volume) return;
@@ -85,8 +45,7 @@ export const EditVolumeModal = ({ isOpen, onClose, volume, onRefresh }) => {
                 },
                 body: JSON.stringify({
                     quantity: parseFloat(quantity),
-                    unit: unit,
-                    service_code: serviceCode
+                    unit: unit
                 })
             });
             if (res.ok) {
@@ -108,20 +67,9 @@ export const EditVolumeModal = ({ isOpen, onClose, volume, onRefresh }) => {
             <div className="space-y-4">
                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Mã dịch vụ</label>
-                    <select 
-                        value={serviceCode} 
-                        onChange={handleServiceChange} 
-                        className="w-full border border-slate-300 rounded-md px-3 py-2 focus:border-primary outline-none"
-                    >
-                        <option value="">-- Chọn Dịch vụ --</option>
-                        {loadingServices ? (
-                            <option value="" disabled>Đang tải...</option>
-                        ) : (
-                            services.map(srv => (
-                                <option key={srv.code} value={srv.code}>{srv.name} ({srv.code})</option>
-                            ))
-                        )}
-                    </select>
+                    <div className="w-full border border-slate-300 rounded-md px-3 py-2 bg-slate-50 text-slate-500 cursor-not-allowed">
+                        {volume?.service_code}
+                    </div>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Sản lượng mới</label>
