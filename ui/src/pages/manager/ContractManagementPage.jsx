@@ -8,11 +8,11 @@ import { useToast } from '../../components/common/ToastContext';
 import { fetchContractDetail, fetchContracts, fetchCustomers, getContractErrorMessage, sendRevisionToStaff } from '../../services/contractApi';
 
 const statusOptions = [
-    ['APPROVED', 'Đã Approved'],
-    ['ACTIVE', 'Đã Active'],
-    ['REVISION_REQUESTED', 'Cần Revision'],
-    ['REJECTED', 'Đã Reject'],
-    ['EXPIRED', 'Đã Expired'],
+    ['APPROVED', 'Approved'],
+    ['ACTIVE', 'Active'],
+    ['REVISION_REQUESTED', 'Revision Requested'],
+    ['REJECTED', 'Rejected'],
+    ['EXPIRED', 'Expired'],
     ['DIRECTOR_REVIEW', 'Director Review'],
 ];
 
@@ -59,10 +59,11 @@ export default function ContractManagementManagerPage() {
     const stats = useMemo(() => ({
         approved: summary.approved || 0,
         active: summary.active || 0,
-        revision: summary.revision_requested_by_manager || 0,
+        revision: summary.revision_requested || 0,
         rejected: summary.rejected || 0,
         expired: summary.expired || 0,
-        review: (summary.submitted || 0) + (summary.manager_review || 0),
+        managerReviewQueue: (summary.submitted || 0) + (summary.manager_review || 0),
+        directorReview: summary.director_review || 0,
     }), [summary]);
 
     const viewContract = async (contractId) => {
@@ -91,17 +92,17 @@ export default function ContractManagementManagerPage() {
                     <p>Theo dõi tình trạng hợp đồng và duyệt các hợp đồng cần xử lý.</p>
                 </div>
                 <button className="manager-primary-action" type="button" onClick={() => navigate('/manager/contracts/review')}>
-                    <CheckSquare size={17} /> Duyệt hợp đồng <span>{stats.review}</span>
+                    <CheckSquare size={17} /> Duyệt hợp đồng <span>{stats.managerReviewQueue}</span>
                 </button>
             </div>
 
             <div className="manager-stat-grid">
-                <Stat title="Approved" value={stats.approved} caption="Hợp đồng đã approve bởi Director" icon={<CheckCircle2 />} tone="green" />
-                <Stat title="Actived" value={stats.active} caption="Hợp đồng đang hiện lực" icon={<CheckSquare />} tone="blue" />
+                <Stat title="Approved" value={stats.approved} caption="Hợp đồng đã được Director phê duyệt" icon={<CheckCircle2 />} tone="green" />
+                <Stat title="Active" value={stats.active} caption="Hợp đồng đang có hiệu lực" icon={<CheckSquare />} tone="blue" />
                 <Stat title="Revision Requested" value={stats.revision} caption="Yêu cầu cần chỉnh sửa" icon={<Pencil />} tone="orange" />
                 <Stat title="Rejected" value={stats.rejected} caption="Hợp đồng đã bị từ chối" icon={<XCircle />} tone="red" />
                 <Stat title="Expired" value={stats.expired} caption="Hợp đồng đã hết hiệu lực" icon={<Clock3 />} tone="slate" />
-                <Stat title="Director Review" value={stats.review} caption="Đang chờ Director xử lý" icon={<Users />} tone="purple" />
+                <Stat title="Director Review" value={stats.directorReview} caption="Hợp đồng đang ở bước Director review" icon={<Users />} tone="purple" />
             </div>
 
             <section className="manager-contract-panel">

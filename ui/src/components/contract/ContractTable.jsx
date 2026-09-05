@@ -120,7 +120,7 @@ export default function ContractTable({
                                         <>
                                             <button onClick={() => onEdit(c.contract_id)} className="text-slate-400 hover:text-amber-500 transition-colors" title="Chỉnh sửa"><i className="fa-solid fa-pen-to-square"></i></button>
                                             <button onClick={() => onSubmit(c.contract_id)} className="text-slate-400 hover:text-green-500 transition-colors" title="Submit"><i className="fa-solid fa-paper-plane"></i></button>
-                                            <button onClick={() => onCancel(c.contract_id)} className="text-slate-400 hover:text-red-500 transition-colors" title="Cancel"><i className="fa-solid fa-xmark"></i></button>
+                                            {c.status === 'DRAFT' && <button onClick={() => onCancel(c.contract_id)} className="text-slate-400 hover:text-red-500 transition-colors" title="Cancel"><i className="fa-solid fa-xmark"></i></button>}
                                         </>
                                     )}
                                 </td>

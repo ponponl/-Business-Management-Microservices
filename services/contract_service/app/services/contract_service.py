@@ -1328,11 +1328,10 @@ class ContractService:
                     "CONTRACT_NOT_FOUND"
                 )
 
-            # 2. Only 3 states can be cancelled
+            # 2. Only draft and submitted contracts can be cancelled
             if contract.status not in {
                 ContractStatus.DRAFT.value,
                 ContractStatus.SUBMITTED.value,
-                ContractStatus.REVISION_REQUESTED.value,
             }:
                 raise ValueError(
                     "CANCEL_NOT_ALLOWED"

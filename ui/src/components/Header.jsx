@@ -7,6 +7,12 @@ const ROLE_HEADER_THEMES = {
   DIRECTOR: { avatarBg: 'bg-amber-500', badgeText: 'Giám đốc', badgeBg: 'bg-amber-50 text-amber-700 border-amber-200' },
 };
 
+const ROLE_NOTIFICATION_USER_IDS = {
+  STAFF: 1,
+  MANAGER: 2,
+  DIRECTOR: 3,
+};
+
 export default function Header({ title, user }) {
   const currentTheme = ROLE_HEADER_THEMES[user?.role] || ROLE_HEADER_THEMES.STAFF;
   const firstLetter = user?.name ? user.name.charAt(0).toUpperCase() : 'U';
@@ -19,7 +25,7 @@ export default function Header({ title, user }) {
   // Lấy dữ liệu thông báo
   const fetchNotifications = async () => {
     try {
-      const userId = user?.id || 1;
+      const userId = ROLE_NOTIFICATION_USER_IDS[user?.role] || ROLE_NOTIFICATION_USER_IDS.STAFF;
       const res = await fetch(`http://localhost:8080/api/v1/notifications/?user_id=${userId}`);
       if (res.ok) {
         const data = await res.json();
@@ -65,7 +71,7 @@ export default function Header({ title, user }) {
 
   const handleMarkAllAsRead = async () => {
     try {
-      const userId = user?.id || 1;
+      const userId = ROLE_NOTIFICATION_USER_IDS[user?.role] || ROLE_NOTIFICATION_USER_IDS.STAFF;
       await fetch(`http://localhost:8080/api/v1/notifications/read-all?user_id=${userId}`, { method: 'PUT' });
       setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
       setUnreadCount(0);
@@ -88,7 +94,7 @@ export default function Header({ title, user }) {
 
         {/* Bell Notification */}
         <div className="relative" ref={dropdownRef}>
-          <button 
+          <button
             onClick={() => {
               setShowDropdown(!showDropdown);
               if (!showDropdown) fetchNotifications(); // Fetch khi mở ra
@@ -112,7 +118,7 @@ export default function Header({ title, user }) {
                   </span>
                 )}
               </div>
-              
+
               <div className="max-h-[400px] overflow-y-auto">
                 {notifications.length === 0 ? (
                   <div className="p-8 text-center flex flex-col items-center justify-center text-slate-400">
@@ -121,8 +127,8 @@ export default function Header({ title, user }) {
                   </div>
                 ) : (
                   notifications.map(notif => (
-                    <div 
-                      key={notif.id} 
+                    <div
+                      key={notif.id}
                       className={`p-4 border-b border-slate-100 hover:bg-slate-50 transition-colors flex gap-3 ${!notif.is_read ? 'bg-blue-50/30' : ''}`}
                     >
                       <div className="mt-0.5">
@@ -145,10 +151,10 @@ export default function Header({ title, user }) {
                   ))
                 )}
               </div>
-              
+
               {notifications.length > 0 && (
                 <div className="p-2 border-t border-slate-100 text-center bg-slate-50/50">
-                  <button 
+                  <button
                     onClick={handleMarkAllAsRead}
                     className="text-[11px] text-blue-600 font-semibold hover:text-blue-800 transition-colors w-full py-1.5 rounded-lg hover:bg-blue-50"
                   >
@@ -167,4 +173,4 @@ export default function Header({ title, user }) {
       </div>
     </header>
   );
-}
+}

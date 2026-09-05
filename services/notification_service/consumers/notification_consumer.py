@@ -11,6 +11,31 @@ logger = logging.getLogger(__name__)
 KAFKA_TOPICS = ["contract.events"]
 consumer = None
 
+ROLE_USER_IDS = {
+    "STAFF": 1,
+    "MANAGER": 2,
+    "DIRECTOR": 3,
+}
+
+EVENT_RECIPIENT_ROLES = {
+    "CONTRACT_CREATED": ("STAFF",),
+    "CONTRACT_UPDATED": ("STAFF",),
+    "CONTRACT_SUBMITTED": ("MANAGER",),
+    "CONTRACT_MANAGER_REVIEW_STARTED": ("STAFF",),
+    "CONTRACT_MANAGER_APPROVED": ("STAFF", "DIRECTOR"),
+    "CONTRACT_DIRECTOR_REVIEW_STARTED": ("STAFF", "MANAGER"),
+    "CONTRACT_DIRECTOR_APPROVED": ("STAFF", "MANAGER"),
+    "CONTRACT_MANAGER_REJECTED": ("STAFF",),
+    "CONTRACT_DIRECTOR_REJECTED": ("STAFF", "MANAGER"),
+    "CONTRACT_MANAGER_REVISION_REQUESTED": ("STAFF",),
+    "CONTRACT_DIRECTOR_REVISION_REQUESTED": ("STAFF", "MANAGER"),
+    "CONTRACT_MANAGER_SEND_REVISION": ("STAFF",),
+    "CONTRACT_RENEWED": ("STAFF", "MANAGER", "DIRECTOR"),
+    "CONTRACT_CANCELLED": ("STAFF", "MANAGER", "DIRECTOR"),
+    "CONTRACT_ACTIVATED": ("STAFF", "MANAGER", "DIRECTOR"),
+    "CONTRACT_EXPIRED": ("STAFF", "MANAGER", "DIRECTOR"),
+}
+
 def process_event(topic: str, event_data: dict, db, event_id: str):
     """
     Xử lý event từ Kafka và tạo thông báo (Notification) tương ứng.
@@ -78,9 +103,9 @@ def process_event(topic: str, event_data: dict, db, event_id: str):
         logger.info(f"Ignored event type {event_type}")
         return
 
-    # Thông báo hiển thị cho cả 3 roles (Staff=1, Manager=2, Director=3)
-    user_ids = [1, 2, 3]
-    for uid in user_ids:
+    recipient_roles = EVENT_RECIPIENT_ROLES[event_type]
+    for role in recipient_roles:
+        uid = ROLE_USER_IDS[role]
         unique_event_id = f"{event_id}-{uid}"
         
         # 1. Kiểm tra Idempotency cho từng user

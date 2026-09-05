@@ -29,7 +29,6 @@ class ContractStateMachine:
 
         ContractStatus.REVISION_REQUESTED: {
             "submit": ContractStatus.SUBMITTED,
-            "cancel": ContractStatus.CANCELLED,
         },
 
         ContractStatus.MANAGER_REVIEW: {

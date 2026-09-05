@@ -12,7 +12,7 @@ const DIRECTOR_STATUSES = [
     ['REVISION_REQUESTED', 'Revision Requested'],
     ['REJECTED', 'Rejected'],
     ['EXPIRED', 'Expired'],
-    ['CANCELLED', 'Canceled'],
+    ['CANCELLED', 'Cancelled'],
 ];
 
 export default function ContractManagementDirectorPage() {
@@ -54,7 +54,7 @@ export default function ContractManagementDirectorPage() {
     const stats = useMemo(() => ({
         approved: summary.approved || 0,
         active: summary.active || 0,
-        revision: summary.revision_requested_by_director || 0,
+        revision: summary.revision_requested || 0,
         rejected: summary.rejected || 0,
         expired: summary.expired || 0,
         cancelled: summary.cancelled || 0,
@@ -67,7 +67,7 @@ export default function ContractManagementDirectorPage() {
 
     return <div className="manager-contract-page director-contract-page">
         <div className="manager-page-heading"><div><h1>Quản lý hợp đồng (Director)</h1><p>Theo dõi tình trạng hợp đồng và duyệt các hợp đồng cần xử lý.</p></div><button className="manager-primary-action" type="button" onClick={() => navigate('/director/contracts/review')}><FileCheck2 size={17} /> Duyệt hợp đồng <span>{summary.director_review || 0}</span></button></div>
-        <div className="manager-stat-grid"><Stat title="Approved" value={stats.approved} caption="Hợp đồng đã approved" icon={<CheckCircle2 />} tone="green" /><Stat title="Actived" value={stats.active} caption="Hợp đồng đang hiện lực" icon={<CheckCircle2 />} tone="blue" /><Stat title="Revision Requested" value={stats.revision} caption="Yêu cầu cần chỉnh sửa" icon={<Pencil />} tone="orange" /><Stat title="Rejected" value={stats.rejected} caption="Hợp đồng đã bị từ chối" icon={<XCircle />} tone="red" /><Stat title="Expired" value={stats.expired} caption="Hợp đồng đã hết hiệu lực" icon={<Clock3 />} tone="slate" /><Stat title="Canceled" value={stats.cancelled} caption="Hợp đồng đã hủy" icon={<Users />} tone="purple" /></div>
+        <div className="manager-stat-grid"><Stat title="Approved" value={stats.approved} caption="Hợp đồng đã được phê duyệt" icon={<CheckCircle2 />} tone="green" /><Stat title="Active" value={stats.active} caption="Hợp đồng đang có hiệu lực" icon={<CheckCircle2 />} tone="blue" /><Stat title="Revision Requested" value={stats.revision} caption="Hợp đồng đang chờ Staff chỉnh sửa" icon={<Pencil />} tone="orange" /><Stat title="Rejected" value={stats.rejected} caption="Hợp đồng đã bị từ chối" icon={<XCircle />} tone="red" /><Stat title="Expired" value={stats.expired} caption="Hợp đồng đã hết hiệu lực" icon={<Clock3 />} tone="slate" /><Stat title="Cancelled" value={stats.cancelled} caption="Hợp đồng đã hủy" icon={<Users />} tone="purple" /></div>
         <section className="manager-contract-panel"><div className="manager-panel-title"><h2>Danh sách hợp đồng</h2></div><div className="manager-filter-bar"><select value={statusFilter} onChange={(event) => { setPage(1); setStatusFilter(event.target.value); }}><option value="">Trạng thái: Tất cả</option>{DIRECTOR_STATUSES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><div className="manager-date-wrap"><CalendarDays size={15} /><input type="date" value={dateQuery} onChange={(event) => { setPage(1); setDateQuery(event.target.value); }} aria-label="Thời gian hiệu lực" /></div><div className="manager-search-wrap"><Search size={16} /><input value={searchQuery} onChange={(event) => { setPage(1); setSearchQuery(event.target.value); }} placeholder="Tìm kiếm mã HĐ, khách hàng" /></div><button className="manager-filter-button" type="button" title="Xóa bộ lọc" onClick={() => { setPage(1); setStatusFilter(''); setSearchQuery(''); setDateQuery(''); }}><SlidersHorizontal size={16} /></button></div>{error && <div className="manager-error">{error}</div>}{isLoading ? <div className="manager-loading">Đang tải dữ liệu...</div> : <ContractTable contracts={contracts.filter((contract) => DIRECTOR_STATUSES.some(([status]) => status === contract.status))} customers={customers} totalCount={totalContracts} page={page} totalPages={Math.max(1, Math.ceil(totalContracts / PAGE_SIZE))} onPageChange={setPage} managerMode onView={viewContract} />}</section>{detailData && <ContractDetailModal detail={detailData} customers={customers} viewerRole="DIRECTOR" onClose={() => setDetailData(null)} />}</div>;
 }
 
