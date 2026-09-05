@@ -20,7 +20,7 @@ export default function Header({ title, user }) {
   const fetchNotifications = async () => {
     try {
       const userId = user?.id || 1;
-      const res = await fetch(`http://localhost:8087/api/v1/notifications/?user_id=${userId}`);
+      const res = await fetch(`http://localhost:8080/api/v1/notifications/?user_id=${userId}`);
       if (res.ok) {
         const data = await res.json();
         setNotifications(data);
@@ -66,8 +66,9 @@ export default function Header({ title, user }) {
   const handleMarkAllAsRead = async () => {
     try {
       const userId = user?.id || 1;
-      await fetch(`http://localhost:8087/api/v1/notifications/read-all?user_id=${userId}`, { method: 'PUT' });
-      fetchNotifications();
+      await fetch(`http://localhost:8080/api/v1/notifications/read-all?user_id=${userId}`, { method: 'PUT' });
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+      setUnreadCount(0);
     } catch (error) {
       console.error("Error marking as read", error);
     }

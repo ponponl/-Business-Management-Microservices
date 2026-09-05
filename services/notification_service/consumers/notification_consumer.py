@@ -47,17 +47,19 @@ def process_event(topic: str, event_data: dict, db, event_id: str):
     elif event_type == "CONTRACT_DIRECTOR_REVIEW_STARTED":
         title = "Quá trình duyệt bắt đầu (Director)"
         message = f"Director đang xem xét hợp đồng {contract_number}."
-    elif event_type == "CONTRACT_APPROVED":
+    elif event_type == "CONTRACT_DIRECTOR_APPROVED":
         title = "Hợp đồng đã được phê duyệt"
         message = f"Hợp đồng {contract_number} đã được phê duyệt hoàn toàn."
-    elif event_type == "CONTRACT_REJECTED":
+    elif event_type in ["CONTRACT_MANAGER_REJECTED", "CONTRACT_DIRECTOR_REJECTED"]:
         reason = payload.get("comment", "")
-        title = "Hợp đồng bị từ chối"
+        role = "Manager" if "MANAGER" in event_type else "Director"
+        title = f"Hợp đồng bị từ chối ({role})"
         message = f"Hợp đồng {contract_number} bị từ chối. Lý do: {reason}"
-    elif event_type == "CONTRACT_REVISION_REQUESTED":
-        title = "Yêu cầu chỉnh sửa hợp đồng (Manager)"
-        message = f"Hợp đồng {contract_number} cần được Manager xem xét và chỉnh sửa."
-    elif event_type == "CONTRACT_REVISION_FORWARDED_TO_STAFF":
+    elif event_type in ["CONTRACT_MANAGER_REVISION_REQUESTED", "CONTRACT_DIRECTOR_REVISION_REQUESTED"]:
+        role = "Manager" if "MANAGER" in event_type else "Director"
+        title = f"Yêu cầu chỉnh sửa hợp đồng ({role})"
+        message = f"Hợp đồng {contract_number} cần được {role} xem xét và chỉnh sửa."
+    elif event_type == "CONTRACT_MANAGER_SEND_REVISION":
         title = "Yêu cầu chỉnh sửa hợp đồng (Staff)"
         message = f"Hợp đồng {contract_number} cần được Staff chỉnh sửa lại."
     elif event_type == "CONTRACT_RENEWED":
