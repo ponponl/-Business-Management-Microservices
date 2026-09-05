@@ -47,16 +47,35 @@ async def process(message):
         last_error = None
         for attempt in range(1, ESIGN_MAX_RETRIES + 1):
             try:
+                logger.info(
+                    "E-Sign API call started attempt %s/%s for signature %s",
+                    attempt,
+                    ESIGN_MAX_RETRIES,
+                    signature.id,
+                )
                 await asyncio.wait_for(
                     request_signature(),
                     timeout=ESIGN_REQUEST_TIMEOUT_SECONDS,
                 )
                 last_error = None
+                logger.info(
+                    "E-Sign API call succeeded on attempt %s/%s for signature %s",
+                    attempt,
+                    ESIGN_MAX_RETRIES,
+                    signature.id,
+                )
                 break
             except asyncio.CancelledError:
                 raise
             except Exception as error:
                 last_error = error
+                logger.error(
+                    "E-Sign API call failed on attempt %s/%s for signature %s: %s",
+                    attempt,
+                    ESIGN_MAX_RETRIES,
+                    signature.id,
+                    error,
+                )
                 if attempt < ESIGN_MAX_RETRIES:
                     delay = ESIGN_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
                     logger.warning(
