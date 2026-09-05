@@ -275,6 +275,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://admin:password123@postgres-payment:5432/db_payment
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - ESIGN_MAX_RETRIES=3
+      - ESIGN_RETRY_BASE_SECONDS=2
+      - ESIGN_REQUEST_TIMEOUT_SECONDS=10
     depends_on:
       postgres-payment:
         condition: service_started
